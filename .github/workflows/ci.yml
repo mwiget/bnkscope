@@ -23,7 +23,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, staging, develop]
+    branches: [main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -37,7 +37,7 @@ on:
     # main (deploy trigger) + staging (release-automation preflight needs a
     # push-triggered CI run to match by SHA — see release.yml preflight);
     # develop skipped.
-    branches: [main, staging]
+    branches: [main]
     paths-ignore:
       - '**.md'
       - 'docs/**'

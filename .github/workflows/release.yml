@@ -20,7 +20,6 @@ name: Release
 on:
   push:
     branches:
-      - staging
       - main
     # MUST stay in sync with ci.yml's push-trigger paths-ignore list — a
     # divergence lets a push trigger Release without a matching CI run,
@@ -82,6 +81,15 @@ jobs:
     needs: guard
     if: needs.guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
+    # `actions: read` is load-bearing: the CI-status poll below calls
+    # `gh run list`, and this repo's default workflow permission is "read",
+    # which grants contents/metadata/packages only -- actions is `none`. The
+    # poll's `2>/dev/null || echo ""` then turns the resulting 403 into an
+    # empty result, so it reports "No CI run found yet" every 30s for the full
+    # 45-minute budget and fails, even though CI passed on that exact SHA.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       current_version: ${{ steps.version.outputs.current }}
       new_version: ${{ steps.version.outputs.new }}
@@ -123,12 +131,20 @@ jobs:
           ELAPSED=0
 
           while true; do
-            RUN_JSON=$(gh run list \
+            # stderr is deliberately NOT discarded. It used to be, and a 403
+            # from a missing `actions: read` scope was indistinguishable from
+            # "the run has not appeared yet" -- 90 identical poll lines and a
+            # 45-minute timeout with the real cause never printed once.
+            if ! RUN_JSON=$(gh run list \
               --workflow=ci.yml \
               --branch="$BRANCH" \
               --limit=20 \
               --json headSha,status,conclusion,databaseId \
-              --jq "[.[] | select(.headSha == \"${SHA}\")] | sort_by(.databaseId) | last" 2>/dev/null || echo "")
+              --jq "[.[] | select(.headSha == \"${SHA}\")] | sort_by(.databaseId) | last"); then
+              echo "::error::gh run list failed -- see the error above. This is an" \
+                   "API/permissions failure, not a missing run."
+              exit 1
+            fi
 
             if [ -z "$RUN_JSON" ] || [ "$RUN_JSON" = "null" ]; then
               echo "[${ELAPSED}s] No CI run found yet for commit $SHA on branch '$BRANCH'"
