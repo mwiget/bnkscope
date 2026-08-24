@@ -7,9 +7,9 @@
 #
 # Tests:
 #   1. Dirty tree → exit 6 (unless --allow-dirty)
-#   2. Non-staging branch → exit 6 (unless --allow-non-main)
+#   2. Non-main branch → exit 6 (unless --allow-non-main)
 #   3. Diverged HEAD → exit 6 (unless --allow-diverged)
-#   4. Clean staging + synced → passes preflight (exits at build stage = expected)
+#   4. Clean main + synced → passes preflight (exits at build stage = expected)
 #
 # Note: Tests only exercise preflight logic. Build/restart phases are NOT tested
 # here — they require Docker and are validated via server smoke tests.
@@ -97,12 +97,12 @@ fi
 # Initialize git repo with a commit
 cd "$TMPDIR/repo"
 git init -q
-git checkout -b staging
+git checkout -b main
 echo "1.0.0" > VERSION
 git add -A
 git commit -q -m "initial"
 
-# Create a fake remote so origin/staging exists
+# Create a fake remote so origin/main exists
 git clone -q --bare "$TMPDIR/repo" "$TMPDIR/remote.git"
 git remote add origin "$TMPDIR/remote.git"
 git fetch -q origin
@@ -145,7 +145,7 @@ rm -f untracked-file.txt
 echo ""
 
 # ---------------------------------------------------------------------------
-# Test 2: Non-staging branch should fail with exit 6
+# Test 2: Non-main branch should fail with exit 6
 # ---------------------------------------------------------------------------
 echo "Test group: branch policy guard"
 
@@ -156,8 +156,8 @@ OUTPUT=$(./upgrade.sh --local --skip-disk-check 2>&1)
 RC=$?
 set -e
 
-assert_exit_code "non-staging branch fails without override" 6 "$RC"
-assert_output_contains "non-staging shows error message" "Upgrade must run from staging branch" "$OUTPUT"
+assert_exit_code "non-main branch fails without override" 6 "$RC"
+assert_output_contains "non-main shows error message" "Upgrade must run from main branch" "$OUTPUT"
 
 # With override should pass branch check
 set +e
@@ -165,10 +165,10 @@ OUTPUT=$(./upgrade.sh --local --allow-non-main --skip-disk-check 2>&1)
 RC=$?
 set -e
 
-assert_preflight_passed "non-staging passes with --allow-non-main" "$RC"
-assert_output_contains "non-staging override logged" "Skipping staging-branch check" "$OUTPUT"
+assert_preflight_passed "non-main passes with --allow-non-main" "$RC"
+assert_output_contains "non-main override logged" "Skipping main-branch check" "$OUTPUT"
 
-git checkout -q staging
+git checkout -q main
 git branch -q -D feature-branch
 
 echo ""
@@ -176,9 +176,9 @@ echo ""
 # ---------------------------------------------------------------------------
 # Test 3: Diverged HEAD should fail with exit 6
 # ---------------------------------------------------------------------------
-echo "Test group: origin/staging sync guard"
+echo "Test group: origin/main sync guard"
 
-# Create a local-only commit so HEAD diverges from origin/staging
+# Create a local-only commit so HEAD diverges from origin/main
 echo "local change" >> VERSION
 git add VERSION
 git commit -q -m "local-only divergence"
@@ -189,7 +189,7 @@ RC=$?
 set -e
 
 assert_exit_code "diverged HEAD fails without override" 6 "$RC"
-assert_output_contains "diverged shows error message" "Local HEAD does not match origin/staging" "$OUTPUT"
+assert_output_contains "diverged shows error message" "Local HEAD does not match origin/main" "$OUTPUT"
 
 # With override should pass sync check
 set +e
@@ -198,10 +198,10 @@ RC=$?
 set -e
 
 assert_preflight_passed "diverged passes with --allow-diverged" "$RC"
-assert_output_contains "diverged override logged" "Skipping origin/staging sync check" "$OUTPUT"
+assert_output_contains "diverged override logged" "Skipping origin/main sync check" "$OUTPUT"
 
 # Reset back to synced state
-git reset -q --hard origin/staging
+git reset -q --hard origin/main
 
 echo ""
 
@@ -219,7 +219,7 @@ assert_preflight_passed "clean synced state passes preflight" "$RC"
 assert_output_contains "preflight phase started" "##PHASE:preflight" "$OUTPUT"
 assert_output_contains "tree check passed" "Git working tree clean" "$OUTPUT"
 assert_output_contains "branch check passed" "Branch policy check passed" "$OUTPUT"
-assert_output_contains "sync check passed" "Git HEAD aligned with origin/staging" "$OUTPUT"
+assert_output_contains "sync check passed" "Git HEAD aligned with origin/main" "$OUTPUT"
 
 echo ""
 
@@ -228,14 +228,14 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "Test group: version policy guard (D17)"
 
-# Push current state to remote so HEAD matches origin/staging
-git push -q origin staging
+# Push current state to remote so HEAD matches origin/main
+git push -q origin main
 
 # Now simulate: remote has a new commit with same VERSION
 echo "new file" > newfile.txt
 git add newfile.txt
 git commit -q -m "new commit same version"
-git push -q origin staging
+git push -q origin main
 
 # Reset local to old commit, then pull to simulate upgrade
 git reset -q --hard HEAD~1

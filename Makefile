@@ -479,9 +479,9 @@ mcp-readiness:
 	@echo ""
 	@echo "=== MCP Readiness Check (Liveness + Runtime) ==="
 	@echo "  Layer 1: container liveness (protocol ping healthcheck)"
-	@state=$$(docker inspect -f '{{.State.Status}}' bnk-forge-mcp 2>/dev/null) || (echo "  ERROR: bnk-forge-mcp container not found. Start stack first (make deploy)." && exit 1); \
-	health=$$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bnk-forge-mcp 2>/dev/null); \
-	echo "  bnk-forge-mcp: state=$$state health=$$health"; \
+	@state=$$(docker inspect -f '{{.State.Status}}' bnkscope-mcp 2>/dev/null) || (echo "  ERROR: bnkscope-mcp container not found. Start stack first (make deploy)." && exit 1); \
+	health=$$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bnkscope-mcp 2>/dev/null); \
+	echo "  bnkscope-mcp: state=$$state health=$$health"; \
 	if [ "$$state" != "running" ]; then \
 		echo "  ERROR: MCP container is not running."; \
 		exit 1; \
@@ -974,7 +974,7 @@ push-images:
 	echo "  Platforms: $(PLATFORMS)"; \
 	echo ""; \
 	echo "  Verify manifests:"; \
-	echo "    docker manifest inspect $${REGISTRY}/bnk-forge-api:$${VERSION}"; \
+	echo "    docker manifest inspect $${REGISTRY}/bnkscope-api:$${VERSION}"; \
 	echo "========================================="
 publish-signed:
 	@if [ -z "$${BNKSCOPE_REGISTRY:-}" ]; then \
@@ -1004,7 +1004,7 @@ docker-verify:
 	  else \
 	    echo "  FAIL  $$img reports '$$actual', expected '$$expected'"; \
 	    echo "        settings.VERSION falls back to 0.0.0 when /app/VERSION is absent,"; \
-	    echo "        which surfaces on /api, the OpenAPI title and X-BNK-Forge-Version."; \
+	    echo "        which surfaces on /api, the OpenAPI title and X-Bnkscope-Version."; \
 	    failed=1; \
 	  fi; \
 	done; \

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Bounded live smoke validation for BNK-Forge MCP runtime.
+"""Bounded live smoke validation for the bnkscope MCP runtime.
 
 This script validates a small, durable set of high-value MCP behaviors against a
 running deployment:
 
 1. MCP endpoint reachability + JSON-RPC protocol round-trip (`ping`)
 2. MCP tool catalog discoverability (`tools/list`)
-3. Read-only governed tool execution (`system_version`, `list_clusters`)
+3. Read-only governed tool execution (`system_health`, `list_clusters`)
 4. Structured MCP error-envelope behavior on a failing governed tool call
 
 The scope is intentionally small and read-only-first so it can be used as a
@@ -125,11 +125,26 @@ def _extract_tool_payload(result: dict[str, Any], tool_name: str) -> dict[str, A
 
     FastMCP tool calls usually return text content items; each tool currently emits
     JSON text (`json.dumps(...)`). We parse that JSON and return it as a dict.
+
+    Every tool here is annotated `-> str`, and FastMCP wraps a str return in
+    `structuredContent` as `{"result": "<that string>"}` — so the tool's own
+    envelope is one JSON parse further in. Returning the wrapper unexamined
+    made every assertion below vacuous: `payload.get("ok")` was None rather
+    than the tool's real ok/false, so a failing call read as a passing one.
     """
 
     structured = result.get("structuredContent")
     if isinstance(structured, dict):
-        return structured
+        inner = structured.get("result")
+        if isinstance(inner, str):
+            try:
+                parsed = json.loads(inner)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                return parsed
+        elif len(structured) != 1 or "result" not in structured:
+            return structured
 
     content = result.get("content")
     if isinstance(content, list):
@@ -177,42 +192,33 @@ def _call_tool(client: JsonRpcClient, tool_name: str, arguments: dict[str, Any] 
     return _extract_tool_payload(result, tool_name)
 
 
-def _call_tool_expect_failure_text(
+def _call_tool_expect_error_envelope(
     client: JsonRpcClient,
     tool_name: str,
     arguments: dict[str, Any] | None = None,
-) -> str:
-    """Return wrapper-level failure text for tools that fail before JSON payload emission.
+) -> dict[str, Any]:
+    """Return the tool's own JSON error envelope for a call that must fail.
 
-    Some FastMCP tool/runtime failures are surfaced as plain text like
-    "Error executing tool ..." rather than the tool's JSON envelope. For bounded live
-    smoke validation, we treat that as an acceptable controlled failure mode when the
-    backend returns the expected failing resource condition.
+    A backend error does not abort the tool: the client catches it and returns
+    the structured `{"ok": false, "error": {...}}` envelope that the tool
+    contract defines, so the failure arrives as a normal tool result with
+    isError=false. This used to look for FastMCP's wrapper-level "Error
+    executing tool ..." text, which the server no longer produces — the whole
+    point of the envelope is that an agent gets a machine-readable failure
+    rather than a stringified exception.
     """
 
-    rpc = client.call(
-        "tools/call",
-        {
-            "name": tool_name,
-            "arguments": arguments or {},
-        },
-    )
-    result = _expect_rpc_result(rpc, f"tools/call:{tool_name}")
-    content = result.get("content")
-    if not isinstance(content, list):
+    payload = _call_tool(client, tool_name, arguments)
+    if payload.get("ok") is not False:
         raise SmokeFailure(
-            f"Expected text content list for failing tool '{tool_name}', got: {type(content)}"
+            f"Expected a failing envelope from '{tool_name}', got ok={payload.get('ok')!r}: {payload}"
         )
-
-    for item in content:
-        if isinstance(item, dict) and isinstance(item.get("text"), str):
-            text = item["text"]
-            if text.startswith("Error executing tool "):
-                return text
-
-    raise SmokeFailure(
-        f"Expected wrapper-level failure text for tool '{tool_name}', got result keys: {sorted(result.keys())}"
-    )
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        raise SmokeFailure(
+            f"Failing envelope from '{tool_name}' has no 'error' object: {payload}"
+        )
+    return payload
 
 
 def _auth_bootstrap_hint(tool_name: str, payload: dict[str, Any]) -> str:
@@ -260,20 +266,20 @@ def run_smoke(config: SmokeConfig) -> None:
         for tool in tools
         if isinstance(tool, dict) and tool.get("name")
     }
-    required_tools = {"system_version", "list_clusters", "get_cluster"}
+    required_tools = {"system_health", "list_clusters", "get_cluster"}
     missing = sorted(required_tools - tool_names)
     if missing:
         raise SmokeFailure(f"tools/list missing expected governed tools: {missing}")
     print("[PASS] tools/list includes expected governed tools")
 
     # 3) Read-only governed tool calls
-    version_payload = _call_tool(client, "system_version")
-    if version_payload.get("ok") is False:
-        hint = _auth_bootstrap_hint("system_version", version_payload)
+    health_payload = _call_tool(client, "system_health")
+    if health_payload.get("ok") is False:
+        hint = _auth_bootstrap_hint("system_health", health_payload)
         raise SmokeFailure(
-            f"system_version returned MCP error envelope unexpectedly: {version_payload}.{hint}"
+            f"system_health returned MCP error envelope unexpectedly: {health_payload}.{hint}"
         )
-    print("[PASS] system_version tool call succeeded")
+    print("[PASS] system_health tool call succeeded")
 
     clusters_payload = _call_tool(client, "list_clusters")
     if clusters_payload.get("ok") is False:
@@ -284,25 +290,33 @@ def run_smoke(config: SmokeConfig) -> None:
     print("[PASS] list_clusters tool call succeeded")
 
     # 4) Controlled failure-path behavior on failing tool invocation
-    failure_text = _call_tool_expect_failure_text(
+    failure_payload = _call_tool_expect_error_envelope(
         client,
         "get_cluster",
         {"cluster_id": config.invalid_cluster_id},
     )
-    expected_tokens = [
-        "Error executing tool get_cluster",
-        "HTTP 404",
-        f"/api/k8s/clusters/{config.invalid_cluster_id}",
-        "CLUSTER_NOT_FOUND",
-        "Cluster not found",
-    ]
-    missing_tokens = [token for token in expected_tokens if token not in failure_text]
-    if missing_tokens:
+    failure_error = failure_payload["error"]
+    expected_fields = {
+        "status_code": 404,
+        "code": "CLUSTER_NOT_FOUND",
+        "detail": "Cluster not found",
+        "url": f"/api/k8s/clusters/{config.invalid_cluster_id}",
+    }
+    mismatched = {
+        field: failure_error.get(field)
+        for field, expected in expected_fields.items()
+        if failure_error.get(field) != expected
+    }
+    if mismatched:
         raise SmokeFailure(
-            "Controlled failing tool call did not include expected diagnostic tokens. "
-            f"Missing={missing_tokens}. Text={failure_text}"
+            "Controlled failing tool call did not report the expected diagnostics. "
+            f"Expected={expected_fields}. Got={mismatched}. Envelope={failure_payload}"
         )
-    print("[PASS] failing governed tool call returns explicit, actionable failure text")
+    if not failure_error.get("next_action"):
+        raise SmokeFailure(
+            f"Failing envelope carries no next_action to act on: {failure_payload}"
+        )
+    print("[PASS] failing governed tool call returns explicit, actionable error envelope")
 
     print("[PASS] MCP live smoke suite complete")
 

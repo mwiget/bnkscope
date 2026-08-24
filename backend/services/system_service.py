@@ -553,12 +553,14 @@ class SystemService:
         self._save_upgrade_state(upgrade_state)
 
         # Phase labels for human-readable progress messages
+        # Mirrors the ##PHASE: markers upgrade.sh emits, in order. "restart"
+        # and "migrate" are gone: build and start are one `bnkscope up` call
+        # now, and there are no migrations to run since Alembic was dropped.
         _phase_labels = {
             "start": "Initializing upgrade",
+            "preflight": "Running preflight checks",
             "pull": "Pulling latest code",
-            "build": "Building containers",
-            "restart": "Restarting services",
-            "migrate": "Running database migrations",
+            "build": "Building and restarting containers",
             "verify": "Verifying health",
             "complete": "Upgrade complete",
             "failed": "Upgrade failed",
@@ -579,13 +581,13 @@ class SystemService:
                 msg["phase_label"] = _phase_labels.get(phase, phase)
             broadcast_sync(msg)
 
-        # Exit code descriptions from upgrade.sh
+        # Exit code descriptions from upgrade.sh. 3 and 4 are retired there —
+        # build and start are one command, and there are no migrations.
         _exit_code_msgs = {
-            1: "Docker Compose not found on the system",
-            2: "Docker image build failed — no changes applied, system still on old version",
-            3: "Failed to restart services — containers may be in a bad state",
-            4: "Database migration failed — services running but DB may be inconsistent",
+            1: "Prerequisites missing — docker compose, or not a bnkscope checkout",
+            2: "Build or start failed — the system may still be on the old version",
             5: "Services did not become healthy within timeout",
+            6: "Preflight policy check failed — see the log for which guard fired",
         }
 
         # Keep limited log buffer for DB persistence (avoid unbounded growth)
@@ -632,9 +634,23 @@ class SystemService:
                     "-v", f"{host_repo_path}:/repo",
                     "-v", "/var/run/docker.sock:/var/run/docker.sock",
                     "-v", f"{host_user_home}/.gitconfig:/root/.gitconfig:ro",
+                    # upgrade.sh runs `./bnkscope up`, which reads and rewrites
+                    # the discovery file — negotiated ports, the remembered
+                    # --listen bind, Grafana's generated password. Without this
+                    # mount it would negotiate from scratch inside a throwaway
+                    # container and hand the real stack different ports.
+                    "-v", f"{host_user_home}/.config/bnkscope:/root/.config/bnkscope",
+                    # $HOME in here is /root, and compose resolves the
+                    # operator's kubeconfig and cloud credential mounts from it
+                    # (docker-compose.yml: ${BNKSCOPE_HOST_HOME:-$HOME}/.kube).
+                    # Unset, every registered cluster would come back up
+                    # pointing at an empty /root/.kube.
+                    "-e", f"BNKSCOPE_HOST_HOME={host_user_home}",
                     "-w", "/repo", "--network", "host",
                     "docker:cli", "sh", "-c",
-                    "apk add --no-cache bash git && bash upgrade.sh"
+                    # python3 and curl are what the bnkscope CLI needs: port
+                    # negotiation and the API health wait.
+                    "apk add --no-cache bash git python3 curl && bash upgrade.sh"
                 ]
                 process = subprocess.Popen(docker_cmd, stdout=subprocess.PIPE,
                                            stderr=subprocess.STDOUT, text=True)

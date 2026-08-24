@@ -68,13 +68,13 @@ Prerequisites: `cosign` and `syft` must be installed (`brew install cosign syft`
 
 ```bash
 # 1. Build + push the images first
-make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org
+make push-images BNKSCOPE_REGISTRY=ghcr.io/your-org
 
 # 2. Dry-run: print what would be signed (no registry writes)
-make publish-signed BNK_FORGE_REGISTRY=ghcr.io/your-org
+make publish-signed BNKSCOPE_REGISTRY=ghcr.io/your-org
 
 # 3. Execute: sign + attach SBOM + attach SLSA provenance
-make publish-signed BNK_FORGE_REGISTRY=ghcr.io/your-org SIGN_EXECUTE=1
+make publish-signed BNKSCOPE_REGISTRY=ghcr.io/your-org SIGN_EXECUTE=1
 ```
 
 The script signs each image by digest (not tag) and attaches two attestations:

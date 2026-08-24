@@ -1,35 +1,56 @@
 #!/bin/bash
 #
-# BNK-Forge Upgrade Script
-# Rebuilds containers and restarts services (non-destructive - keeps volumes)
+# bnkscope upgrade — pull, rebuild, restart, verify.
+#
+# Non-destructive: the volumes stay. The database, the encryption key and the
+# telemetry history all survive. `bnkscope down --purge` is the destructive one.
 #
 # Usage:
-#   ./upgrade.sh              - pull + rebuild + restart
-#   ./upgrade.sh --local      - rebuild + restart (no git pull)
-#   ./upgrade.sh --no-cache   - rebuild without Docker cache (SLOW - 10+ min)
-#   ./upgrade.sh --allow-non-main     - allow running from non-staging branch
-#   ./upgrade.sh --allow-same-version - allow commit upgrade without VERSION bump
+#   ./upgrade.sh                      - pull + rebuild + restart
+#   ./upgrade.sh --local              - rebuild + restart (no git pull)
+#   ./upgrade.sh --allow-dirty        - allow a dirty working tree
+#   ./upgrade.sh --allow-non-main     - allow a branch other than main
+#   ./upgrade.sh --allow-diverged     - allow HEAD to differ from origin/main
+#   ./upgrade.sh --allow-same-version - allow a commit upgrade with no VERSION bump
+#   ./upgrade.sh --skip-disk-check    - skip the disk threshold guard
+#
+# There is no --no-cache here: this always builds through the layer cache.
+# For a cold rebuild, `make build-clean`.
+#
+# The build and restart run through `./bnkscope up`, not through compose
+# directly, and that is the whole point of this script's middle. The negotiated
+# ports, the remembered `--listen` bind, the telemetry and MCP profiles, and
+# Grafana's generated password live in the CLI and in the discovery file at
+# ~/.config/bnkscope/endpoints.json. A bare `docker compose up -d` recreates
+# the backend from compose's own defaults instead — moving the API back to
+# :8000, closing a deliberately-opened bind back to loopback, and starting or
+# stopping telemetry against the operator's choice.
 #
 # Phase markers (##PHASE:xxx) are parsed by the backend to report structured
-# progress to the frontend UI. Do not remove or rename them.
+# progress to the frontend UI (services/system_service.py::_phase_labels). Do
+# not remove or rename them without updating that map and the phase list in
+# frontend-v2/src/components/settings/SystemUpgrade.tsx.
 #
 # Exit codes:
 #   0 — upgrade succeeded, all services healthy
-#   1 — docker compose not found
-#   2 — docker compose build failed
-#   3 — docker compose up failed
-#   4 — database migration failed
+#   1 — prerequisites missing (docker compose, or not a bnkscope checkout)
+#   2 — build or start failed
 #   5 — health check failed (services not healthy after timeout)
 #   6 — preflight policy check failed
 #
+# 3 (start failed) and 4 (database migration failed) are retired: build and
+# start are now one command, and Alembic went with Phase 4 — bnkscope creates
+# its schema from the ORM models at startup (backend/database.py).
+#
 
 set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # ---------------------------------------------------------------------------
 # Parse arguments
 # ---------------------------------------------------------------------------
 LOCAL_ONLY=false
-NO_CACHE=false
 ALLOW_DIRTY=false
 ALLOW_DIVERGED=false
 SKIP_DISK_CHECK=false
@@ -39,7 +60,6 @@ ALLOW_SAME_VERSION=false
 for arg in "$@"; do
     case $arg in
         --local|-l) LOCAL_ONLY=true ;;
-        --no-cache) NO_CACHE=true ;;
         --allow-dirty) ALLOW_DIRTY=true ;;
         --allow-diverged) ALLOW_DIVERGED=true ;;
         --skip-disk-check) SKIP_DISK_CHECK=true ;;
@@ -49,22 +69,17 @@ for arg in "$@"; do
 done
 
 echo "##PHASE:start"
-echo "BNK-Forge Upgrade"
+echo "bnkscope upgrade"
 echo "=================================="
 echo ""
 
-# ---------------------------------------------------------------------------
-# Detect docker compose
-# ---------------------------------------------------------------------------
-if docker compose version &>/dev/null; then
-    COMPOSE="docker compose"
-elif docker-compose version &>/dev/null; then
-    COMPOSE="docker-compose"
-else
-    echo "##PHASE:failed"
-    echo "Error: Docker Compose not found."
-    exit 1
-fi
+# Containers, not compose services: `docker ps` needs no compose file, no
+# profiles, and no BNKSCOPE_GRAFANA_PASSWORD to interpolate.
+ps_table() {
+    docker ps -a --filter 'name=bnkscope-' --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null || true
+}
+
+container_exists() { docker inspect "$1" >/dev/null 2>&1; }
 
 # Record current version for comparison
 OLD_VERSION=$(cat VERSION 2>/dev/null || echo "unknown")
@@ -93,20 +108,20 @@ else
     echo "  ⚠ Skipping dirty-tree check (--allow-dirty)"
 fi
 
-# Check branch policy (server upgrades should run from staging unless explicitly overridden)
+# Check branch policy (upgrades should run from main unless explicitly overridden)
 if [ "$ALLOW_NON_MAIN" = false ]; then
     CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-    if [ "$CURRENT_BRANCH" != "staging" ]; then
+    if [ "$CURRENT_BRANCH" != "main" ]; then
         echo ""
         echo "##PHASE:failed"
-        echo "ERROR: Upgrade must run from staging branch (current: ${CURRENT_BRANCH})."
-        echo "  Switch to staging and sync first: git checkout staging && git pull --ff-only"
+        echo "ERROR: Upgrade must run from main branch (current: ${CURRENT_BRANCH})."
+        echo "  Switch to main and sync first: git checkout main && git pull --ff-only"
         echo "  Or rerun with --allow-non-main (not recommended)"
         exit 6
     fi
-    echo "  ✓ Branch policy check passed (staging)"
+    echo "  ✓ Branch policy check passed (main)"
 else
-    echo "  ⚠ Skipping staging-branch check (--allow-non-main)"
+    echo "  ⚠ Skipping main-branch check (--allow-non-main)"
 fi
 
 # Check disk policy (critical threshold should fail)
@@ -163,30 +178,30 @@ else
     echo "Local mode: skipping git pull"
 fi
 
-# Sync policy check: in --local mode, HEAD must match origin/staging unless overridden.
+# Sync policy check: in --local mode, HEAD must match origin/main unless overridden.
 # In pull mode, enforce this after pull to ensure target commit was actually reached.
 if [ "$ALLOW_DIVERGED" = false ]; then
-    git fetch origin staging >/dev/null 2>&1 || true
+    git fetch origin main >/dev/null 2>&1 || true
     HEAD_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-    ORIGIN_STAGING_COMMIT=$(git rev-parse origin/staging 2>/dev/null || echo "unknown")
-    if [ "$HEAD_COMMIT" != "$ORIGIN_STAGING_COMMIT" ]; then
+    ORIGIN_MAIN_COMMIT=$(git rev-parse origin/main 2>/dev/null || echo "unknown")
+    if [ "$HEAD_COMMIT" != "$ORIGIN_MAIN_COMMIT" ]; then
         echo ""
         echo "##PHASE:failed"
-        echo "ERROR: Local HEAD does not match origin/staging."
+        echo "ERROR: Local HEAD does not match origin/main."
         echo "  HEAD:        ${HEAD_COMMIT}"
-        echo "  origin/staging: ${ORIGIN_STAGING_COMMIT}"
+        echo "  origin/main: ${ORIGIN_MAIN_COMMIT}"
         if [ "$LOCAL_ONLY" = true ]; then
             echo "  Local mode requires repo to already be synced."
             echo "  Run: git pull --ff-only"
         else
-            echo "  Pull did not converge to origin/staging. Resolve and retry."
+            echo "  Pull did not converge to origin/main. Resolve and retry."
         fi
         echo "  Or rerun with --allow-diverged (not recommended)"
         exit 6
     fi
-    echo "  ✓ Git HEAD aligned with origin/staging"
+    echo "  ✓ Git HEAD aligned with origin/main"
 else
-    echo "  ⚠ Skipping origin/staging sync check (--allow-diverged)"
+    echo "  ⚠ Skipping origin/main sync check (--allow-diverged)"
 fi
 
 NEW_VERSION=$(cat VERSION 2>/dev/null || echo "unknown")
@@ -212,221 +227,82 @@ elif [ "$OLD_COMMIT" != "$CURRENT_COMMIT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Phase 2: Build containers (SMART BUILD — only rebuild what changed)
+# Phase 2: Build and restart
+#
+# One command, because `bnkscope up` is the only thing that knows the whole
+# shape of a running install — see the note at the top of this file. It builds
+# through the layer cache, so services whose inputs did not change cost
+# seconds; there is no service-level change detection to keep in step with
+# docker-compose.yml any more.
 # ---------------------------------------------------------------------------
 echo ""
 echo "##PHASE:build"
 
-# Detect what changed between old commit and current HEAD
-BACKEND_CHANGED=false
-FRONTEND_CHANGED=false
-PROXY_CHANGED=false
-REQUIREMENTS_CHANGED=false
-
-if [ "$OLD_COMMIT" != "unknown" ] && [ "$CURRENT_COMMIT" != "unknown" ] && [ "$OLD_COMMIT" != "$CURRENT_COMMIT" ]; then
-    echo "Detecting changes: ${OLD_COMMIT} → ${CURRENT_COMMIT}..."
-    CHANGED_FILES=$(git diff --name-only "$OLD_COMMIT" "$CURRENT_COMMIT" 2>/dev/null || echo "")
-    
-    if [ -n "$CHANGED_FILES" ]; then
-        # Check requirements.txt changes (triggers full backend rebuild)
-        if echo "$CHANGED_FILES" | grep -q "^backend/requirements"; then
-            REQUIREMENTS_CHANGED=true
-            BACKEND_CHANGED=true
-            echo "  ⚠ requirements.txt changed — will rebuild all backend targets"
-        fi
-        
-        # Check backend changes
-        if echo "$CHANGED_FILES" | grep -q "^backend/"; then
-            BACKEND_CHANGED=true
-        fi
-        
-        # Check frontend changes
-        if echo "$CHANGED_FILES" | grep -q "^frontend-v2/"; then
-            FRONTEND_CHANGED=true
-        fi
-        
-        # Check proxy changes
-        if echo "$CHANGED_FILES" | grep -q "^proxy/"; then
-            PROXY_CHANGED=true
-        fi
-        
-        # VERSION changes affect frontend (baked in at build time)
-        if echo "$CHANGED_FILES" | grep -q "^VERSION$"; then
-            FRONTEND_CHANGED=true
-        fi
-        
-        # docker-compose changes require full rebuild
-        if echo "$CHANGED_FILES" | grep -q "^docker-compose"; then
-            echo "  ⚠ docker-compose.yml changed — will rebuild all"
-            BACKEND_CHANGED=true
-            FRONTEND_CHANGED=true
-            PROXY_CHANGED=true
-        fi
-    fi
-else
-    # No commit comparison possible — rebuild everything
-    echo "  No commit comparison available — will rebuild all"
-    BACKEND_CHANGED=true
-    FRONTEND_CHANGED=true
-    PROXY_CHANGED=true
+# Prerequisites are checked here rather than at the top on purpose: everything
+# above this line is git policy, which is worth enforcing — and worth being
+# able to test — on a checkout that has no Docker at all.
+if ! docker compose version >/dev/null 2>&1; then
+    echo "##PHASE:failed"
+    echo "ERROR: 'docker compose' not found."
+    exit 1
+fi
+if [ ! -x ./bnkscope ]; then
+    echo "##PHASE:failed"
+    echo "ERROR: ./bnkscope not found or not executable — this is not a bnkscope checkout."
+    exit 1
 fi
 
-# Build affected services
-SERVICES_TO_BUILD=""
-SERVICES_TO_RESTART=""
+echo "Building images and restarting services..."
+BUILD_START=$(date +%s)
 
-if [ "$BACKEND_CHANGED" = true ]; then
-    echo "  → Backend changed"
-    SERVICES_TO_BUILD="$SERVICES_TO_BUILD backend"
-    SERVICES_TO_RESTART="backend celery-worker celery-worker-2 celery-beat"
-    if [ "$REQUIREMENTS_CHANGED" = true ]; then
-        # Requirements change means we need to rebuild worker too (different base)
-        SERVICES_TO_BUILD="$SERVICES_TO_BUILD celery-worker celery-beat"
-    fi
-fi
-
-if [ "$FRONTEND_CHANGED" = true ]; then
-    echo "  → Frontend changed"
-    SERVICES_TO_BUILD="$SERVICES_TO_BUILD frontend"
-    SERVICES_TO_RESTART="$SERVICES_TO_RESTART frontend"
-fi
-
-if [ "$PROXY_CHANGED" = true ]; then
-    echo "  → Proxy changed"
-    SERVICES_TO_BUILD="$SERVICES_TO_BUILD proxy"
-    SERVICES_TO_RESTART="$SERVICES_TO_RESTART proxy"
-fi
-
-# Deduplicate and trim
-SERVICES_TO_BUILD=$(echo "$SERVICES_TO_BUILD" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
-SERVICES_TO_RESTART=$(echo "$SERVICES_TO_RESTART" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
-
-if [ -z "$SERVICES_TO_BUILD" ]; then
-    echo "  ✓ No code changes detected — skipping build"
-else
-    echo ""
-    echo "Building: $SERVICES_TO_BUILD"
-    BUILD_START=$(date +%s)
-    
-    if [ "$NO_CACHE" = true ]; then
-        echo "  (no-cache mode — this will be SLOW)"
-        # shellcheck disable=SC2086
-        if ! $COMPOSE build --no-cache $SERVICES_TO_BUILD; then
-            echo ""
-            echo "##PHASE:failed"
-            echo "ERROR: Docker build failed. No changes have been applied."
-            echo "  The running system is still on version ${OLD_VERSION}."
-            echo "  Check the build output above for errors."
-            exit 2
-        fi
-    else
-        # shellcheck disable=SC2086
-        if ! $COMPOSE build $SERVICES_TO_BUILD; then
-            echo ""
-            echo "##PHASE:failed"
-            echo "ERROR: Docker build failed. No changes have been applied."
-            echo "  The running system is still on version ${OLD_VERSION}."
-            echo "  Check the build output above for errors."
-            exit 2
-        fi
-    fi
-    
-    BUILD_END=$(date +%s)
-    BUILD_ELAPSED=$((BUILD_END - BUILD_START))
-    echo "  ✓ Build complete in ${BUILD_ELAPSED}s"
-fi
-
-# ---------------------------------------------------------------------------
-# Phase 3: Restart services (only restart what was rebuilt)
-# ---------------------------------------------------------------------------
-echo ""
-echo "##PHASE:restart"
-
-# The container-image engine attaches artifact steps to this dedicated bridge
-# network. Compose does not create it (no service references it — under host
-# networking none can), so an upgraded server would otherwise pick up the new
-# runner with no network and fail every artifact step with "network not found".
-# Subnet resolution (explicit override, "auto", or auto-detection against host
-# routes/docker networks) lives in scripts/artifact_network.sh — see issue #422.
-./scripts/artifact_network.sh ensure
-
-if [ -z "$SERVICES_TO_RESTART" ]; then
-    echo "No services to restart — skipping."
-else
-    echo "Restarting: $SERVICES_TO_RESTART"
-    # shellcheck disable=SC2086
-    if ! $COMPOSE up -d --force-recreate $SERVICES_TO_RESTART; then
-        echo ""
-        echo "##PHASE:failed"
-        echo "ERROR: Failed to restart services."
-        echo "  Some containers may be in a bad state."
-        echo "  Run: docker compose ps"
-        exit 3
-    fi
-fi
-
-# Also remove orphans (containers from removed services)
-$COMPOSE up -d --remove-orphans 2>/dev/null || true
-
-# Wait a few seconds for containers to initialize before running commands in them
-echo "  Waiting for containers to initialize..."
-sleep 5
-
-# Fix volume permissions (non-fatal — warn but don't abort)
-echo "  Fixing volume permissions..."
-if ! docker exec -u root bnk-forge-backend chown -R bnkforge:bnkforge /app/state /app/keys /app/projects /app/workspaces /app/helm_charts 2>/dev/null; then
-    echo "  WARNING: Could not fix volume permissions. This may cause issues."
-    echo "  You can fix manually: docker exec -u root bnk-forge-backend chown -R bnkforge:bnkforge /app/state /app/keys /app/projects /app/workspaces /app/helm_charts"
-fi
-
-# ---------------------------------------------------------------------------
-# Phase 4: Database migrations
-# ---------------------------------------------------------------------------
-echo ""
-echo "##PHASE:migrate"
-echo "Running database migrations..."
-
-# Capture migration output and check for actual errors
-MIGRATION_OUTPUT=$(docker exec bnk-forge-backend alembic upgrade head 2>&1) || {
-    MIGRATION_EXIT=$?
-    echo "  ERROR: Database migration failed (exit code: ${MIGRATION_EXIT})"
-    echo "  Migration output:"
-    echo "${MIGRATION_OUTPUT//$'\n'/$'\n'    }"
+if ! ./bnkscope up; then
     echo ""
     echo "##PHASE:failed"
-    echo "ERROR: Database migration failed. Services are running but the database"
-    echo "  may be in an inconsistent state. Check the migration output above."
-    echo "  You may need to fix the migration manually and re-run:"
-    echo "    docker exec bnk-forge-backend alembic upgrade head"
-    exit 4
-}
+    echo "ERROR: Build or start failed."
+    echo "  The running system may still be on version ${OLD_VERSION}."
+    echo "  Check the output above, then: ./bnkscope logs"
+    echo ""
+    ps_table
+    exit 2
+fi
 
-# Show non-INFO migration output (filtered for readability)
-echo "${MIGRATION_OUTPUT}" | grep -v "^INFO" | grep -v "^$" | head -20 || true
-echo "  Migrations applied successfully."
+BUILD_END=$(date +%s)
+echo "  ✓ Build and restart complete in $((BUILD_END - BUILD_START))s"
 
 # ---------------------------------------------------------------------------
-# Phase 5: Health verification
+# Phase 3: Health verification
+#
+# `bnkscope up` already waits for the API. These gates are the stricter pass:
+# container health, a backend log free of fatal startup patterns, and the
+# health endpoint reporting healthy rather than merely answering.
 # ---------------------------------------------------------------------------
 echo ""
 echo "##PHASE:verify"
-echo "Waiting for services to be healthy..."
+echo "Verifying services..."
+
+# The API port is negotiated, so read it back rather than assuming 8000. The
+# backend runs with host networking, so the port it listens on inside the
+# container is the same one it publishes.
+API_PORT=$(./bnkscope endpoint 2>/dev/null \
+    | sed -n '/"api"/,/}/s/.*"port": *\([0-9]*\).*/\1/p' | head -1)
+API_PORT="${API_PORT:-8000}"
+echo "  API port: ${API_PORT}"
+
+health_response() {
+    docker exec bnkscope-backend \
+        curl -sf "http://127.0.0.1:${API_PORT}/api/system/health" 2>/dev/null || true
+}
 
 HEALTH_OK=false
 MAX_WAIT=60
 WAITED=0
 
 while [ $WAITED -lt $MAX_WAIT ]; do
-    HEALTH_RESPONSE=$(docker exec bnk-forge-backend curl -sf http://localhost:8000/api/system/health 2>/dev/null) || true
-
-    if [ -n "$HEALTH_RESPONSE" ]; then
-        # Check if all services report healthy
-        if echo "$HEALTH_RESPONSE" | grep -q '"status":"healthy"'; then
-            HEALTH_OK=true
-            break
-        fi
+    HEALTH_RESPONSE=$(health_response)
+    if [ -n "$HEALTH_RESPONSE" ] && echo "$HEALTH_RESPONSE" | grep -q '"status":"healthy"'; then
+        HEALTH_OK=true
+        break
     fi
-
     WAITED=$((WAITED + 2))
     echo "  Waiting... (${WAITED}s / ${MAX_WAIT}s)"
     sleep 2
@@ -438,85 +314,112 @@ if [ "$HEALTH_OK" = false ]; then
     echo "ERROR: Services did not become healthy within ${MAX_WAIT} seconds."
     echo ""
     echo "  Service status:"
-    $COMPOSE ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || $COMPOSE ps
+    ps_table
     echo ""
     echo "  Last health response: ${HEALTH_RESPONSE:-none}"
     echo ""
     echo "  Troubleshooting:"
-    echo "    docker compose logs backend --tail 50"
-    echo "    docker compose logs celery-worker --tail 50"
+    echo "    ./bnkscope logs backend"
+    echo "    ./bnkscope logs frontend"
     exit 5
 fi
 
-# Gate 1: critical services must be running and healthy
+# Gate 1: critical containers must be running and healthy.
+#
+# Built from what is actually deployed, not from a fixed list: MCP and the
+# telemetry stack are optional profiles (`bnkscope up --no-mcp`,
+# `--no-telemetry`), and a container the operator opted out of is not a fault.
 echo "  Verifying container health gate..."
-CRITICAL_SERVICES=(
-  bnk-forge-backend
-  bnk-forge-frontend
-  bnk-forge-proxy
-  bnk-forge-postgres
-  bnk-forge-redis
-  bnk-forge-celery-worker
-  bnk-forge-celery-worker-2
-  bnk-forge-celery-beat
-)
-
-for svc in "${CRITICAL_SERVICES[@]}"; do
-    if ! docker inspect "$svc" >/dev/null 2>&1; then
-        echo ""
-        echo "##PHASE:failed"
-        echo "ERROR: Required container not found: $svc"
-        printf '  Troubleshoot: docker ps -a --format "table {{.Names}}\t{{.Status}}"\n'
-        exit 5
-    fi
-
-    STATUS=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null || echo "unknown")
-    HEALTH=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$svc" 2>/dev/null || echo "unknown")
-
-    if [ "$STATUS" != "running" ]; then
-        echo ""
-        echo "##PHASE:failed"
-        echo "ERROR: Container is not running: $svc (status=$STATUS)"
-        echo "  Troubleshoot: docker logs $svc --tail 50"
-        exit 5
-    fi
-
-    if [ "$HEALTH" != "none" ] && [ "$HEALTH" != "healthy" ]; then
-        echo ""
-        echo "##PHASE:failed"
-        echo "ERROR: Container health not healthy: $svc (health=$HEALTH)"
-        echo "  Troubleshoot: docker logs $svc --tail 50"
-        exit 5
+CRITICAL_SERVICES=(bnkscope-backend bnkscope-frontend)
+for optional in bnkscope-mcp bnkscope-prometheus bnkscope-grafana bnkscope-loki bnkscope-alloy; do
+    if container_exists "$optional"; then
+        CRITICAL_SERVICES+=("$optional")
     fi
 done
-echo "  ✓ Container health gate passed"
+
+# `starting` is not a verdict. Docker reports it for the whole of a
+# healthcheck's start_period, and the frontend is reliably still inside that
+# window here — `bnkscope up` returns once the *API* answers, which says
+# nothing about nginx. Treating it as a fault failed the gate on a stack that
+# was coming up perfectly well, so wait for each container to settle and fail
+# only on a genuine unhealthy, a stopped one, or a start period that overruns.
+GATE_WAIT=90
+
+for svc in "${CRITICAL_SERVICES[@]}"; do
+    gate_waited=0
+    while :; do
+        if ! container_exists "$svc"; then
+            echo ""
+            echo "##PHASE:failed"
+            echo "ERROR: Required container not found: $svc"
+            printf '  Troubleshoot: docker ps -a --format "table {{.Names}}\t{{.Status}}"\n'
+            exit 5
+        fi
+
+        STATUS=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null || echo "unknown")
+        HEALTH=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$svc" 2>/dev/null || echo "unknown")
+
+        if [ "$STATUS" != "running" ]; then
+            echo ""
+            echo "##PHASE:failed"
+            echo "ERROR: Container is not running: $svc (status=$STATUS)"
+            echo "  Troubleshoot: docker logs $svc --tail 50"
+            exit 5
+        fi
+
+        # No healthcheck defined, or it has passed.
+        if [ "$HEALTH" = "none" ] || [ "$HEALTH" = "healthy" ]; then
+            break
+        fi
+
+        if [ "$HEALTH" = "starting" ] && [ "$gate_waited" -lt "$GATE_WAIT" ]; then
+            if [ "$gate_waited" = 0 ]; then
+                echo "    $svc: waiting out its healthcheck start period..."
+            fi
+            gate_waited=$((gate_waited + 3))
+            sleep 3
+            continue
+        fi
+
+        echo ""
+        echo "##PHASE:failed"
+        if [ "$HEALTH" = "starting" ]; then
+            echo "ERROR: Container did not finish its healthcheck start period within ${GATE_WAIT}s: $svc"
+        else
+            echo "ERROR: Container health not healthy: $svc (health=$HEALTH)"
+        fi
+        echo "  Troubleshoot: docker logs $svc --tail 50"
+        exit 5
+    done
+done
+echo "  ✓ Container health gate passed (${#CRITICAL_SERVICES[@]} containers)"
 
 # Gate 2: backend logs sanity check
 echo "  Verifying backend log sanity gate..."
-BACKEND_LOG_TAIL=$(docker logs bnk-forge-backend --tail 50 2>&1 || true)
+BACKEND_LOG_TAIL=$(docker logs bnkscope-backend --tail 50 2>&1 || true)
 if echo "$BACKEND_LOG_TAIL" | grep -E 'Traceback \(most recent call last\)|ModuleNotFoundError|ImportError|SyntaxError|ERROR: +Exception in ASGI application' >/dev/null 2>&1; then
     echo ""
     echo "##PHASE:failed"
     echo "ERROR: Backend logs contain fatal startup patterns."
-    echo "  Check: docker logs bnk-forge-backend --tail 200"
+    echo "  Check: docker logs bnkscope-backend --tail 200"
     exit 5
 fi
 echo "  ✓ Backend log sanity gate passed"
 
 # Gate 3: health endpoint gate
 echo "  Verifying health endpoint gate..."
-HEALTH_RESPONSE=$(docker exec bnk-forge-backend curl -sf http://localhost:8000/api/system/health 2>/dev/null) || true
+HEALTH_RESPONSE=$(health_response)
 if [ -z "$HEALTH_RESPONSE" ] || ! echo "$HEALTH_RESPONSE" | grep -q '"status":"healthy"'; then
     echo ""
     echo "##PHASE:failed"
     echo "ERROR: Health endpoint check failed after restart."
-    echo "  Check: docker exec bnk-forge-backend curl -s http://localhost:8000/api/system/health"
+    echo "  Check: docker exec bnkscope-backend curl -s http://127.0.0.1:${API_PORT}/api/system/health"
     exit 5
 fi
 echo "  ✓ Health endpoint gate passed"
 
 # ---------------------------------------------------------------------------
-# Phase 6: Complete
+# Phase 4: Complete
 # ---------------------------------------------------------------------------
 echo ""
 echo "##PHASE:complete"
@@ -528,6 +431,6 @@ NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 echo "  Version: ${OLD_VERSION} -> ${NEW_VERSION}"
 echo "  Commit:  ${OLD_COMMIT} -> ${NEW_COMMIT}"
 echo ""
-$COMPOSE ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || $COMPOSE ps
+ps_table
 echo ""
 echo "  All services healthy."

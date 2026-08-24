@@ -16,12 +16,15 @@ interface UpgradeLogLine {
   phase?: string;
 }
 
-/** Ordered upgrade phases emitted by upgrade.sh via ##PHASE:xxx markers */
+/**
+ * Ordered upgrade phases emitted by upgrade.sh via ##PHASE:xxx markers.
+ *
+ * Build and restart are one step because upgrade.sh delegates both to
+ * `bnkscope up`. There is no migration step — Alembic went with Phase 4.
+ */
 const UPGRADE_PHASES = [
   { key: 'pull',     label: 'Pull code' },
-  { key: 'build',    label: 'Build containers' },
-  { key: 'restart',  label: 'Restart services' },
-  { key: 'migrate',  label: 'Run migrations' },
+  { key: 'build',    label: 'Build and restart' },
   { key: 'verify',   label: 'Verify health' },
 ] as const;
 
@@ -84,7 +87,7 @@ export default function SystemUpgrade() {
 
   // Phase tracking — driven by ##PHASE markers from upgrade.sh
   const [phaseStatuses, setPhaseStatuses] = useState<Record<PhaseKey, PhaseStatus>>({
-    pull: 'pending', build: 'pending', restart: 'pending', migrate: 'pending', verify: 'pending',
+    pull: 'pending', build: 'pending', verify: 'pending',
   });
 
   // Version tracking for completion detection (UP-002 fix)
@@ -122,7 +125,7 @@ export default function SystemUpgrade() {
     if (phase === 'complete') {
       // Mark all phases as done
       setPhaseStatuses({
-        pull: 'done', build: 'done', restart: 'done', migrate: 'done', verify: 'done',
+        pull: 'done', build: 'done', verify: 'done',
       });
       return;
     }
@@ -413,7 +416,7 @@ export default function SystemUpgrade() {
         setUpgradeLog([]);
         setShowLog(true);
         setPhaseStatuses({
-          pull: 'pending', build: 'pending', restart: 'pending', migrate: 'pending', verify: 'pending',
+          pull: 'pending', build: 'pending', verify: 'pending',
         });
         setUpgradeStatus('Upgrade started...');
         notify.success('Upgrade started! Watch the progress below.', undefined, { category: 'system' });

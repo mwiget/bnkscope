@@ -664,8 +664,10 @@ jobs:
       - name: Sign, SBOM, and attest all images (keyless cosign)
         run: bash scripts/publish-signed-images.sh --execute
         env:
-          BNK_FORGE_REGISTRY: ${{ env.REGISTRY }}
-          BNK_FORGE_VERSION: ${{ env.VERSION }}
+          # The names publish-signed-images.sh actually requires — it exits 1
+          # on a missing BNKSCOPE_REGISTRY.
+          BNKSCOPE_REGISTRY: ${{ env.REGISTRY }}
+          BNKSCOPE_VERSION: ${{ env.VERSION }}
 
       - name: Publish summary
         run: |
@@ -673,6 +675,6 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image | Tags |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
-          for name in bnk-forge-api bnk-forge-worker bnk-forge-beat bnk-forge-frontend bnk-forge-proxy bnk-forge-mcp bnk-forge-operator; do
+          for name in bnkscope-api bnkscope-frontend bnkscope-mcp; do
             echo "| ${name} | ${{ env.REGISTRY }}/${name}:${{ needs.preflight.outputs.new_version }}, :latest |" >> "$GITHUB_STEP_SUMMARY"
           done

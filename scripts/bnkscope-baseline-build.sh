@@ -10,7 +10,14 @@ cd "$(dirname "$0")/.." || exit 1
 OUT="${1:-/tmp/bnkscope-build.tsv}"
 : > "$OUT"
 
-SERVICES="backend celery-worker celery-beat frontend proxy mcp forge-agent"
+# Compose interpolates the whole file on every command, `build` included, and
+# Grafana's password is a required variable there. Nothing here starts Grafana,
+# so a placeholder is enough — it just has to be set.
+export BNKSCOPE_GRAFANA_PASSWORD="${BNKSCOPE_GRAFANA_PASSWORD:-baseline}"
+# The MCP service sits behind a profile; without this it is not buildable.
+export COMPOSE_PROFILES=mcp
+
+SERVICES="backend frontend mcp"
 
 echo "=== COLD BUILD (--no-cache) ===" >&2
 for svc in $SERVICES; do
@@ -37,12 +44,11 @@ warm_build() {
   git checkout -- "$file"
   printf 'warm\t%s\t%s\t%s\n' "$svc" "$((end - start))" "$rc" | tee -a "$OUT" >&2
 }
-warm_build backend       backend/main.py
-warm_build celery-worker backend/main.py
-warm_build frontend      frontend-v2/src/main.tsx
+warm_build backend  backend/main.py
+warm_build frontend frontend-v2/src/main.tsx
 
 echo "=== IMAGE SIZES ===" >&2
 docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}' \
-  | grep -E '^bnk-forge-' | sort | tee -a "$OUT" >&2
+  | grep -E '^bnkscope-' | sort | tee -a "$OUT" >&2
 
 echo "DONE" >&2
