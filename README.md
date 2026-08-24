@@ -233,10 +233,11 @@ its own. Two things stay CLI-only on purpose:
                   └────────────────────────┘
 ```
 
-Two containers, plus two for telemetry. No database server, no message broker,
-no worker pool, no reverse proxy — a single-user tool watching a handful of
-clusters needs none of them. A fifth exposes read-only MCP
-tools for an AI agent, on loopback (`./bnkscope up --no-mcp` skips it).
+Two containers, plus a third exposing read-only MCP tools for an AI agent on
+loopback (`./bnkscope up --no-mcp` skips it), and four more for telemetry —
+prometheus, grafana, loki and alloy. No database server, no message broker, no
+worker pool, no reverse proxy — a single-user tool watching a handful of
+clusters needs none of them.
 
 `network_mode: host` is used so the backend can reach clusters on your own
 networks without Docker's bridge iptables getting between it and your VPN
@@ -271,11 +272,11 @@ The Makefile is the source of truth; CI runs the same targets.
 
 ## Where this came from
 
-bnkscope is [bnk-forge](https://github.com/f5devcentral/bnk-forge) with the
-deployment platform removed — 623k lines down to ~176k, 13 containers to 2, and
-an initial page load from 5.1 MB to 0.7 MB. bnk-forge deploys BNK; bnkscope
-looks at it. [`docs/BNKSCOPE_PLAN.md`](docs/BNKSCOPE_PLAN.md) records every
-phase, including the parts of the plan that turned out to be wrong.
+bnkscope began as a fork of
+[bnk-forge](https://github.com/f5devcentral/bnk-forge), with the deployment
+platform removed. bnk-forge deploys BNK; bnkscope looks at it.
+[`docs/BNKSCOPE_PLAN.md`](docs/BNKSCOPE_PLAN.md) records every phase, including
+the parts of the plan that turned out to be wrong.
 
 ---
 
