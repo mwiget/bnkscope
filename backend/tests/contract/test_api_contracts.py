@@ -39,7 +39,7 @@ class TestSettingsContract:
             [
                 ApplicationSetting(
                     key="general.site_name",
-                    value="BNK Forge",
+                    value="bnkscope",
                     value_type="string",
                     description="Site display name",
                     category="general",
@@ -78,7 +78,7 @@ class TestSettingsContract:
 
         general_setting = parsed.settings["general"][0]
         assert general_setting.key == "general.site_name"
-        assert general_setting.value == "BNK Forge"
+        assert general_setting.value == "bnkscope"
         assert general_setting.is_encrypted is False
 
         aws_setting = parsed.settings["aws"][0]

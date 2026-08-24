@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# === BNK-Forge Docker Cleanup Script ===
+# === bnkscope Docker Cleanup Script ===
 #
 # Safely reclaims disk space from Docker without breaking running containers.
 # Run weekly via cron or manually when disk is getting full.
@@ -34,7 +34,7 @@ COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$REPO_DIR")}"
 
 echo ""
 echo "========================================="
-echo "  BNK-Forge Docker Cleanup"
+echo "  bnkscope Docker Cleanup"
 echo "  (project: ${COMPOSE_PROJECT})"
 echo "========================================="
 echo ""

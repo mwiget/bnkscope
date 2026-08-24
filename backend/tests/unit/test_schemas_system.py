@@ -21,8 +21,8 @@ class TestSettingsBatchUpdateNegative:
     """The bug that started the contract1 sprint: PUT /api/settings."""
 
     def test_valid_batch_update(self):
-        req = SettingsBatchUpdate(settings={"site_name": "BNK-Forge"})
-        assert req.settings["site_name"] == "BNK-Forge"
+        req = SettingsBatchUpdate(settings={"site_name": "bnkscope"})
+        assert req.settings["site_name"] == "bnkscope"
 
     def test_missing_settings_wrapper_rejected(self):
         """Frontend used to send { "site_name": "x" } instead of { "settings": {...} }."""
@@ -97,7 +97,7 @@ class TestSettingsResponse:
                 "general": [
                     SettingEntry(
                         key="general.site_name",
-                        value="BNK Forge",
+                        value="bnkscope",
                         value_type="string",
                         description="Site display name",
                         is_encrypted=False,

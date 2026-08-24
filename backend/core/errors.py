@@ -1,5 +1,5 @@
 """
-Centralized error handling for BNK-Forge
+Centralized error handling for bnkscope
 Provides structured error responses with error codes for better debugging
 """
 import logging

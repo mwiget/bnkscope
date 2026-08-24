@@ -8,7 +8,7 @@
 
 ## Purpose
 
-Define a shared taxonomy for operator-facing and support-facing failures. Every error in BNK-Forge maps to one of these categories, enabling consistent error handling, alerting, and troubleshooting.
+Define a shared taxonomy for operator-facing and support-facing failures. Every error in bnkscope maps to one of these categories, enabling consistent error handling, alerting, and troubleshooting.
 
 ---
 

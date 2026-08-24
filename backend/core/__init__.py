@@ -1,1 +1,1 @@
-"""Core module for BNK-Forge"""
+"""Core module for bnkscope"""

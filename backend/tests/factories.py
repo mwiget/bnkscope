@@ -1,5 +1,5 @@
 """
-Factory Boy factories for BNK-Forge backend models.
+Factory Boy factories for bnkscope backend models.
 
 Provides consistent, composable test data factories for all major models.
 Each factory creates minimal valid objects with sensible defaults.

@@ -29,7 +29,7 @@ router = APIRouter(tags=["api"])
 @router.get("/")
 def root():
     """Root endpoint"""
-    return {"message": "BNK-Forge API", "version": settings.VERSION, "docs": "/docs"}
+    return {"message": "bnkscope API", "version": settings.VERSION, "docs": "/docs"}
 
 @router.get("/health")
 def health_check(db: Session = Depends(get_db)):

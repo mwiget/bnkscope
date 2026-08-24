@@ -8,7 +8,7 @@
 
 ## Purpose
 
-Define the minimum queries and dashboard views needed for routine support of BNK-Forge.
+Define the minimum queries and dashboard views needed for routine support of bnkscope.
 
 ---
 
@@ -115,7 +115,7 @@ ORDER BY hour DESC, error_count DESC;
 ```sql
 -- Task completion rates (from structured logs)
 -- Use log aggregation to query:
-service:"bnk-forge-worker" AND level:ERROR
+service:"bnkscope" AND level:ERROR
 ```
 
 **Worker status API:**
@@ -129,7 +129,7 @@ curl -sfk https://localhost/api/system/workers -H "Authorization: Bearer $TOKEN"
 
 **Log query:**
 ```
-service:"bnk-forge-mcp" AND "tool_invocation_result" AND "success":false
+service:"bnkscope-mcp" AND "tool_invocation_result" AND "success":false
 ```
 
 ---

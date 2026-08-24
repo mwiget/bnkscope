@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from bnk_forge_mcp.client import APIError, BNKForgeClient
+from bnk_forge_mcp.client import APIError, BnkscopeClient
 from bnk_forge_mcp.config import MCPConfig
 
 
-def _client() -> BNKForgeClient:
-    return BNKForgeClient(
+def _client() -> BnkscopeClient:
+    return BnkscopeClient(
         MCPConfig(
             api_base_url="http://test-backend:8000",
             api_timeout=5,
@@ -74,7 +74,7 @@ def test_structured_backend_error_is_not_a_python_repr() -> None:
         "path": "/api/projects/999999",
         "request_id": "abc",
     }
-    parsed = BNKForgeClient._parse_error_body(_resp(404, body))
+    parsed = BnkscopeClient._parse_error_body(_resp(404, body))
 
     assert parsed["detail"] == "Project not found"
     assert parsed["code"] == "PROJECT_NOT_FOUND"
@@ -102,7 +102,7 @@ def test_real_backend_shape_nested_under_error_is_unwrapped() -> None:
         "path": "/api/projects/999999",
         "request_id": "abc",
     }}
-    parsed = BNKForgeClient._parse_error_body(_resp(404, body))
+    parsed = BnkscopeClient._parse_error_body(_resp(404, body))
     assert parsed["detail"] == "Project not found"
     assert parsed["code"] == "PROJECT_NOT_FOUND"
     assert parsed["details"] == {"project_id": "999999"}
@@ -112,19 +112,19 @@ def test_fastapi_wrapped_structured_error_is_unwrapped() -> None:
     """FastAPI HTTPException nests the payload under "detail"; the structured
     dict must still be found one level down."""
     body = {"detail": {"code": "CONFIRMATION_REQUIRED", "message": "confirm it", "details": {"tool": "x"}}}
-    parsed = BNKForgeClient._parse_error_body(_resp(400, body))
+    parsed = BnkscopeClient._parse_error_body(_resp(400, body))
     assert parsed["detail"] == "confirm it"
     assert parsed["code"] == "CONFIRMATION_REQUIRED"
     assert parsed["details"] == {"tool": "x"}
 
 
 def test_plain_string_detail_still_works() -> None:
-    parsed = BNKForgeClient._parse_error_body(_resp(404, {"detail": "Not Found"}))
+    parsed = BnkscopeClient._parse_error_body(_resp(404, {"detail": "Not Found"}))
     assert parsed == {"detail": "Not Found", "code": None, "details": None}
 
 
 def test_non_json_body_falls_back_to_text() -> None:
-    parsed = BNKForgeClient._parse_error_body(_resp(502, None, raw="<html>bad gateway</html>"))
+    parsed = BnkscopeClient._parse_error_body(_resp(502, None, raw="<html>bad gateway</html>"))
     assert parsed["detail"] == "<html>bad gateway</html>"
     assert parsed["code"] is None
 
@@ -133,7 +133,7 @@ def test_dict_with_no_human_message_renders_as_json_not_repr() -> None:
     """Even the worst case -- a dict with no message at all -- must be JSON."""
     import json as _json
 
-    parsed = BNKForgeClient._parse_error_body(_resp(500, {"weird": {"shape": 1}}))
+    parsed = BnkscopeClient._parse_error_body(_resp(500, {"weird": {"shape": 1}}))
     _json.loads(parsed["detail"])  # parses; a Python repr would raise here
     assert "'" not in parsed["detail"]
 
@@ -141,4 +141,4 @@ def test_dict_with_no_human_message_renders_as_json_not_repr() -> None:
 def test_extract_error_detail_is_backward_compatible() -> None:
     """Existing callers of the string helper keep getting the human string."""
     body = {"code": "X", "message": "human text", "details": {}}
-    assert BNKForgeClient._extract_error_detail(_resp(400, body)) == "human text"
+    assert BnkscopeClient._extract_error_detail(_resp(400, body)) == "human text"

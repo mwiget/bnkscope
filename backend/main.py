@@ -194,7 +194,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         # Horizon 3 prep: API version headers for debugging and future API versioning
         response.headers["X-Bnkscope-Version"] = settings.VERSION
-        response.headers["X-BNK-Forge-API"] = "v1"
+        response.headers["X-Bnkscope-API"] = "v1"
         return response
 
 # OBS-001: Correlation ID Middleware — must be outermost (added first, runs last)
@@ -282,4 +282,4 @@ app.include_router(connectivity_router)  # Reachability state + SSE stream + for
 @app.get("/ping")
 def ping():
     """Simple ping endpoint for health checks"""
-    return {"status": "ok", "message": "BNK-Forge API is running"}
+    return {"status": "ok", "message": "bnkscope API is running"}

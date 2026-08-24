@@ -1,5 +1,5 @@
 """
-Configuration for the BNK-Forge MCP server.
+Configuration for the bnkscope MCP server.
 
 Reads from environment variables with sensible defaults for Docker Compose deployment.
 """

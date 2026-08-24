@@ -162,8 +162,8 @@ if [[ "${SELF_TEST:-0}" == "1" ]]; then
     git init -q "$tmpdir"
     # Self-contained identity so the self-test runs anywhere (fresh runners,
     # no global git config).
-    git -C "$tmpdir" config user.email "selftest@bnk-forge.local"
-    git -C "$tmpdir" config user.name "bnk-forge self-test"
+    git -C "$tmpdir" config user.email "selftest@bnkscope.local"
+    git -C "$tmpdir" config user.name "bnkscope self-test"
     git -C "$tmpdir" commit --allow-empty -m "initial" -q
     if [[ -n "$since" ]]; then
       git -C "$tmpdir" tag "$since"

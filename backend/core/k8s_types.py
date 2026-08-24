@@ -1,5 +1,5 @@
 """
-Kubernetes resource type definitions for BNK-Forge.
+Kubernetes resource type definitions for bnkscope.
 Defines metadata for different types of Kubernetes resources.
 """
 

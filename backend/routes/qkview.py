@@ -1,5 +1,5 @@
 """
-QKView routes — proxy BNK CWC QKView API through BNK-Forge.
+QKView routes — proxy BNK CWC QKView API through bnkscope.
 
 Collection runs through an ephemeral curl pod scheduled on the cluster. The
 operator-dispatch path went with the operator agent (bnkscope Phase 2).

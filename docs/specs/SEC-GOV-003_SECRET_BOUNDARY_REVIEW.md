@@ -12,7 +12,7 @@ Review where secrets, kubeconfigs, tokens, passwords, and sensitive outputs may 
 
 ---
 
-## Secret Types in BNK-Forge
+## Secret Types in bnkscope
 
 | Secret Type | Storage | Encryption |
 |-------------|---------|------------|

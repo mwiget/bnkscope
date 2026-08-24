@@ -1,5 +1,5 @@
 """
-HTTP client for communicating with the BNK-Forge FastAPI backend.
+HTTP client for communicating with the bnkscope FastAPI backend.
 
 Handles authentication (JWT token management), request/response formatting,
 and error mapping. All MCP tools delegate to this client.
@@ -19,7 +19,7 @@ from .config import MCPConfig
 logger = logging.getLogger(__name__)
 
 class APIError(Exception):
-    """Raised when the BNK-Forge API returns an error."""
+    """Raised when the bnkscope API returns an error."""
 
     def __init__(
         self,
@@ -73,7 +73,7 @@ class APIError(Exception):
             "url": self.url,
         }
 
-class BNKForgeClient:
+class BnkscopeClient:
     """
     Async HTTP client for the bnkscope API.
 
@@ -103,7 +103,7 @@ class BNKForgeClient:
         Backward-compatible wrapper: callers that only want text keep getting
         text. Use _parse_error_body for the structured pieces.
         """
-        return BNKForgeClient._parse_error_body(resp)["detail"]
+        return BnkscopeClient._parse_error_body(resp)["detail"]
 
     @staticmethod
     def _parse_error_body(resp: httpx.Response) -> dict[str, Any]:
@@ -324,6 +324,6 @@ class BNKForgeClient:
     # ------------------------------------------------------------------
 
     async def health_check(self) -> dict[str, Any]:
-        """Check BNK-Forge API health (does NOT require auth)."""
+        """Check bnkscope API health (does NOT require auth)."""
         resp = await self._http.get("/api/system/health")
         return resp.json()

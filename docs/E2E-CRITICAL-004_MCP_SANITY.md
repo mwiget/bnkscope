@@ -56,7 +56,7 @@ returns a valid response envelope.
 @pytest.mark.e2e
 async def test_system_health_e2e():
     """Invoke system_health through real HTTP to backend."""
-    client = BNKForgeClient(config)
+    client = BnkscopeClient(config)
     result = await client.get("/api/system/health")
     assert result["status"] == "healthy"
 ```

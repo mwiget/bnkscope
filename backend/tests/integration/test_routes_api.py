@@ -20,7 +20,7 @@ class TestRootEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "message" in data
-        assert "BNK-Forge" in data["message"]
+        assert "bnkscope" in data["message"]
         assert "version" in data
 
 class TestHealthCheck:

@@ -370,7 +370,7 @@ def build_recommendations(
       - severity: "required" | "recommended" | "info"
       - title: human-readable title
       - description: what to do
-      - module: BNK Forge module path (if any)
+      - module: bnkscope module path (if any)
       - status: "deploy" | "skip" | "upgrade" | "investigate"
     """
     prereq_data: dict[str, dict] = {

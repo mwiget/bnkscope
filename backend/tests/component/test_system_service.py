@@ -108,7 +108,7 @@ class TestGetUpgradeReadiness:
     """Pre-flight checks for system upgrade."""
 
     @patch("services.system_service.os.path.exists", return_value=True)
-    @patch.dict("os.environ", {"HOST_REPO_PATH": "/opt/bnk-forge"})
+    @patch.dict("os.environ", {"HOST_REPO_PATH": "/opt/bnkscope"})
     def test_ready_when_all_set(self, mock_exists, db):
         svc = SystemService(db)
         result = svc.get_upgrade_readiness()

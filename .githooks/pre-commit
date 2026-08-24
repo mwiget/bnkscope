@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BNK-Forge v2 — Pre-commit hook
+# bnkscope — Pre-commit hook
 # Runs lint only on changed files (~5-10s)
 # Also validates alembic migration chain when migration files are staged
 # Install: git config core.hooksPath .githooks   (or: make setup-hooks)

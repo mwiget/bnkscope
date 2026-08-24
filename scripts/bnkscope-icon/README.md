@@ -28,7 +28,7 @@ PNGs land in `png/`, all with a transparent background: full build at
 
 ## Wiring
 
-`frontend-v2/index.html` still points at the bnk-forge `favicon.svg`. When
+`frontend-v2/index.html` points at the generated `/icons/bnkscope.svg`. When
 bnkscope takes over the shell:
 
 ```html

@@ -13,9 +13,9 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from ..client import BNKForgeClient
+from ..client import BnkscopeClient
 
-def register(mcp: FastMCP, client: BNKForgeClient) -> None:
+def register(mcp: FastMCP, client: BnkscopeClient) -> None:
     """Register diagnostics and fleet tools with the MCP server."""
 
     def _augment_fleet_platform_guidance(result: dict) -> dict:

@@ -1,4 +1,4 @@
-# gitleaks configuration for the public BNK Forge repository.
+# gitleaks configuration for the public bnkscope repository.
 #
 # Every entry below is a reviewed false positive with a stated reason. Do NOT
 # add blanket directory allowlists — that is how a real credential hides. Scope

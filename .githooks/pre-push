@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BNK-Forge v2 — Pre-push hook
+# bnkscope — Pre-push hook
 # Runs local checks before allowing push (~2-3m)
 # Also validates alembic migration chain (catches commits made without pre-commit hook)
 # Install: git config core.hooksPath .githooks   (or: make setup-hooks)

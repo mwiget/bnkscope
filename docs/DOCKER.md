@@ -58,7 +58,7 @@ docker compose --profile mcp build
 
 ## Keyless Image Signing, SBOM, and Provenance
 
-BNK Forge images published to the registry are signed with **keyless cosign** (Sigstore Fulcio +
+bnkscope images published to the registry are signed with **keyless cosign** (Sigstore Fulcio +
 Rekor transparency log). No long-lived signing key is stored — the signature is bound to the
 OIDC identity of whoever ran the publish script at the time of signing.
 
@@ -119,7 +119,7 @@ All images carry standard OCI labels injected at build time via `docker-bake.hcl
 
 | Label | Value |
 |-------|-------|
-| `org.opencontainers.image.source` | `https://github.com/f5devcentral/bnk-forge` |
+| `org.opencontainers.image.source` | `https://github.com/mwiget/bnkscope` |
 | `org.opencontainers.image.revision` | git commit SHA (`GIT_REVISION` bake arg) |
 | `org.opencontainers.image.version` | `VERSION` file contents |
 | `org.opencontainers.image.created` | RFC 3339 timestamp of the build |
@@ -179,7 +179,7 @@ or reverse proxy. Bake targets match: `api`, `frontend`, `mcp`.
 
 ## Networking Modes
 
-BNK Forge supports two networking modes depending on where it runs:
+bnkscope supports two networking modes depending on where it runs:
 
 ### Server Mode (Linux — `make deploy`)
 

@@ -1,7 +1,7 @@
 """
-BNK-Forge MCP Server — main entry point.
+bnkscope MCP Server — main entry point.
 
-Exposes BNK-Forge's API as MCP tools accessible by any MCP-compatible
+Exposes bnkscope's API as MCP tools accessible by any MCP-compatible
 AI assistant (Claude Desktop, VS Code Copilot, OpenCode, etc.).
 
 Architecture:
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP
 
-from .client import BNKForgeClient
+from .client import BnkscopeClient
 from .config import MCPConfig, load_config
 from .observability import ObservabilityMCPProxy
 from .tools import (
@@ -36,9 +36,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AppContext:
-    """Application context — holds the HTTP client for the BNK-Forge API."""
+    """Application context — holds the HTTP client for the bnkscope API."""
 
-    client: BNKForgeClient
+    client: BnkscopeClient
     config: MCPConfig
 
 
@@ -61,7 +61,7 @@ def create_server(config: MCPConfig | None = None) -> FastMCP:
     )
 
     # Create the HTTP client (shared across all tools)
-    api_client = BNKForgeClient(config)
+    api_client = BnkscopeClient(config)
 
     @asynccontextmanager
     async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
@@ -73,15 +73,15 @@ def create_server(config: MCPConfig | None = None) -> FastMCP:
         """
         yield AppContext(client=api_client, config=config)
 
-    logger.info("BNK-Forge MCP server configured")
+    logger.info("bnkscope MCP server configured")
     logger.info(f"  API URL: {config.api_base_url}")
     logger.info(f"  Port: {config.port}")
 
     # Create FastMCP server — stateless HTTP for container deployment
     mcp = FastMCP(
-        "BNK-Forge",
+        "bnkscope",
         instructions=(
-            "BNK-Forge MCP server — AI-powered operations for F5 BIG-IP Next for Kubernetes. "
+            "bnkscope MCP server — AI-powered operations for F5 BIG-IP Next for Kubernetes. "
             "Use these tools to manage Kubernetes clusters, monitor F5 BNK health, "
             "debug TMM traffic management, run diagnostics, manage Helm releases, "
             "and deploy infrastructure. Start with 'system_health' to check connectivity, "

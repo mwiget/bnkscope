@@ -1,5 +1,5 @@
 """
-Input validation utilities for BNK-Forge.
+Input validation utilities for bnkscope.
 
 Provides reusable validation functions for common input types:
 - CIDR notation (network addresses)

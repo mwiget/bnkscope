@@ -1,5 +1,5 @@
 # =============================================================================
-# BNK-Forge Frontend — Optimized Dockerfile
+# bnkscope Frontend — Optimized Dockerfile
 # =============================================================================
 #
 # OPT-001: BuildKit cache mounts for npm ci (~335MB node_modules).

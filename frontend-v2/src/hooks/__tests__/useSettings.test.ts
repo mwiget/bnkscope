@@ -34,7 +34,7 @@ const mockSettingsResponse = {
     general: [
       {
         key: 'site_name',
-        value: 'BNK Forge',
+        value: 'bnkscope',
         value_type: 'string',
         description: 'Site name',
         is_encrypted: false,
@@ -94,7 +94,7 @@ describe('useSettings', () => {
     expect(result.current.settings.general).toHaveLength(1);
     expect(result.current.settings.general[0]).toMatchObject({
       key: 'site_name',
-      value: 'BNK Forge',
+      value: 'bnkscope',
       value_type: 'string',
     });
     expect(result.current.error).toBeNull();

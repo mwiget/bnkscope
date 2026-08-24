@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ==============================================================================
-# BNK Forge ADR & Feature Branch Initialization Helper
+# bnkscope ADR & Feature Branch Initialization Helper
 # ==============================================================================
 # Codifies the lightweight workflow:
 # 1. GitHub Issue #<ID> created

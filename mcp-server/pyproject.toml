@@ -1,11 +1,11 @@
 [project]
 name = "bnk-forge-mcp"
 version = "0.1.0"
-description = "MCP Server for BNK-Forge — AI-accessible tools for F5 BIG-IP Next for Kubernetes"
+description = "MCP Server for bnkscope — AI-accessible tools for F5 BIG-IP Next for Kubernetes"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "BNK-Forge Team" }]
+authors = [{ name = "bnkscope Team" }]
 
 dependencies = [
     # Capped below 2: the 2.x major removed `mcp.server.fastmcp`, which

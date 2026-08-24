@@ -1,6 +1,6 @@
-# Contributing to BNK Forge
+# Contributing to bnkscope
 
-Thank you for your interest in contributing to BNK Forge! We welcome contributions from the community to help improve the project.
+Thank you for your interest in contributing to bnkscope! We welcome contributions from the community to help improve the project.
 
 ---
 

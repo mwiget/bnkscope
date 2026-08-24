@@ -12,11 +12,11 @@ Standardize structured logging fields across bnkscope's services to enable
 consistent querying, alerting, and correlation in log aggregation tools (ELK,
 Datadog, CloudWatch, Loki).
 
-> **The `service` value is still the literal string `bnk-forge`.** That is what
-> `core/logging_config.py` emits, and this document records what the code does
-> rather than what it should be called. Renaming it is safe; renaming the
-> sibling `bnk-forge-agent` strings in `services/qkview_service.py` is **not** —
-> those match labels on resources deployed in your clusters.
+> **The `service` value is `bnkscope`**, emitted by `core/logging_config.py`.
+> It was the literal string `bnk-forge` until the rename; anything querying on
+> the old value needs updating. The similar-looking `bnk-forge-agent` strings in
+> `services/qkview_service.py` were deliberately **not** renamed — those match
+> labels on resources already deployed in your clusters.
 
 ---
 
@@ -32,7 +32,7 @@ All services emit **JSON-formatted log lines** in production/staging. Developmen
 | `level` | string | Yes | Log severity level | `"INFO"`, `"WARNING"`, `"ERROR"` |
 | `logger` | string | Yes | Python logger name (module path) | `"routes.projects"`, `"services.helm_service"` |
 | `message` | string | Yes | Human-readable log message | `"Project created successfully"` |
-| `service` | string | Yes | Service identifier | `"bnk-forge"` (API), `"bnk-forge-mcp"` |
+| `service` | string | Yes | Service identifier | `"bnkscope"` (API), `"bnkscope-mcp"` |
 
 ### Correlation Fields (when available)
 
@@ -71,15 +71,15 @@ Any additional context passed via `logger.info("msg", extra={...})` appears unde
 
 ## Service-Specific Fields
 
-### API Server (`bnk-forge`)
+### API Server (`bnkscope`)
 
 Standard fields plus `request_id` on every request-scoped log line.
 
-### MCP Server (`bnk-forge-mcp`)
+### MCP Server (`bnkscope-mcp`)
 
 | Field | Source | Description |
 |-------|--------|-------------|
-| `service` | Config | Always `"bnk-forge-mcp"` |
+| `service` | Config | Always `"bnkscope-mcp"` |
 | `extra.invocation_id` | Generated | Per-tool-call UUID (12 hex chars) |
 | `extra.tool_name` | MCP protocol | Tool being invoked |
 | `extra.risk_class` | Tool catalog | Safety classification |
@@ -145,12 +145,12 @@ logger.info("Failed for project %s", project_id)  # BETTER — aggregation-frien
 
 ### JSON (production)
 ```json
-{"timestamp":"2026-03-28T14:32:01.456Z","level":"INFO","logger":"routes.projects","message":"Project created: my-vpc","service":"bnk-forge","request_id":"a1b2c3d4e5f6","extra":{"project_id":42,"user":"admin"}}
+{"timestamp":"2026-03-28T14:32:01.456Z","level":"INFO","logger":"routes.projects","message":"Project created: my-vpc","service":"bnkscope","request_id":"a1b2c3d4e5f6","extra":{"project_id":42,"user":"admin"}}
 ```
 
 ### JSON (error with traceback)
 ```json
-{"timestamp":"2026-03-28T14:32:05.789Z","level":"ERROR","logger":"services.helm_service","message":"Helm install failed","service":"bnk-forge","request_id":"a1b2c3d4e5f6","source":{"file":"/app/services/helm_service.py","line":142,"function":"install_release"},"exception":"Traceback...","extra":{"cluster_id":7,"chart":"nginx-ingress"}}
+{"timestamp":"2026-03-28T14:32:05.789Z","level":"ERROR","logger":"services.helm_service","message":"Helm install failed","service":"bnkscope","request_id":"a1b2c3d4e5f6","source":{"file":"/app/services/helm_service.py","line":142,"function":"install_release"},"exception":"Traceback...","extra":{"cluster_id":7,"chart":"nginx-ingress"}}
 ```
 
 ### Text (development)

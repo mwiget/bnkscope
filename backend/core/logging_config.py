@@ -27,12 +27,12 @@ class JSONFormatter(logging.Formatter):
         "level": "INFO",
         "logger": "uvicorn.access",
         "message": "Request completed",
-        "service": "bnk-forge",
+        "service": "bnkscope",
         "extra": { ... }
     }
     """
 
-    def __init__(self, service_name: str = "bnk-forge"):
+    def __init__(self, service_name: str = "bnkscope"):
         super().__init__()
         self.service_name = service_name
 
@@ -96,7 +96,7 @@ class HumanReadableFormatter(logging.Formatter):
 def configure_logging(
     environment: str = "development",
     log_level: str = "INFO",
-    service_name: str = "bnk-forge"
+    service_name: str = "bnkscope"
 ) -> None:
     """
     Configure application-wide logging.

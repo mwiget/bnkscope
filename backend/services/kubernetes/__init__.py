@@ -1,5 +1,5 @@
 """
-Cloud-agnostic Kubernetes service for BNK-Forge.
+Cloud-agnostic Kubernetes service for bnkscope.
 Works with EKS, AKS, GKE, on-prem, and any Kubernetes distribution.
 
 Split into focused modules for maintainability:

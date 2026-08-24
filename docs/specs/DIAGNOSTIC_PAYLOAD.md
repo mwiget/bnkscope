@@ -1,6 +1,6 @@
 # Diagnostic Payload Standardization — PLAT-REL-002
 
-> Standard diagnostic payload contract for health-like APIs across BNK Forge.
+> Standard diagnostic payload contract for health-like APIs across bnkscope.
 
 Status: **Accepted** | Created: 2026-03-27
 

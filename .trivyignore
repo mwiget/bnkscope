@@ -1,4 +1,4 @@
-# Trivy CVE Ignore List for BNK-Forge v2
+# Trivy CVE Ignore List for bnkscope
 # These CVEs are in third-party Go binaries (helm, kubectl, tofu, infracost)
 # that we install as pre-compiled tools. We cannot fix them until upstream
 # projects rebuild with a patched Go version.

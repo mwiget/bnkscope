@@ -1,12 +1,12 @@
-# BNK-Forge MCP Server
+# bnkscope MCP Server
 
-MCP (Model Context Protocol) server that exposes BNK-Forge's API as AI-accessible tools.
+MCP (Model Context Protocol) server that exposes bnkscope's API as AI-accessible tools.
 
 ## Quick Start
 
 ### Docker (Recommended)
 
-The MCP server runs as a container alongside BNK-Forge:
+The MCP server runs as a container alongside bnkscope:
 
 ```bash
 # Included in standard deployment
@@ -82,7 +82,7 @@ pytest tests/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BNK_FORGE_API_URL` | `http://bnk-forge-backend:8000` | Backend API URL |
+| `BNK_FORGE_API_URL` | `http://127.0.0.1:8000` | Backend API URL |
 | `BNK_FORGE_TOKEN` | (empty) | JWT token (overrides username/password) |
 | `BNK_FORGE_USERNAME` | `mcp` | Auto-login username (dedicated MCP service account) |
 | `BNK_FORGE_PASSWORD` | (none) | Auto-login password — must be set via `MCP_SERVICE_PASSWORD` env var; backend reconciles on every startup |
@@ -188,7 +188,7 @@ AI Assistant ↔ MCP Protocol (Streamable HTTP) ↔ MCP Server (:8081) ↔ HTTP 
 ```
 
 - **Transport**: Streamable HTTP (stateless) — production-ready, supports SSE streaming
-- **Auth**: Reuses BNK-Forge JWT tokens — auto-login with env credentials
+- **Auth**: Reuses bnkscope JWT tokens — auto-login with env credentials
 - **No business logic duplication**: All tools are thin wrappers over existing REST API
 
 ## Contract Hardening Conventions

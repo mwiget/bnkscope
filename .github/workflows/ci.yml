@@ -332,7 +332,7 @@ jobs:
             if [ "$actual" = "$expected" ]; then
               echo "  OK    $img reports $actual"
             else
-              echo "::error::$img reports '$actual', expected '$expected' — settings.VERSION will fall back to 0.0.0, which surfaces on /api, the OpenAPI title and the X-BNK-Forge-Version header"
+              echo "::error::$img reports '$actual', expected '$expected' — settings.VERSION will fall back to 0.0.0, which surfaces on /api, the OpenAPI title and the X-Bnkscope-Version header"
               failed=1
             fi
           done

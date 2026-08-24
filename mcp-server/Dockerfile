@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
-# BNK-Forge MCP Server
+# bnkscope MCP Server
 # Lightweight container — Python + MCP SDK + httpx. No heavy deps.
 #
-# Build: docker build -t bnk-forge-mcp mcp-server/
-# Run:   docker run -p 8081:8081 -e BNK_FORGE_API_URL=http://backend:8000 bnk-forge-mcp
+# Build: docker build -t bnkscope-mcp mcp-server/
+# Run:   docker run -p 8081:8081 -e BNK_FORGE_API_URL=http://backend:8000 bnkscope-mcp
 
 # python:3.11-slim — digest-pinned (Slice B / #300); re-pin when bumping the tag.
 # Pull-through cache prefix for the base image. Empty by default, so a plain
@@ -15,8 +15,8 @@
 ARG DOCKERHUB_PREFIX=
 FROM ${DOCKERHUB_PREFIX}library/python:3.11-slim@sha256:f9fa7f851e38bfb19c9de3afbc4b86ae7176ea7aaf94535c31df5458d5849457 AS base
 
-LABEL maintainer="BNK-Forge Team"
-LABEL description="MCP Server for BNK-Forge — AI-accessible tools for F5 BIG-IP Next for Kubernetes"
+LABEL maintainer="bnkscope Team"
+LABEL description="MCP Server for bnkscope — AI-accessible tools for F5 BIG-IP Next for Kubernetes"
 
 # Prevent Python from writing .pyc files and enable unbuffered output
 ENV PYTHONDONTWRITEBYTECODE=1 \

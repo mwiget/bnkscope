@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 # =============================================================================
-# BNK-Forge Backend — Multi-Target Dockerfile
+# bnkscope Backend — Multi-Target Dockerfile
 # =============================================================================
 #
 # Builds role-specific images from a shared base:
 #
-#   docker build --target api    -t bnk-forge-api    backend/   (~300-400MB)
+#   docker build --target api    -t bnkscope-api    backend/   (~300-400MB)
 #
 # Build args:
 #
@@ -156,7 +156,7 @@ USER bnkforge
 #
 # The port is settable because host networking means bnkscope shares the port
 # space with whatever else the operator runs — including, on a developer's box,
-# a full bnk-forge stack already holding 8000.
+# a full bnkscope stack already holding 8000.
 #
 # --proxy-headers/--forwarded-allow-ips: trust X-Forwarded-* from loopback only.
 CMD ["sh", "-c", "exec uvicorn main:app --host ${BNKSCOPE_API_HOST:-127.0.0.1} --port ${BNKSCOPE_API_PORT:-8000} --proxy-headers --forwarded-allow-ips=127.0.0.1"]

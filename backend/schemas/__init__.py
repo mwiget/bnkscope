@@ -1,5 +1,5 @@
 """
-BNK-Forge Pydantic Schemas -- re-exports for convenient imports.
+bnkscope Pydantic Schemas -- re-exports for convenient imports.
 
 Usage:
     from schemas.k8s import ClusterListResponse

@@ -32,7 +32,7 @@ cat far-credentials.json | helm registry login -u _json_key_base64 --password-st
 
 **Expected format:** The file contains a base64-encoded JSON service account key (single line of base64 text).
 
-**Usage in BNK-Forge:**
+**Usage in bnkscope:**
 When deploying the `bnk/far-setup` module, the platform will automatically use
 `/app/secrets/far-credentials.json` as the `service_account_key_file` variable.
 

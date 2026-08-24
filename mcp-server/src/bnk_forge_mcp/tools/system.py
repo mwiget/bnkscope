@@ -11,14 +11,14 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from ..client import BNKForgeClient
+from ..client import BnkscopeClient
 
-def register(mcp: FastMCP, client: BNKForgeClient) -> None:
+def register(mcp: FastMCP, client: BnkscopeClient) -> None:
     """Register system tools with the MCP server."""
 
     @mcp.tool()
     async def system_health() -> str:
-        """Get BNK-Forge system health status.
+        """Get bnkscope system health status.
 
         Returns the health of all services (database, Redis, Celery workers),
         resource counts, and system version information.
@@ -28,7 +28,7 @@ def register(mcp: FastMCP, client: BNKForgeClient) -> None:
 
     @mcp.tool()
     async def system_settings() -> str:
-        """Get current BNK-Forge system settings.
+        """Get current bnkscope system settings.
 
         Returns all configurable settings including defaults, feature flags,
         and environment configuration.

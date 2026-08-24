@@ -27,13 +27,13 @@ def test_server_creates_successfully(config: MCPConfig) -> None:
     """Server creates without error."""
     mcp = create_server(config)
     assert mcp is not None
-    assert mcp.name == "BNK-Forge"
+    assert mcp.name == "bnkscope"
 
 def test_server_has_instructions(config: MCPConfig) -> None:
     """Server has helpful instructions for AI assistants."""
     mcp = create_server(config)
     assert mcp.instructions is not None
-    assert "BNK-Forge" in mcp.instructions
+    assert "bnkscope" in mcp.instructions
     assert "system_health" in mcp.instructions
 
 def test_all_system_tools_registered(config: MCPConfig) -> None:

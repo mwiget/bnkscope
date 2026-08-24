@@ -187,7 +187,7 @@ PROVENANCE
 
 echo ""
 echo "========================================================"
-echo "  BNK Forge — Keyless Image Signing + SBOM + Provenance"
+echo "  bnkscope — Keyless Image Signing + SBOM + Provenance"
 echo "========================================================"
 echo "  Registry:  ${REGISTRY}"
 echo "  Version:   ${VERSION}"

@@ -1,5 +1,5 @@
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  BNK-Forge v2 — Release Pipeline                                           ║
+# ║  bnkscope — Release Pipeline                                               ║
 # ║                                                                             ║
 # ║  Triggers:                                                                  ║
 # ║    • push to staging  → pre-release RC tag (no VERSION commit)             ║

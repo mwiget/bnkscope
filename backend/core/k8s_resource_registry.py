@@ -1,5 +1,5 @@
 """
-Kubernetes resource registry for BNK-Forge.
+Kubernetes resource registry for bnkscope.
 Defines all supported Kubernetes resource types for cloud-agnostic monitoring.
 
 Organization:

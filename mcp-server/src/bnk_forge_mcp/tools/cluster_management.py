@@ -12,9 +12,9 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from ..client import BNKForgeClient
+from ..client import BnkscopeClient
 
-def register(mcp: FastMCP, client: BNKForgeClient) -> None:
+def register(mcp: FastMCP, client: BnkscopeClient) -> None:
     """Register cluster management tools with the MCP server."""
 
     # ------------------------------------------------------------------
@@ -23,7 +23,7 @@ def register(mcp: FastMCP, client: BNKForgeClient) -> None:
 
     @mcp.tool()
     async def list_clusters() -> str:
-        """List all Kubernetes clusters registered in BNK-Forge.
+        """List all Kubernetes clusters registered in bnkscope.
 
         Returns cluster names, IDs, connectivity status, and BNK installation status.
         """

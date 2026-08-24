@@ -1,6 +1,6 @@
 # Canonical Status Semantics — PLAT-REL-001
 
-> The single source of truth for how BNK Forge represents operational state across backend, frontend, and MCP surfaces.
+> The single source of truth for how bnkscope represents operational state across backend, frontend, and MCP surfaces.
 
 Status: **Accepted** | Created: 2026-03-27
 
@@ -8,7 +8,7 @@ Status: **Accepted** | Created: 2026-03-27
 
 ## Problem
 
-BNK Forge has 17+ status domains using ad-hoc string literals with no shared vocabulary. The same concept is expressed differently across surfaces:
+bnkscope has 17+ status domains using ad-hoc string literals with no shared vocabulary. The same concept is expressed differently across surfaces:
 
 | Concept | Backend A says | Backend B says | Frontend says |
 |---------|---------------|----------------|---------------|

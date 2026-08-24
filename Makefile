@@ -1,4 +1,4 @@
-# === BNK Forge — Commands ===
+# === bnkscope — Commands ===
 # Usage: make deploy       — build + deploy (auto-detects Linux vs macOS networking)
 #        make install      — first-time server setup (builds from scratch)
 #        make update       — pull latest + rebuild + restart (keeps all data)
@@ -819,7 +819,7 @@ openapi-types-check: openapi-check $(FRONTEND_PREREQ)
 # ─── Help ────────────────────────────────────────────────────────────────────
 
 help:
-	@echo "BNK Forge — Commands"
+	@echo "bnkscope — Commands"
 	@echo ""
 	@echo "  All deploy/runtime targets auto-detect your platform:"
 	@echo "    Linux  → host networking (services bind directly to host ports)"

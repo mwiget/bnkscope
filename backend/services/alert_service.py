@@ -1,5 +1,5 @@
 """
-Alert dispatch service for BNK-Forge.
+Alert dispatch service for bnkscope.
 
 Handles sending alerts to configured channels (webhook, Slack, MS Teams)
 when a cluster's health severity changes.
@@ -162,7 +162,7 @@ def _build_payload(
     else:
         # Generic webhook — structured JSON
         return {
-            "source": "bnk-forge",
+            "source": "bnkscope",
             "event_type": event_type,
             "severity": severity,
             "title": title,
@@ -211,7 +211,7 @@ def _build_slack_payload(
 
     blocks.append({
         "type": "context",
-        "elements": [{"type": "mrkdwn", "text": f"BNK-Forge | {timestamp}"}]
+        "elements": [{"type": "mrkdwn", "text": f"bnkscope | {timestamp}"}]
     })
 
     return {"blocks": blocks}
@@ -240,7 +240,7 @@ def _build_msteams_payload(
         "summary": title,
         "sections": [{
             "activityTitle": title,
-            "activitySubtitle": f"BNK-Forge | {timestamp}",
+            "activitySubtitle": f"bnkscope | {timestamp}",
             "facts": facts,
             "text": message,
             "markdown": True,
@@ -300,8 +300,8 @@ def test_channel(db: Session, channel_id: int) -> dict[str, Any]:
         channel,
         event_type="test",
         severity="info",
-        title="BNK-Forge Test Alert",
-        message=f"This is a test alert from BNK-Forge sent to channel '{channel.name}'. If you see this, the channel is configured correctly.",
+        title="bnkscope Test Alert",
+        message=f"This is a test alert from bnkscope sent to channel '{channel.name}'. If you see this, the channel is configured correctly.",
         cluster_id=None,
         extra={"test": True, "channel_type": channel.channel_type},
     )
@@ -313,7 +313,7 @@ def test_channel(db: Session, channel_id: int) -> dict[str, Any]:
         channel_id=channel.id,
         event_type="test",
         severity="info",
-        title="BNK-Forge Test Alert",
+        title="bnkscope Test Alert",
         message="Test alert",
         payload=payload,
         status=AlertStatus.SENT if result["success"] else AlertStatus.FAILED,

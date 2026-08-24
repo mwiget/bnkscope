@@ -1,5 +1,5 @@
 """
-Tests for the BNK-Forge API client.
+Tests for the bnkscope API client.
 
 Uses respx to mock httpx requests — no real backend needed.
 """
@@ -11,7 +11,7 @@ from httpx import Response
 
 respx = pytest.importorskip("respx", reason="respx package not installed in this environment")
 
-from bnk_forge_mcp.client import APIError, BNKForgeClient
+from bnk_forge_mcp.client import APIError, BnkscopeClient
 from bnk_forge_mcp.config import MCPConfig
 
 @pytest.fixture
@@ -23,8 +23,8 @@ def config() -> MCPConfig:
     )
 
 @pytest.fixture
-def client(config: MCPConfig) -> BNKForgeClient:
-    return BNKForgeClient(config)
+def client(config: MCPConfig) -> BnkscopeClient:
+    return BnkscopeClient(config)
 
 
 # ------------------------------------------------------------------
@@ -32,7 +32,7 @@ def client(config: MCPConfig) -> BNKForgeClient:
 # ------------------------------------------------------------------
 
 @respx.mock
-async def test_get_success(client: BNKForgeClient) -> None:
+async def test_get_success(client: BnkscopeClient) -> None:
     """GET request returns parsed JSON."""
     route = respx.get("http://test-backend:8000/api/system/health").mock(
         return_value=Response(200, json={"status": "healthy"})
@@ -45,7 +45,7 @@ async def test_get_success(client: BNKForgeClient) -> None:
     assert route.called
 
 @respx.mock
-async def test_get_with_params(client: BNKForgeClient) -> None:
+async def test_get_with_params(client: BnkscopeClient) -> None:
     """GET request passes query parameters."""
     route = respx.get("http://test-backend:8000/api/resources").mock(
         return_value=Response(200, json=[])
@@ -61,7 +61,7 @@ async def test_get_with_params(client: BNKForgeClient) -> None:
 # ------------------------------------------------------------------
 
 @respx.mock
-async def test_post_success(client: BNKForgeClient) -> None:
+async def test_post_success(client: BnkscopeClient) -> None:
     """POST request sends JSON body and returns parsed response."""
     route = respx.post("http://test-backend:8000/api/clusters/1/test").mock(
         return_value=Response(200, json={"connected": True})
@@ -73,7 +73,7 @@ async def test_post_success(client: BNKForgeClient) -> None:
     assert route.called
 
 @respx.mock
-async def test_post_204_no_content(client: BNKForgeClient) -> None:
+async def test_post_204_no_content(client: BnkscopeClient) -> None:
     """POST returning 204 No Content returns status ok."""
     respx.post("http://test-backend:8000/api/something").mock(
         return_value=Response(204)
@@ -88,7 +88,7 @@ async def test_post_204_no_content(client: BNKForgeClient) -> None:
 # ------------------------------------------------------------------
 
 @respx.mock
-async def test_api_error_raised(client: BNKForgeClient) -> None:
+async def test_api_error_raised(client: BnkscopeClient) -> None:
     """Non-2xx response returns structured error envelope."""
     respx.get("http://test-backend:8000/api/missing").mock(
         return_value=Response(404, json={"detail": "Not found"})
@@ -100,7 +100,7 @@ async def test_api_error_raised(client: BNKForgeClient) -> None:
     assert "Not found" in result["error"]["detail"]
 
 @respx.mock
-async def test_api_error_plain_text(client: BNKForgeClient) -> None:
+async def test_api_error_plain_text(client: BnkscopeClient) -> None:
     """Non-JSON error body is still captured in envelope."""
     respx.get("http://test-backend:8000/api/broken").mock(
         return_value=Response(500, text="Internal Server Error")
@@ -119,7 +119,7 @@ async def test_api_error_plain_text(client: BNKForgeClient) -> None:
 # ------------------------------------------------------------------
 
 @respx.mock
-async def test_health_check_no_auth(client: BNKForgeClient) -> None:
+async def test_health_check_no_auth(client: BnkscopeClient) -> None:
     """Health check does NOT send auth headers."""
     route = respx.get("http://test-backend:8000/api/system/health").mock(
         return_value=Response(200, json={"status": "healthy"})
@@ -132,7 +132,7 @@ async def test_health_check_no_auth(client: BNKForgeClient) -> None:
     assert "Authorization" not in route.calls[0].request.headers
 
 @respx.mock
-async def test_get_returns_error_envelope_on_not_found(client: BNKForgeClient) -> None:
+async def test_get_returns_error_envelope_on_not_found(client: BnkscopeClient) -> None:
     """Client returns structured envelope for API errors."""
     respx.get("http://test-backend:8000/api/missing").mock(
         return_value=Response(404, json={"detail": "Not found"})
@@ -148,7 +148,7 @@ async def test_get_returns_error_envelope_on_not_found(client: BNKForgeClient) -
     assert "next_action" in result["error"]
 
 @respx.mock
-async def test_put_supports_query_params(client: BNKForgeClient) -> None:
+async def test_put_supports_query_params(client: BnkscopeClient) -> None:
     """PUT request passes query parameters for route-aligned APIs."""
     route = respx.put("http://test-backend:8000/api/k8s/1/helm/releases/r/upgrade").mock(
         return_value=Response(200, json={"success": True})
@@ -164,7 +164,7 @@ async def test_put_supports_query_params(client: BNKForgeClient) -> None:
     assert route.calls[0].request.url.params["namespace"] == "kube-system"
 
 @respx.mock
-async def test_delete_supports_query_params(client: BNKForgeClient) -> None:
+async def test_delete_supports_query_params(client: BnkscopeClient) -> None:
     """DELETE request passes query parameters for route-aligned APIs."""
     route = respx.delete("http://test-backend:8000/api/k8s/1/helm/releases/r").mock(
         return_value=Response(200, json={"success": True})
@@ -180,7 +180,7 @@ async def test_delete_supports_query_params(client: BNKForgeClient) -> None:
 
 @respx.mock
 async def test_client_logs_structured_success_without_payloads(
-    client: BNKForgeClient,
+    client: BnkscopeClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level("INFO", logger="bnk_forge_mcp.client")
@@ -194,7 +194,7 @@ async def test_client_logs_structured_success_without_payloads(
 
 @respx.mock
 async def test_client_logs_structured_failure_without_payloads(
-    client: BNKForgeClient,
+    client: BnkscopeClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level("INFO", logger="bnk_forge_mcp.client")
@@ -214,7 +214,7 @@ async def test_client_logs_structured_failure_without_payloads(
 # ------------------------------------------------------------------
 
 @respx.mock
-async def test_success_dict_gets_universal_ok_true(client: BNKForgeClient) -> None:
+async def test_success_dict_gets_universal_ok_true(client: BnkscopeClient) -> None:
     """Every dict success body carries ok:true, so an agent has one field to
     check regardless of which tool it called (#66)."""
     respx.get("http://test-backend:8000/api/projects/1").mock(
@@ -224,7 +224,7 @@ async def test_success_dict_gets_universal_ok_true(client: BNKForgeClient) -> No
     assert result["ok"] is True
 
 @respx.mock
-async def test_mark_ok_does_not_override_backend_ok(client: BNKForgeClient) -> None:
+async def test_mark_ok_does_not_override_backend_ok(client: BnkscopeClient) -> None:
     """A body that already set ok (a structured passthrough) is left alone."""
     respx.get("http://test-backend:8000/api/thing").mock(
         return_value=Response(200, json={"ok": False, "note": "backend said so"})
@@ -233,7 +233,7 @@ async def test_mark_ok_does_not_override_backend_ok(client: BNKForgeClient) -> N
     assert result["ok"] is False
 
 @respx.mock
-async def test_list_success_returned_as_is(client: BNKForgeClient) -> None:
+async def test_list_success_returned_as_is(client: BnkscopeClient) -> None:
     """List/collection successes can't carry a key; they're unambiguously not
     the error envelope, so success is the absence of ok:false, not a stamped
     ok:true."""
@@ -244,7 +244,7 @@ async def test_list_success_returned_as_is(client: BNKForgeClient) -> None:
     assert result == [{"id": 1}, {"id": 2}]
 
 @respx.mock
-async def test_error_and_success_share_the_ok_key(client: BNKForgeClient) -> None:
+async def test_error_and_success_share_the_ok_key(client: BnkscopeClient) -> None:
     """The whole point of #66: the same key an agent reads on failure (ok:false)
     is present on success (ok:true) — no more success/ok split."""
     respx.get("http://test-backend:8000/api/ok").mock(
@@ -261,7 +261,7 @@ async def test_error_and_success_share_the_ok_key(client: BNKForgeClient) -> Non
     assert "ok" in ok_result and "ok" in err_result
 
 @respx.mock
-async def test_success_false_on_200_derives_ok_false(client: BNKForgeClient) -> None:
+async def test_success_false_on_200_derives_ok_false(client: BnkscopeClient) -> None:
     """Several routes return HTTP 200 with an explicit failure body (a Celery
     task that failed or is pending — helm.py list/detail/history/values/manifest,
     alert_channels, cloud_auth, ...). ok must derive from success, or the agent
@@ -278,7 +278,7 @@ async def test_success_false_on_200_derives_ok_false(client: BNKForgeClient) -> 
     assert result["success"] is False        # original body untouched
 
 @respx.mock
-async def test_pending_task_on_200_reads_as_not_ok(client: BNKForgeClient) -> None:
+async def test_pending_task_on_200_reads_as_not_ok(client: BnkscopeClient) -> None:
     """A still-pending task (success:false, status:pending on 200) is not a
     success — ok:false reads correctly."""
     respx.get("http://test-backend:8000/api/k8s/1/helm/releases/r/values").mock(
@@ -288,7 +288,7 @@ async def test_pending_task_on_200_reads_as_not_ok(client: BNKForgeClient) -> No
     assert result["ok"] is False
 
 @respx.mock
-async def test_success_true_on_200_still_ok_true(client: BNKForgeClient) -> None:
+async def test_success_true_on_200_still_ok_true(client: BnkscopeClient) -> None:
     """An explicit success:true still stamps ok:true — the common mutating-tool
     body is unchanged."""
     respx.post("http://test-backend:8000/api/k8s/1/helm/releases").mock(
@@ -314,7 +314,7 @@ async def test_a_default_config_can_reach_the_backend() -> None:
         return_value=Response(200, json={"status": "healthy"})
     )
 
-    client = BNKForgeClient(MCPConfig())
+    client = BnkscopeClient(MCPConfig())
     result = await client.get("/api/system/health")
 
     # `ok: True` is the success envelope every tool returns; the point is that

@@ -208,7 +208,7 @@ If Docker is unresponsive even after freeing disk:
 sudo systemctl restart docker
 
 # Then restart containers
-cd ~/Code/github/bnk-forge-v2
+cd ~/git/bnkscope
 docker compose up -d
 ```
 

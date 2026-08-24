@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# === BNK-Forge Orphan Volume Cleanup ===
+# === bnkscope Orphan Volume Cleanup ===
 #
 # Removes Docker volumes whose name starts with the compose project prefix
-# (default: bnk-forge_ or bnk-forge-) but whose `com.docker.compose.project`
+# (default: bnkscope_ or bnkscope-) but whose `com.docker.compose.project`
 # label is missing or doesn't match the current project.
 #
 # These are typically left over from a renamed deployment, a previous project
@@ -24,7 +24,7 @@ COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$REPO_DIR")}"
 
 echo ""
 echo "========================================="
-echo "  BNK-Forge Orphan Volume Cleanup"
+echo "  bnkscope Orphan Volume Cleanup"
 echo "  (project: ${COMPOSE_PROJECT})"
 echo "========================================="
 echo ""

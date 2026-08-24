@@ -1,5 +1,5 @@
 """
-Shared mocks for BNK-Forge backend tests.
+Shared mocks for bnkscope backend tests.
 
 Provides reusable mock objects for external services that should not
 be called during unit/integration tests:

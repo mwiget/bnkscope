@@ -166,7 +166,6 @@ frontend-v2/               # React 18 + Vite + TailwindCSS + shadcn/ui
 mcp-server/                # standalone MCP server (read-only tools, /mcp)
 scripts/                   # build, verification and doc generation
 bin/                       # small maintenance helpers
-vm-bnk-forge/              # cloud-init harness: a fresh KVM/cloud VM that self-installs
 bnkscope                   # the CLI: up · down · status · open · logs · endpoint
 ```
 
