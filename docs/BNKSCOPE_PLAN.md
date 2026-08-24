@@ -30,147 +30,90 @@ Everything that writes infrastructure goes. Everything that reads it stays.
 
 ### Progress
 
-| Phase | Status | LOC removed | Running total |
-|---|---|---:|---:|
-| 0 Baseline | ✅ done | — | 622,964 |
-| 1 Pipeline | ✅ done | 255,733 | **367,346** |
-| 2 Fleet / operators / benchmarks / DPU | ✅ done | 134,878 | **224,983** |
-| 3 Auth + SSH | ✅ done | 18,515 | **185,869** |
-| 4 Runtime collapse | ✅ done | 13,745 | **172,124** |
-| 5 Cluster autodiscovery | ✅ done | −958 (net **added**) | **173,082** |
-| 6 UI reshape | ✅ done | −663 (net **added**) | **173,745** |
-| 7 tmmscope | ✅ done | −1,883 (net **added**) | **175,628** |
-| 8 Package | ✅ done | 38 | **175,590** |
-
-**419,405 LOC removed — 70.5% of the baseline.** The counter was never the
-point after Phase 4; what it measured well was the first three phases, and what
-matters now is in the per-phase notes below.
-
----
-
-## 2. Measured mass (tracked code, `t193/` scratch dir excluded)
-
-```
-backend        345,310    frontend-v2    240,832    scripts   12,374
-mcp-server       9,155    bnk-operator     6,659    tests      5,460
-bin              1,072    vm-bnk-forge       302
-                                          ─────────────────────────
-                                          TOTAL   ~621,000 LOC
-```
-
-Structural counters that drive build time and cognitive load:
-
-| Counter | Today |
+| Phase | Status |
 |---|---|
-| Backend Python source files | 617 |
-| Backend test files | 466 |
-| Frontend `.ts/.tsx` files | 846 |
-| Frontend test files | 292 |
-| Alembic migrations | 152 |
-| DB tables | 80 |
-| FastAPI routers registered in `main.py` | 67 |
-| OpenAPI paths | 533 |
-| docker-compose services | 30 |
-| CI jobs | 25 |
-| Generated API types (`api-generated.ts`) | 43,368 lines |
+| 0 Baseline | ✅ done |
+| 1 Pipeline | ✅ done |
+| 2 Fleet / operators / benchmarks / DPU | ✅ done |
+| 3 Auth + SSH | ✅ done |
+| 4 Runtime collapse | ✅ done |
+| 5 Cluster autodiscovery | ✅ done |
+| 6 UI reshape | ✅ done |
+| 7 tmmscope | ✅ done |
+| 8 Package | ✅ done |
 
-### 2.1 Bucketed by feature area
-
-Every `.py/.ts/.tsx` file under `backend/`, `frontend-v2/src/`, `mcp-server/` was
-assigned to exactly one bucket by path (first-match rules). Numbers are ±10% —
-the point is the ratio, not the third digit.
-
-| Bucket | src | test | total | Verdict |
-|---|---:|---:|---:|---|
-| modules / catalog / blueprints / stacks / helm / registry | 60,258 | 42,874 | **103,132** | remove |
-| DPU / DPF / bare-metal / BlueField / rshim | 35,326 | 10,765 | **46,091** | remove |
-| OpenTofu / execution engine / workspaces / state | 24,750 | 6,958 | **31,708** | remove |
-| projects | 19,039 | 10,020 | **29,059** | remove |
-| fleet / operators | 15,840 | 10,044 | **25,884** | remove |
-| auth / users / audit / credentials / secrets | 11,818 | 11,177 | **22,995** | remove |
-| benchmarks | 13,608 | 7,972 | **21,580** | remove |
-| discovery / scanner | 12,384 | 7,226 | **19,610** | *mostly* remove (keep the probe) |
-| proxy migration / CIS translate | 9,118 | 6,184 | **15,302** | remove |
-| snapshots / promotion / runbooks / backup | 6,648 | 4,202 | **10,850** | remove |
-| celery tasks / notifications / alerts | 8,801 | 1,858 | **10,659** | remove |
-| BNK upgrade / licensing | 5,517 | 3,414 | **8,931** | remove |
-| cloud auth / SSH / tunnels / F5 devices / TMOS | 2,756 | 5,977 | **8,733** | remove (SSH tunnel: see §6) |
-| drift | 3,287 | 2,320 | **5,607** | remove |
-| **k8s core** (resources, clusters, CRDs, topology, pods, exec, logs) | 15,109 | 3,629 | **18,738** | **keep** |
-| **BNK / TMM** (health, topology, tmm_debug, qkview, gateways) | 15,506 | 374 | **15,880** | **keep** |
-| **system / core / db / utils** | 7,294 | 0 | **7,294** | **keep** |
-| **observability / reachability / LLM logs** | 4,752 | 785 | **5,537** | **keep** |
-| shared (UI kit, lib, generated types, layout, schemas) | 104,482 | 82,923 | **187,405** | shrinks proportionally |
-| | | | **594,995** | |
+Phases 5 through 7 added code rather than removing it — autodiscovery, the UI
+reshape and tmmscope are all new. The subtraction was almost entirely in the
+first four.
 
 ---
 
-## 3. How much comes out
+## 2. What was in scope, and what stayed
 
-| | LOC |
-|---|---:|
-| Unambiguous removals (buckets marked *remove*) | **~362,000** |
-| Shared code that dies with them (generated types ~35k of 43k, unused UI kit, `lib/`, layout, their tests) | **~120,000** |
-| Keep buckets | ~47,000 |
-| Kept slice of shared code | ~30,000 |
+Every `.py/.ts/.tsx` file under `backend/`, `frontend-v2/src/` and `mcp-server/`
+was assigned to exactly one feature bucket by path, so the removals could be
+reasoned about a bucket at a time rather than file by file.
 
-**Estimate: ~480,000 LOC removed (≈ 78% of the tracked codebase) before a single
-line of tmmscope is added.** tmmscope adds back **~4,200 lines of Go** (2 binaries
-+ a webhook + dashboard assets).
+**Removed outright:** modules, catalog, blueprints, stacks, helm and the
+registry; DPU, DPF, bare-metal, BlueField and rshim; OpenTofu, the execution
+engine, workspaces and state; projects; fleet and operators; auth, users, audit,
+credentials and secrets; benchmarks; proxy migration and CIS translate;
+snapshots, promotion, runbooks and backup; celery tasks; BNK upgrade and
+licensing; cloud auth, SSH, tunnels, F5 devices and TMOS; drift.
 
-Landing zone: **~90,000–110,000 LOC**, ~150 backend source files, ~200 frontend
-files, **one** initial migration instead of 152, ~15 DB tables instead of 80.
+**Kept:** k8s core (resources, clusters, CRDs, topology, pods, exec, logs); BNK
+and TMM (health, topology, `tmm_debug`, qkview, gateways); system, core, db and
+utils; observability, reachability and LLM logs. Discovery and the scanner were
+mostly removed, keeping the probe.
 
-Not counted above, but also going: ~40 docs under `docs/` (DPU_*, MCP_*, SPRINT_*,
-BENCHMARK_*, DEPLOY-00*), the 62KB `Makefile` (→ ~5KB), `helm/`, `bnk-operator/`
-(6,659 LOC — the fleet agent), `Dockerfile.agent`, `upgrade.sh` (20KB),
-`docker-compose.{adr424,local,dev,test,override}.yml`.
+Shared code — the UI kit, `lib/`, layout, schemas and the generated API types —
+was never bucketed as keep or remove. It shrinks in proportion to what calls it,
+which is why the generated types fell by roughly four fifths once the routes
+behind them were gone.
 
----
+Also removed, outside those buckets: most of `docs/`, the Makefile's
+provisioning targets, `helm/`, `bnk-operator/` (the fleet agent),
+`Dockerfile.agent`, `upgrade.sh`, and the `adr424`, `dev`, `test` and `override`
+compose files.
 
-## 4. Does it cut build time and UI clutter?
+## 3. Does it cut build time and UI clutter?
 
-**Build — yes.** Measured at Phase 0 ([`BNKSCOPE_BASELINE.md`](BNKSCOPE_BASELINE.md)):
-cold build of all 7 images **340s**, warm frontend rebuild **37s**, images
-**5.06 GB**, CI **27m 12s wall / 46m 14s compute**, initial JS payload **5.09 MB
-raw / 1.33 MB gz**. The drivers being removed:
+**Build — yes.** The drivers being removed:
 
-| Driver | Today | After |
+| Driver | Before | After |
 |---|---|---|
 | Backend image `tooling-deps` stage | downloads + installs `tofu`, `helm`, `kubectl`, `aws-cli v2`, `oras`, `infracost`, `docker-ce-cli`, `llmtop` | `kubectl` only (or nothing — the Python `kubernetes` client suffices) |
-| Images built | api, worker, beat, frontend, mcp, proxy, agent (7) | api, frontend (2) |
-| Compose services started | 30 | 3 (api, frontend/static, tmmscope-stack) |
-| Python deps | 32 direct (celery, boto3, google-auth, python-hcl2, gitpython, alembic, passlib, slowapi…) | ~15 |
-| `tsc` + `vite build` input | 846 files, incl. a 43k-line generated types file | ~200 files, ~8k types |
-| Test suite | 466 backend + 292 frontend files across 25 CI jobs | ~100 + ~60, ~6 CI jobs |
-| Migration CI | 3 dedicated Postgres migration jobs over 152 revisions | none (SQLite, schema created from models) |
+| Images built | api, worker, beat, frontend, mcp, proxy, agent | api, frontend, mcp |
+| Python deps | celery, boto3, google-auth, python-hcl2, gitpython, alembic, passlib, slowapi… | the kubernetes client and what FastAPI needs |
+| `tsc` + `vite build` input | every page, plus a generated types file covering the whole pipeline API | the pages that survive, and the types their routes still generate |
+| Migration CI | dedicated Postgres migration jobs over the full revision history | none — SQLite, schema created from models |
 
-The two heaviest images — `forge-agent` (1.61 GB, 83s, compiles `crick` from
-source for benchmarks) and `celery-worker` (1.46 GB, 49s) — are both deleted
-outright. Together with `celery-beat` they are **3.73 GB of the 5.06 GB** and
-**172s of the 340s** cold build.
+The two heaviest images, `forge-agent` (which compiled `crick` from source for
+benchmarks) and `celery-worker`, are deleted outright, and `celery-beat` with
+them. Most of the frontend's initial payload was Monaco, pulled in for config
+editing that Phase 1 deletes.
 
-Frontend is the slowest *warm* rebuild at 37s, and 76% of its initial payload is
-Monaco — pulled in for config editing that Phase 1 deletes (see baseline §7).
+**UI — yes, dramatically.** Gone from the sidebar: Command Center, Catalog,
+Blueprints, Access Methods, Projects, Operations Log, Fleet, Infrastructure,
+Benchmarks, Users. Also gone: the project-selector context that gated *every*
+cluster view — a cluster is just a cluster.
 
-**UI — yes, dramatically.** Sidebar today: 5 sections, 16 entries. After:
+What the phases aimed at, and roughly where it landed:
 
 ```
   Clusters          ← flat auto-populated list, replaces Fleet + Kubernetes + Projects
   BNK Health        ← health dashboard, topology, gateways, traffic flow
   TMM Live          ← tmmscope Grafana dashboard, embedded
-  Diagnostics       ← tmm_debug (tmctl/configview/bdt_cli), logs, exec, events, qkview
   AI Gateway        ← LLM observability / Loki request analytics
 ```
 
-Gone from the UI: Command Center, Catalog, Blueprints, Access Methods, Projects,
-Operations Log, Fleet, Infrastructure, Benchmarks, MCP Server, Users, System.
-Also gone: the project-selector context that currently gates *every* cluster
-view — a cluster is just a cluster.
+Diagnostics was planned as one entry and shipped split — Logs and CNF Resources
+are separate, and System and MCP stayed as their own pages rather than being
+folded away.
 
 ---
 
-## 5. Phases
+## 4. Phases
 
 Each phase is independently mergeable and ends with a green build. Order is
 chosen so the biggest, least-entangled chunks go first.
@@ -187,16 +130,14 @@ chosen so the biggest, least-entangled chunks go first.
 - ✅ `scripts/bnkscope-baseline-build.sh` — reproducible cold/warm build timing.
 - ✅ Target repo `github.com/mwiget/bnkscope` created (private).
 
-### Phase 1 — Amputate the pipeline ✅ **done 2026-08-23 — 255,733 LOC (43.0%)**
+### Phase 1 — Amputate the pipeline ✅ **done 2026-08-23**
 
-**Measured:** tracked code 622,964 → 367,346 · OpenAPI paths 533 → 318 · routers
-67 → 43 · DB tables 80 → 50 · backend source files 617 → 461 · frontend files
-846 → 586 · `api-generated.ts` 43,368 → 26,930 · initial JS payload 5.09 MB →
-4.61 MB raw / 1.33 → 1.20 MB gz (Monaco still dominates; Phase 6 removes it).
+The pipeline was the single largest thing here, and cutting it took the OpenAPI
+surface, the router set and the schema down with it. Monaco still dominated the
+JS payload afterwards; Phase 6 removes it.
 
-Verification: `pytest` 3,478 passed / 0 failed · `vitest` 1,695 passed / 0
-failed · `tsc` clean · `docker compose build backend frontend` green ·
-`bnkscope-dangling-imports.py` 0.
+Verification: `pytest`, `vitest` and `tsc` clean, both images building, and
+`bnkscope-dangling-imports.py` reporting none.
 
 **Three reclassifications, all in the same direction** — these deploy *through*
 the pipeline and cannot outlive it, so they moved from Phase 2 into Phase 1:
@@ -250,15 +191,13 @@ effect* of a module apply). Phase 5 replaces that path; Phase 1 just makes
 
 </details>
 
-### Phase 2 — Drop fleets, operators, benchmarks, provisioning ✅ **done 2026-08-23 — 134,878 LOC**
+### Phase 2 — Drop fleets, operators, benchmarks, provisioning ✅ **done 2026-08-23**
 
-**Measured:** tracked code 367,346 → 224,983 (−390,611 from baseline, 65.6%) ·
-OpenAPI paths 318 → 153 · routers 43 → 25 · DB tables 50 → 18 · backend source
-files 461 → 322 · frontend files 586 → 483 · `api-generated.ts` 26,930 → 11,664.
+This phase roughly halved what was left again, and cut the schema hardest — most
+remaining tables existed to model fleets, operators and benchmark runs.
 
-Verification: `pytest` 2,175 passed / 0 failed · `vitest` 1,421 passed / 0
-failed · `tsc` clean · `docker compose build backend frontend` green ·
-`bnkscope-dangling-imports.py` 0.
+Verification: `pytest`, `vitest` and `tsc` clean, both images building, and
+`bnkscope-dangling-imports.py` reporting none.
 
 **The forced change:** cloud credentials moved from the project onto the
 cluster. `KubernetesCluster` gains `credential_template_id` and
@@ -289,19 +228,19 @@ operator-heartbeat probe mode is gone with the agent.
 <details>
 <summary>Original plan for this phase</summary>
 
-- **Fleets** → `routes/fleet.py` (2,633 lines), `routes/operators/`,
-  `fleet_targeting`/`fleet_policy`/`fleet_bulkop`, `pages/Fleet.tsx` (3,398
-  lines — the largest page in the repo).
+- **Fleets** → `routes/fleet.py`, `routes/operators/`,
+  `fleet_targeting`/`fleet_policy`/`fleet_bulkop`, `pages/Fleet.tsx` — the
+  largest page in the repo.
 - **Operators** → the whole `bnk-operator/` agent, `operator_ws`,
   `operator_polling`, `operator_registry`. *Consequence:* qkview and licensing
-  lose their preferred transport (see §6).
+  lose their preferred transport (see §5).
 - **Benchmarks** → 7 FE pages, `routes/benchmarks.py`, `Dockerfile.agent`,
   `forge-agent` compose service, `aiperf`.
 - **DPU/DPF/bare-metal** → `modules/bare_metal/`, `services/bare_metal/`,
-  `rshim_service` (2,004), `dpu_*`, `bluefield_images`, `bf_conf_templates`,
+  `rshim_service`, `dpu_*`, `bluefield_images`, `bf_conf_templates`,
   `routes/dpus*`, FE `components/{dpu,bare-metal,infrastructure}`.
-- **Proxy migration / CIS translate** → `proxy_deploy_service` (2,600),
-  `proxy_translate_cis_service` (1,694), `proxy_migration_service`,
+- **Proxy migration / CIS translate** → `proxy_deploy_service`,
+  `proxy_translate_cis_service`, `proxy_migration_service`,
   `proxy_discovery_service`, FE `ProxyMigrationWizard`.
 - **BNK upgrade / config promotion** → `bnk_upgrade*`, `BNKUpgradePanel`.
 
@@ -309,16 +248,14 @@ operator-heartbeat probe mode is gone with the agent.
 
 </details>
 
-### Phase 3 — Delete auth ✅ **done 2026-08-23 — 18,515 LOC**
+### Phase 3 — Delete auth ✅ **done 2026-08-23**
 
-**Measured:** tracked code 224,983 → 206,468 · scanned buckets 204,384 →
-185,869 (−409,126 from baseline, **68.8%**) · OpenAPI paths 153 → 130 · routers
-25 → 21 · DB tables 18 → 14 · backend source files 322 → 299 · frontend files
-483 → 460 · `api-generated.ts` 11,664 → 9,919 · Python deps 32 → 27.
+Removing auth took users, roles and the audit trail out of the schema, and
+dropped several Python dependencies that existed only to hash passwords and
+rate-limit login.
 
-Verification: `pytest` 1,700 passed / 0 failed · `vitest` 1,346 passed / 0
-failed · `tsc` clean · `docker compose build backend frontend` green ·
-`bnkscope-dangling-imports.py` 0.
+Verification: `pytest`, `vitest` and `tsc` clean, both images building, and
+`bnkscope-dangling-imports.py` reporting none.
 
 **Loopback is the access control, and it had to be fixed before this was safe.**
 The backend runs with `network_mode: host`, so removing auth while still binding
@@ -342,7 +279,7 @@ the `KUBECONFIG_UNPORTABLE` inline-error path.
 - Per-user notification scoping is gone; there is one local user.
 
 **A method note worth keeping.** The first pass at removing auth-asserting tests
-matched anything mentioning 401/403 and deleted 189 tests — including tests of
+matched anything mentioning 401/403 and deleted a swathe of tests — including tests of
 the *error taxonomy* that legitimately assert `UnauthorizedError.status_code ==
 401`. Reverted and redone against `assert <response>.status_code == 40[13]`
 only, which removed 81. The span helper behind it also had to be fixed twice:
@@ -370,20 +307,13 @@ address asserted in a test.
 
 </details>
 
-### Phase 4 — Collapse the runtime ✅ **done 2026-08-23 — 13,745 LOC**
+### Phase 4 — Collapse the runtime ✅ **done 2026-08-23**
 
 The one phase that changed *operational* shape rather than deleting features.
-LOC is the least of what it did: **13 containers → 2** (plus an opt-in `mcp`
-profile), **API image 843 MB → 587 MB**, **cold start to healthy: 6 s**.
-
-| | before | after |
-|---|---|---|
-| compose services | 13 | 2 (+1 profile) |
-| Dockerfile targets | 6 | 3 (`api`, `test`, plus the shared bases) |
-| API image | 843 MB | **587 MB** |
-| Alembic revisions | 152 | 0 — schema from ORM models |
-| CI jobs | 24 | 17 |
-| backend tests | 1,628 | **1,665** |
+How much came out matters less here than what: the container set collapsed to
+the backend and frontend plus an opt-in `mcp` profile, the API image shed the
+tooling it no longer shells out to, and the whole Alembic revision history gave
+way to a schema created from the ORM models.
 
 **What replaced what**
 
@@ -391,20 +321,20 @@ profile), **API image 843 MB → 587 MB**, **cold start to healthy: 6 s**.
 |---|---|
 | Celery + Redis broker/backend, 2 workers, beat | `core/background.py` — a 4-thread pool with `submit()` / `run_sync()`, plus the APScheduler instance that was already there |
 | `backend/tasks/` | `backend/jobs/` — same functions, called directly |
-| Redis cache | `core/cache.py` — `OrderedDict` + lock, per-entry TTL, bounded at 2,048 entries |
+| Redis cache | `core/cache.py` — `OrderedDict` + lock, per-entry TTL, bounded size |
 | Redis maintenance-mode key with an EXPIRE | `core/maintenance.py` — module flag + lock; **the 10-minute TTL stayed**, because the failure it guards (a restore that dies without clearing the flag) did not go away with the storage |
 | Redis pub/sub → WebSocket | `bind_event_loop()` + `broadcast_sync()` over `asyncio.run_coroutine_threadsafe` |
-| Postgres + 152 Alembic revisions | SQLite with WAL, `busy_timeout=30000`, `foreign_keys=ON`; `Base.metadata.create_all` at startup |
+| Postgres + the full Alembic revision history | SQLite with WAL, `busy_timeout=30000`, `foreign_keys=ON`; `Base.metadata.create_all` at startup |
 | `pg_dump` / `psql` backup | tar.gz of a `sqlite3.Connection.backup()` snapshot + the passphrase-wrapped Fernet key |
 | docker-socket-proxy ×2, nginx proxy, forge-agent | nothing — they existed for the pipeline |
 
-**Three real bugs the phase surfaced, none of which LOC counting would have found:**
+**Three real bugs the phase surfaced, none of which a size metric would have found:**
 
 1. `SystemService.get_health()` returned `{"errors": [], "total": 0}` — a
    `get_recent_errors` body grafted onto it during the Phase 1 restore. Every
    test that touched the endpoint mocked `SystemService` out ("to avoid
    Redis/Celery dependencies"), so a 500 on the app's own health endpoint was
-   invisible to 1,600 green tests and only appeared when the container came up
+   invisible to a green test suite and only appeared when the container came up
    and its healthcheck failed. Both tests now run the real service.
 2. `BackupService` passed a `str` to `wrap_fernet_key` (which takes `bytes`) and
    wrote its returned `dict` with `write_text`. Every backup would have raised
@@ -427,7 +357,7 @@ This is also the auto-port negotiation Phase 8 wants, arriving early.
 
 **Verify (all met):** `docker compose up` starts the stack; the backend is
 healthy in **6 s**; a fresh volume bootstraps with no manual step; nginx proxies
-`/api` through to it; 1,665 backend + 1,343 frontend tests green; ruff clean;
+`/api` through to it; backend and frontend tests green; ruff clean;
 `tsc --noEmit` clean.
 
 **Two things this phase pushed onto later phases, deliberately:**
@@ -435,10 +365,10 @@ healthy in **6 s**; a fresh volume bootstraps with no manual step; nginx proxies
 - **`exec:` kubeconfigs are now unresolvable.** `kubeconfig_normalizer`
   accepts `aws`, `aws-iam-authenticator`, `gke-gcloud-auth-plugin` and
   `kubelogin`, on the basis that *the worker image* shipped them. The worker is
-  gone and the API image has no CLI tools at all — which is most of the
-  843 → 587 MB. So an EKS kubeconfig with `exec: aws eks get-token` validates
-  and then fails at connect time. **Phase 5 must decide**: bake the plugins back
-  into the image (~100 MB for the aws CLI alone), narrow the allowlist and tell
+  gone and the API image has no CLI tools at all — which is most of what it
+  shed. So an EKS kubeconfig with `exec: aws eks get-token` validates and then
+  fails at connect time. **Phase 5 must decide**: bake the plugins back into the
+  image, at real cost in image size, narrow the allowlist and tell
   the user to supply a bearer token, or resolve exec auth on the host side. It
   matters most in Phase 5 because walking `~/.kube/config` on a real laptop
   turns up exactly these kubeconfigs.
@@ -450,7 +380,7 @@ healthy in **6 s**; a fresh volume bootstraps with no manual step; nginx proxies
 <summary>Original plan for this phase</summary>
 
 - **Postgres → SQLite** at `~/.config/bnkscope/bnkscope.db`. ~15 tables, no
-  concurrent writers, no HA. Delete all 152 Alembic migrations and
+  concurrent writers, no HA. Delete the Alembic migrations and
   `alembic/` entirely; create schema from SQLAlchemy metadata at startup
   (`Base.metadata.create_all`), version it with a single `schema_version` row.
 - **Celery + Redis + beat + 2 workers + container-reaper → gone.** What actually
@@ -461,19 +391,20 @@ healthy in **6 s**; a fresh volume bootstraps with no manual step; nginx proxies
 - **Both `docker-socket-proxy` services → gone** (they existed to let workers
   spawn OpenTofu containers).
 - **`proxy/` (nginx) and `mcp/` → optional.** MCP server stays as an opt-in
-  profile with a read-only tool subset (see §6).
+  profile with a read-only tool subset (see §5).
 - `startup_steps.py`: 16 steps → ~3 (db, reachability, cluster autodiscovery).
 
-**Verify:** `docker compose up` starts 3 containers; cold start under 10s; a
-fresh `~/.config/bnkscope` bootstraps with no manual step.
+**Verify:** `docker compose up` starts the backend, frontend and MCP; the API
+comes up healthy quickly; a fresh `~/.config/bnkscope` bootstraps with no
+manual step.
 
 </details>
 
 ### Phase 5 — Clusters become a flat, self-populating list ✅ **done 2026-08-23**
 
-**The only phase that adds code.** +958 LOC net: ~2,080 lines of discovery and
-its tests in, ~1,100 lines of dead project/SSH/refresh plumbing out. Counting
-lines was never the point here — the point is that a cluster list you have to
+**The only phase that adds code.** Discovery and its tests came in; the dead
+project/SSH/refresh plumbing went out. How that nets out was never the point
+here — the point is that a cluster list you have to
 type in is the wrong shape for a tool running on the machine that already talks
 to those clusters.
 
@@ -507,7 +438,7 @@ the operator's own credentials reaching the container. So (decision 1a):
   `~/.kube`, `~/.aws`, `~/.config/gcloud` are mounted **read-only**, and boto3 /
   google-auth resolve them through their own credential chains.
 
-The image stays at 587 MB — no AWS CLI. `_generate_gcp_token_from_adc()` was
+The image does not grow — no AWS CLI. `_generate_gcp_token_from_adc()` was
 added so a locally-discovered GKE context works off `gcloud auth
 application-default login` rather than requiring a service-account key.
 
@@ -535,8 +466,7 @@ once it is there, telling it what to do is in scope.
 **Deleted, all dead by earlier phases:** `refresh_kubeconfig` (shelled out to
 `aws eks update-kubeconfig` — impossible in a CLI-free image, and a discovered
 cluster re-reads its kubeconfig every sweep), `/api/projects/{id}/k8s/clusters`,
-`rewrite_kubeconfig_for_tunnel`, `K8sClusterList` (430 lines, orphaned when
-projects went), `AddClusterFlowDialog`, the `project_id` + five `ssh_*` fields
+`rewrite_kubeconfig_for_tunnel`, `K8sClusterList`, `AddClusterFlowDialog`, the `project_id` + five `ssh_*` fields
 that outlived their columns in `ClusterSummary`/`ClusterDetailResponse`, and the
 SSH branch in `ClusterStatusBadge`.
 
@@ -557,7 +487,7 @@ Deleting them to hit a column count would have removed working features.
 **Verify (met):** `docker compose down -v` then `up` — API healthy in **6 s**,
 the machine's kube context discovered, probed (v1.31), correctly reported as
 having no BNK footprint, and adoptable in one call. Re-running discovery leaves
-one row, not two. 1,720 backend + 1,328 frontend tests green.
+one row, not two. backend and frontend tests green.
 
 <details>
 <summary>Original plan for this phase</summary>
@@ -586,19 +516,17 @@ shows up with a live/unreachable badge inside 5 seconds.
 
 ### Phase 6 — Reshape the UI ✅ **done 2026-08-23**
 
-LOC is again the wrong yardstick (+663 net — a home page and a syntax
-highlighter in, a nav and a brand system out). The number that matters:
+Size is again the wrong yardstick — a home page and a syntax highlighter in, a
+nav and a brand system out. What matters is what the browser has to fetch
+before it can render anything:
 
-| | Phase 0 | now |
-|---|---|---|
-| initial JS payload | 5,210 KB raw / 1,362 KB gz | **730 KB / 216 KB** |
-| eagerly-loaded chunks | 8 | 6 |
-| sidebar entries | 16 across 5 sections | 4 lenses + 2 utility |
-| frontend tests | — | 1,365 (+21) |
+The initial JS payload fell by roughly a factor of seven, the sidebar went from
+five sections to four lenses plus two utility entries, and a few eagerly-loaded
+chunks became lazy.
 
-**Monaco: −86% of the initial payload.** It was 3.8 MB of the 4.5 MB the
-browser fetched before rendering a pixel, for an editor most sessions never
-open. Two changes got it out:
+**Monaco dominated the initial payload** — most of what the browser fetched
+before rendering a pixel, for an editor most sessions never open. Two changes
+got it out:
 
 - `components/k8s/MonacoEditor.tsx` loads it behind a dynamic import. The eager
   bootstrap in `main.tsx` was not gratuitous — it kept `@monaco-editor/react`
@@ -669,8 +597,8 @@ is itself broken.
 <details>
 <summary>Original plan for this phase</summary>
 
-### Phase 6 — Reshape the UI (5 nav entries)
-- Rewrite `Sidebar.tsx` to the 5 entries in §4; delete `DataPrefetcher` project
+### Phase 6 — Reshape the UI
+- Rewrite `Sidebar.tsx` to the entries in §3; delete `DataPrefetcher` project
   logic, drift badges, task-count badges, `ProcessMetricsBar`.
 - **Wire the bnkscope mark** (landed 2026-08-23, `frontend-v2/public/icons/`).
   `index.html` still points at the bnk-forge favicon; the exact `<link>` block
@@ -683,7 +611,7 @@ is itself broken.
 - **Rebuild the home page.** Phase 1 deleted `Dashboard.tsx` and pointed `/` at
   `/kubernetes`; the bnkscope Command Center is built here.
 - **Drop Monaco.** Swap `F5iRuleViewer` to a read-only syntax highlighter and
-  remove `@monaco-editor/react` + `monaco-editor` — 3.73 MB of the 4.61 MB
+  remove `@monaco-editor/react` + `monaco-editor` — the bulk of the payload
   initial payload (see baseline §7).
 - Cluster is selected once, globally (a header dropdown), instead of being
   routed through a project.
@@ -691,7 +619,6 @@ is itself broken.
   regenerated it once (the cluster schemas changed), so this is a re-run, not a
   first pass.
 
-</details>
 - Prune `components/ui/` and `lib/` to what still imports; delete
   `react-joyride`, `@monaco-editor/react` (config editing is gone),
   `@dagrejs/dagre`+`reactflow` **only if** the topology viewers go — they
@@ -710,9 +637,8 @@ committed to the same doc.
 
 ### Phase 7 — Integrate tmmscope ✅ **done 2026-08-23**
 
-+1,883 LOC, none of it Go. The plan budgeted ~4.2k for vendoring tmmscope's
-code; nothing was vendored, because tmmscope's *contract* turned out to be
-enough.
+None of it Go. The plan budgeted for vendoring tmmscope's code; nothing was
+vendored, because tmmscope's *contract* turned out to be enough.
 
 **The upstream blocker was already fixed.** The plan's item 5 said Grafana's
 `allow_embedding` / `X-Frame-Options` needed an upstream change to tmmscope.
@@ -725,7 +651,7 @@ was needed or made.**
 to `tmmscope up`, `down`, `inject` and `eject`. It does none of those:
 `tmmscope up` needs the Docker socket and `tmmscope inject` shells out to
 `kubectl`, so honouring the plan meant putting a root-equivalent socket and
-~75 MB of CLI into a container with no authentication in front of it —
+a large CLI surface into a container with no authentication in front of it —
 undoing a chunk of Phase 4 to gain a button. So:
 
   read   ``~/.config/tmmscope/endpoints.json`` (mounted `:ro`) → is it up, on
@@ -786,7 +712,7 @@ string would have rendered a light dashboard inside a dark UI.
 **Verify (met):** against the live stack and both real clusters — status reads
 the negotiated ports, Prometheus reports `dpu-cplane-tenant1` streaming, the
 generated iframe URL returns 200 with no framing restrictions, and the cluster
-auto-matches with no manual binding. 1,772 backend + 1,375 frontend tests green.
+auto-matches with no manual binding. backend and frontend tests green.
 
 **Not done, deliberately:** `tmmlbctl cluster register` posts to bnk-forge under
 a `--project`, which bnkscope no longer has. That integration is broken against
@@ -795,14 +721,14 @@ bnkscope and the fix belongs in `tmmlbctl`, not here.
 <details>
 <summary>Original plan for this phase</summary>
 
-### Phase 7 — Integrate tmmscope (adds ~4.2k LOC Go)
+### Phase 7 — Integrate tmmscope
 `tmmscope` is already standalone and already has a clean contract
 (`~/.config/tmmscope/endpoints.json`). **Do not absorb it — orchestrate it.**
 
 1. **Vendor the binary, not the code.** `bnkscope` ships/depends on `tmmscope`
    and calls it: `tmmscope endpoint --json` to discover, `tmmscope up` to start
    the stack, `tmmscope inject --context <ctx> --yes` per cluster.
-2. **New backend module** `services/tmmscope/` (~300 lines): reads the
+2. **New backend module** `services/tmmscope/`: reads the
    discovery file, shells out to the binary, exposes
    `GET /api/tmmscope/status`, `POST /api/tmmscope/{up,down}`,
    `POST /api/clusters/{id}/tmmscope/{inject,eject}`.
@@ -878,7 +804,7 @@ planning artefact (sprints, roadmaps, strategy, release checklists) moved to
 
 **Deleted rather than half-fixed:**
 
-- **`dist/`** (1,200 lines) — a registry-install package still describing
+- **`dist/`** — a registry-install package still describing
   postgres, redis and celery, for images bnkscope does not publish. The install
   story is `git clone && ./bnkscope up`; shipping a broken installer is worse
   than shipping none.
@@ -899,9 +825,9 @@ nothing failed; `from models import *` would have. Now 47, all real.
 **Verify (met):** from a clean state — `./bnkscope down --purge`, then
 `./bnkscope up` builds and starts in **11s**, negotiates around an occupied
 8080/8000, serves every route, and `bnkscope status` lists the real BNK cluster.
-1,772 backend + 1,375 frontend tests green; ruff, tsc and shellcheck clean.
+backend and frontend tests green; ruff, tsc and shellcheck clean.
 
-**Not done:** the squash-export to `github.com/mwiget/bnkscope` (§6 decision 5).
+**Not done:** the squash-export to `github.com/mwiget/bnkscope` (§5 decision 5).
 Nothing has been pushed anywhere — that is the standing instruction, and the
 export is one command when you want it.
 
@@ -922,7 +848,7 @@ export is one command when you want it.
 
 ---
 
-## 6. Decisions — **settled 2026-08-23**
+## 5. Decisions — **settled 2026-08-23**
 
 1. **qkview: keep. Licensing: drop.** qkview keeps only its ephemeral-curl-pod
    path (the `bnk-operator` transport dies with Phase 2) — it is the single most
@@ -931,10 +857,10 @@ export is one command when you want it.
 
 2. **SSH tunnels: delete.** `ssh_tunnel_manager`, `services/ssh/`, and the 7
    `ssh_*` cluster columns go. On a laptop the operator's own `~/.kube/config`
-   and their own `ssh -L` cover it. Reclaims ~8k LOC.
+   and their own `ssh -L` cover it.
 
-3. **MCP server: keep a read-only subset** (~2k of 9,155 LOC) as an opt-in
-   compose profile. `iac_operations.py` (841) and `cluster_management.py` (834)
+3. **MCP server: keep a read-only subset** as an opt-in
+   compose profile. `iac_operations.py` and `cluster_management.py`
    die with Phase 1; what survives is cluster health, resource reads, and
    `tmctl`. An AI agent that can query a sick cluster is squarely on-mission.
 
@@ -945,27 +871,27 @@ export is one command when you want it.
 5. **New repo: `github.com/mwiget/bnkscope`, created private 2026-08-23.**
    Supersedes the branch-then-export recommendation. The end state shares almost
    nothing with `staging` and the two will never merge again; a fresh repo avoids
-   dragging 152 migrations and 48k lines of markdown history along, and puts
+   dragging the migration and markdown history along, and puts
    bnkscope next to `tmmscope` and `regcachectl` where it belongs. Work continues
    on `feat/bnkscope` here through the deletion phases (where `git log` still has
    value for tracing *why* something went), then squash-exports.
 
 ---
 
-## 7. Risks
+## 6. Risks
 
 | Risk | Mitigation |
 |---|---|
 | `Depends(require_*)` is threaded through nearly every route — Phase 3 is a wide mechanical edit | Do it after Phase 1+2 cut the route count 67 → ~15 |
 | Deleting Alembic loses any upgrade path from an existing bnk-forge install | Accepted — bnkscope is a *new local tool*, not an upgrade. State it in the README. |
 | `KubernetesCluster.project_id` FK cascades into most k8s queries | Phase 1 nulls it; Phase 5 drops the column and the joins together |
-| Frontend `components/k8s/` (35,913 LOC) mixes keep and remove in one directory | Split it explicitly in Phase 6: `k8s/` (browse) vs `bnk/` (diagnose) vs `build/` (delete) |
+| Frontend `components/k8s/` mixes keep and remove in one directory | Split it explicitly in Phase 6: `k8s/` (browse) vs `bnk/` (diagnose) vs `build/` (delete) |
 | tmmscope Grafana iframe embedding needs an upstream tmmscope change | Small; land it in `tmmscope` before Phase 7 starts |
 | `bnk-operator` deletion silently breaks qkview | Decision 6.1 must be settled before Phase 2 |
 
 ---
 
-## 8. Effort
+## 7. Effort
 
 Phases 1–3 are deletion, which is fast and verifiable. Phases 4–5 are the real
 engineering (SQLite migration, removing Celery, cluster autodiscovery). Phase 7
@@ -974,9 +900,9 @@ is small because tmmscope already did the hard part.
 | Phase | Shape | Rough effort |
 |---|---|---|
 | 0 Baseline | measure | 0.5 d |
-| 1 Pipeline | delete ~200k | 3–4 d |
-| 2 Fleet/DPU/bench | delete ~120k | 3–4 d |
-| 3 Auth | delete ~23k, wide edit | 2 d |
+| 1 Pipeline | delete | 3–4 d |
+| 2 Fleet/DPU/bench | delete | 3–4 d |
+| 3 Auth | delete, wide edit | 2 d |
 | 4 Runtime collapse | **build** | 4–5 d |
 | 5 Cluster autodiscovery | **build** | 3 d |
 | 6 UI reshape | rewrite nav + prune | 3–4 d |
