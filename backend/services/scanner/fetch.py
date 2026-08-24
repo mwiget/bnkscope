@@ -486,22 +486,8 @@ def _fetch_crd_resources(api_client, k8s_service, resource_type) -> list:
         return []
 
 
-def _fetch_cis_tlsprofiles_full(api_client) -> list[dict]:
-    """Fetch CIS TLSProfile CRs with full spec — for VS tlsProfileName resolution (D-023 P4e).
-
-    TLSProfile plural is ``tlsprofiles`` in the cis.f5.com API group.
-    Returns [] on 404/405 (CRD not installed) and on any other exception.
-    """
-    return _fetch_cis_crs_full(api_client, "tlsprofiles")
 
 
-def _fetch_cis_ingresslinks_full(api_client) -> list[dict]:
-    """Fetch CIS IngressLink CRs with full spec — for IngressLink translation (D-023 P4e).
-
-    IngressLink plural is ``ingresslinks`` in the cis.f5.com API group.
-    Returns [] on 404/405 (CRD not installed) and on any other exception.
-    """
-    return _fetch_cis_crs_full(api_client, "ingresslinks")
 
 
 def _fetch_cis_f5_ingresses(api_client) -> list[dict[str, Any]]:

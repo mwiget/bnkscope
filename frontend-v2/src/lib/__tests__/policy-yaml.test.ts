@@ -8,7 +8,6 @@ import {
   generatePolicyYaml,
   splitYamlDocuments,
   extractResourceType,
-  extractResourceName,
   generateConfigYaml,
   RULE_TEMPLATES,
   POLICY_TEMPLATES,
@@ -163,24 +162,6 @@ describe('extractResourceType()', () => {
 // ---------------------------------------------------------------------------
 // extractResourceName
 // ---------------------------------------------------------------------------
-
-describe('extractResourceName()', () => {
-  it('should extract the name from a YAML document', () => {
-    const yaml = 'kind: Gateway\nmetadata:\n  name: my-gateway\nspec: {}';
-    expect(extractResourceName(yaml)).toBe('my-gateway');
-  });
-
-  it('should return null when no metadata.name exists', () => {
-    expect(extractResourceName('kind: Gateway\nspec: {}')).toBeNull();
-    expect(extractResourceName('')).toBeNull();
-  });
-
-  it('should not match name outside metadata block', () => {
-    // "name:" at top level without preceding "metadata:" should not match
-    const yaml = 'name: top-level\nkind: Pod';
-    expect(extractResourceName(yaml)).toBeNull();
-  });
-});
 
 // ---------------------------------------------------------------------------
 // generatePolicyYaml — Security

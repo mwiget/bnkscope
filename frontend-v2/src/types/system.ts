@@ -18,43 +18,17 @@ export interface ProcessMetrics {
 export interface ServiceStatus {
   status: 'healthy' | 'degraded' | 'offline';
   response_time_ms?: number | null;
-  workers?: number;
-  active_tasks?: number;
   error?: string;
 }
 
+// The redis and celery entries went with the broker and the worker pool
+// (Phase 4); everything they reported on is in-process now.
 export interface SystemHealth {
   services: {
     backend: ServiceStatus;
     database: ServiceStatus;
-    redis: ServiceStatus;
-    celery: ServiceStatus;
   };
   timestamp: string;
-}
-
-export interface QueueInfo {
-  pending: number;
-  active: number;
-}
-
-export interface QueueMetrics {
-  queues: {
-    default: QueueInfo;
-    opentofu: QueueInfo;
-  };
-  workers: {
-    total: number;
-    active: number;
-    offline: number;
-    // Optional - indicates inspection timeout occurred
-    inspection_timeout?: boolean;
-  };
-  tasks: {
-    pending: number;
-    active: number;
-    completed_last_hour: number;
-  };
 }
 
 export interface PerformanceMetrics {
@@ -99,21 +73,15 @@ export interface ErrorsList {
 
 export interface TableStats {
   rows: number;
-  size_mb: number;
 }
 
 export interface DatabaseStats {
   size_mb: number;
-  tables: {
-    tasks: TableStats;
-    deployment_logs: TableStats;
-    audit_logs: TableStats;
-  };
-}
-
-export interface CleanupResult {
-  deleted: number;
-  freed_mb: number;
+  /** Row counts keyed by table name, from the live ORM metadata. Not a fixed
+   *  set: it used to name tasks / deployment_logs / audit_logs, none of which
+   *  exist any more, so the panel could never render. */
+  tables: Record<string, TableStats>;
+  cached_at?: string;
 }
 
 export interface VacuumResult {
@@ -121,9 +89,6 @@ export interface VacuumResult {
   duration_seconds: number;
   message?: string;
 }
-
-export type CleanupType = 'deployment_logs' | 'audit_logs' | 'completed_tasks';
-
 
 // ============================================================================
 // System Upgrade types (UP-013)

@@ -21,32 +21,12 @@ router = APIRouter(prefix="/ws/k8s", tags=["kubernetes-websocket"])
 
 
 async def _validate_ws_token(websocket: WebSocket, token: str | None) -> bool:
+    """Kept as a no-op seam: bnkscope binds to loopback and has no auth.
+
+    Callers still gate on the return value so a future re-introduction of
+    access control has one place to hook.
     """
-    Validate a JWT token for WebSocket connections.
-
-    Returns True if valid (or auth is disabled), False otherwise.
-    When False the caller should return immediately — the WebSocket has
-    already been closed with code 4401.
-    """
-    from core.config import settings
-    if not settings.REQUIRE_AUTH:
-        return True
-
-    if not token:
-        await websocket.close(code=4401, reason="Unauthorized — token query parameter required")
-        return False
-
-    try:
-        from services.auth_service import decode_token
-        payload = decode_token(token)  # raises UnauthorizedError if invalid/expired
-        role = payload.get("role", "")
-        if role not in ("admin", "operator", "viewer"):
-            await websocket.close(code=4401, reason="Unauthorized — insufficient role")
-            return False
-        return True
-    except Exception:
-        await websocket.close(code=4401, reason="Unauthorized — invalid or expired token")
-        return False
+    return True
 
 
 @router.websocket("/clusters/{cluster_id}/pods/{pod_name}/exec")

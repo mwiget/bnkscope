@@ -6,10 +6,7 @@ import {
   QUERY_STALE_TIME,
   DEBOUNCE_MS,
   DISPLAY_LIMITS,
-  TEXT_LIMITS,
   POLL_INTERVALS,
-  DRIFT_SCHEDULE_INTERVALS,
-  DRIFT_SCHEDULE_LABELS,
 } from '../constants';
 
 describe('QUERY_STALE_TIME', () => {
@@ -64,12 +61,6 @@ describe('DISPLAY_LIMITS', () => {
   });
 });
 
-describe('TEXT_LIMITS', () => {
-  it('has description short limit', () => {
-    expect(TEXT_LIMITS.DESCRIPTION_SHORT).toBe(60);
-  });
-});
-
 describe('POLL_INTERVALS', () => {
   it('values are all positive numbers', () => {
     for (const value of Object.values(POLL_INTERVALS)) {
@@ -86,15 +77,3 @@ describe('POLL_INTERVALS', () => {
   });
 });
 
-describe('DRIFT_SCHEDULE_INTERVALS', () => {
-  it('has expected intervals', () => {
-    expect(DRIFT_SCHEDULE_INTERVALS.FIVE_MIN).toBe('300');
-    expect(DRIFT_SCHEDULE_INTERVALS.TWENTYFOUR_HOURS).toBe('86400');
-  });
-
-  it('each interval has a corresponding label', () => {
-    for (const value of Object.values(DRIFT_SCHEDULE_INTERVALS)) {
-      expect(DRIFT_SCHEDULE_LABELS[value]).toBeDefined();
-    }
-  });
-});

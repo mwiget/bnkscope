@@ -11,7 +11,6 @@ service. Phase 2 migrates remaining services.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from kubernetes.client.exceptions import ApiException
 
@@ -25,16 +24,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_REQUEST_TIMEOUT: tuple[int, int] = (3, 8)
 
 
-def call_with_timeout(fn: Any, *args: Any, timeout: tuple[int, int] | int | None = None, **kwargs: Any) -> Any:
-    """Invoke a kubernetes-client method with an enforced ``_request_timeout``.
-
-    ``_request_timeout`` is the only bound that prevents a stuck connection
-    from blocking for ~75s on the OS TCP timeout. Caller can override by
-    passing ``timeout=(c, r)`` or accept ``DEFAULT_REQUEST_TIMEOUT``.
-    """
-    if "_request_timeout" not in kwargs:
-        kwargs["_request_timeout"] = timeout if timeout is not None else DEFAULT_REQUEST_TIMEOUT
-    return fn(*args, **kwargs)
 
 
 def translate_k8s_exception(

@@ -10,8 +10,6 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { render } from '@/test/test-utils';
 import userEvent from '@testing-library/user-event';
-import { useAuthStore } from '@/stores/authStore';
-import { mockUser } from '@/test/test-fixtures';
 import KubernetesV2 from '@/pages/KubernetesV2';
 
 const mockNavigate = vi.fn();
@@ -85,10 +83,8 @@ function useNodeCountHandler(nodeCount = 3) {
 
 describe('KubernetesV2 — Integration', () => {
   beforeEach(() => {
-    useAuthStore.getState().logout();
     localStorage.clear();
     mockNavigate.mockReset();
-    useAuthStore.getState().login('mock-jwt-token', mockUser);
   });
 
   // ────────────────────────────────────────────────────────────────────────
@@ -99,10 +95,8 @@ describe('KubernetesV2 — Integration', () => {
 
     await waitFor(
       () => {
-        // The page should render dropdowns / selection controls for Project and Cluster
-        const projectSelector =
-          screen.queryByText(/select project/i) || screen.queryByText(/project/i);
-        expect(projectSelector).toBeInTheDocument();
+        // The page should render a cluster selection control.
+        expect(screen.queryByText(/select cluster/i)).toBeInTheDocument();
       },
       { timeout: 3000 },
     );
@@ -126,9 +120,6 @@ describe('KubernetesV2 — Integration', () => {
       },
       { timeout: 3000 },
     );
-
-    // The auto-detect action should be present
-    expect(screen.getByText('Auto-detect Kubernetes Clusters')).toBeInTheDocument();
   });
 
   // ────────────────────────────────────────────────────────────────────────

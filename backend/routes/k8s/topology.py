@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
 from database import get_db
-from routes.auth import require_viewer
 from schemas.k8s import TopologyGraphResponse
 from services.kubernetes import KubernetesService
 from services.topology_builder_service import build_namespace_topology
@@ -24,7 +23,6 @@ router = APIRouter(prefix="/api", tags=["k8s-topology"])
 @router.get(
     "/k8s/clusters/{cluster_id}/topology",
     response_model=TopologyGraphResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("build namespace topology")
 def get_cluster_topology(

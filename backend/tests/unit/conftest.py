@@ -45,11 +45,9 @@ def mock_settings(monkeypatch):
     without needing a real database or file system.
     """
     defaults = {
-        "DATABASE_URL": "sqlite:///file::memory:",
+        "DATABASE_URL": "sqlite:////tmp/bnkscope-unit-tests.db",
         "SECRET_KEY": "test-secret-key-for-unit-tests",
         "ENVIRONMENT": "testing",
-        "REQUIRE_AUTH": "true",
-        "REDIS_URL": "redis://localhost:6379/0",
     }
     for key, value in defaults.items():
         monkeypatch.setenv(key, value)

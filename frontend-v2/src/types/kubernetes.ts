@@ -1,5 +1,37 @@
 // Kubernetes Cluster & Resource types
 
+/**
+ * One context found in the operator's own kubeconfig.
+ *
+ * `state` is what the probe learned:
+ *   reachable    the API server answered
+ *   unreachable  it did not — VPN down, cluster gone
+ *   unusable     the probe never ran; `detail` says what stopped it (a cert
+ *                file bnkscope cannot read, an exec plugin it cannot run)
+ *
+ * Only contexts with an F5/BNK namespace register themselves. The rest come
+ * back here so the operator can add them deliberately.
+ */
+export interface DiscoveryCandidate {
+  context: string;
+  api_server?: string | null;
+  cloud_provider: string;
+  auth_method: string;
+  source_path: string;
+  state: 'reachable' | 'unreachable' | 'unusable';
+  registered: boolean;
+  cluster_id?: number | null;
+  has_bnk: boolean;
+  version?: string | null;
+  detail?: string | null;
+}
+
+export interface DiscoveryResponse {
+  candidates: DiscoveryCandidate[];
+  found: number;
+  registered: number;
+}
+
 export interface K8sEvent {
   type: string;
   reason: string;
@@ -102,20 +134,41 @@ export interface K8sCluster {
   default_namespace: string;
   status: string;
   version?: string;
-  project_id: number;
   last_synced_at?: string;
   created_at?: string;
   updated_at?: string;
-  // SSH tunnel per-cluster config
-  ssh_tunnel_enabled?: boolean;
-  ssh_remote_k8s_host?: string;
-  ssh_remote_k8s_port?: number;
-  ssh_credential_id?: number | null;
-  /** Override SSH endpoint host (credential provides the key; this provides the target host) */
-  ssh_host_override?: string | null;
   /** Per-cluster prereq selection — null means use defaults; locked entries (multus) are always included on read */
   enabled_prerequisites?: string[] | null;
+  /**
+   * Free-form cluster metadata written by discovery. `has_dpf` gates the DPF
+   * tab; `bnk_components` lists what was actually found, by label.
+   */
+  meta_data?: {
+    has_dpf?: boolean;
+    bnk_components?: string[];
+    discovered?: boolean;
+    auth_method?: string;
+    kubeconfig_source?: string;
+    tmmscope_cluster_label?: string;
+  } | null;
+  /** ADR-424: Side-table BNK cluster configuration summary */
+  bnk_config?: BnkClusterConfigSummary | null;
 }
+
+export interface BnkClusterConfigSummary {
+  id: number;
+  cluster_id: number;
+  tmfifo_pool_cidr: string;
+  join_transport: string;
+  control_plane_host_id?: number | null;
+  /** ADR-424 #4: IDs of hosts/DPUs currently bound to this cluster — the member
+   *  dialog seeds its selection from these instead of re-applying the B-all default. */
+  host_ids?: number[];
+  dpu_ids?: number[];
+}
+
+
+
 
 export interface K8sClusterCreateRequest {
   name: string;
@@ -124,12 +177,6 @@ export interface K8sClusterCreateRequest {
   region?: string;
   context?: string;
   default_namespace?: string;
-  // SSH tunnel (opt-in per cluster)
-  ssh_tunnel_enabled?: boolean;
-  ssh_remote_k8s_host?: string;
-  ssh_remote_k8s_port?: number;
-  ssh_credential_id?: number | null;
-  ssh_host_override?: string | null;
 }
 
 export interface K8sClusterUpdateRequest {
@@ -140,11 +187,6 @@ export interface K8sClusterUpdateRequest {
   context?: string;
   default_namespace?: string;
   // SSH tunnel
-  ssh_tunnel_enabled?: boolean;
-  ssh_remote_k8s_host?: string;
-  ssh_remote_k8s_port?: number;
-  ssh_credential_id?: number | null;
-  ssh_host_override?: string | null;
   // Per-cluster prereq selection
   enabled_prerequisites?: string[] | null;
 }
@@ -174,17 +216,7 @@ export interface K8sContainerStatus {
   imageID?: string;
 }
 
-// K8s Address (for nodes/services)
-export interface K8sAddress {
-  type: string;
-  address: string;
-}
 
-// K8s Ingress status
-export interface K8sLoadBalancerIngress {
-  ip?: string;
-  hostname?: string;
-}
 
 // K8s Resource spec/status are highly dynamic – handle deeply nested K8s API structures
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -289,14 +321,6 @@ export interface K8sFirewallRule {
   };
 }
 
-/** K8s Service port (for K8sResourceViewer) */
-export interface K8sServicePort {
-  port: number;
-  targetPort?: number | string;
-  protocol?: string;
-  name?: string;
-  nodePort?: number;
-}
 
 /** K8s owner reference (for ResourceDescribeViewer) */
 export interface K8sOwnerReference {
@@ -313,14 +337,6 @@ export interface K8sResourceRelationship {
   name: string;
   namespace?: string;
 }
-
-/** Egress route entry (string or object) */
-export type K8sEgressRoute = string | {
-  destination?: string;
-  network?: string;
-  gateway?: string;
-  gw?: string;
-};
 
 /** Port list entry (string, number, or object) */
 export type K8sPortEntry = string | number | {
@@ -410,57 +426,12 @@ export interface K8sResourceTypesResponse {
 
 // ─── SSH Tunnel Types ──────────────────────────────────────────────────
 
-export interface K8sTunnelInfo {
-  cluster_id: number;
-  local_port: number;
-  ssh_host: string;
-  ssh_port: number;
-  remote_host: string;
-  remote_port: number;
-  is_healthy: boolean;
-  last_used: number;
-  last_health_check: number;
-  reconnect_attempts: number;
-}
 
-export interface K8sTunnelStatusResponse {
-  cluster_id: number;
-  cluster_name: string;
-  ssh_tunnel_enabled: boolean;
-  ssh_remote_k8s_host: string;
-  ssh_remote_k8s_port: number;
-  tunnel_active: boolean;
-  tunnel: K8sTunnelInfo | null;
-}
 
-export interface K8sTunnelSummary {
-  cluster_id: number;
-  local_port: number;
-  ssh_host: string;
-  is_healthy: boolean;
-  idle_seconds: number;
-}
 
-export interface K8sListAllTunnelsResponse {
-  tunnels: K8sTunnelSummary[];
-}
 
-export interface K8sOpenTunnelResponse {
-  success: true;
-  message: string;
-  local_port: number;
-  tunnel: K8sTunnelInfo | null;
-}
 
-export interface K8sCloseTunnelResponse {
-  success: true;
-  message: string;
-}
 
-export interface K8sCloseAllTunnelsResponse {
-  success: true;
-  message: string;
-}
 
 // ─── Cluster Scanner Types ─────────────────────────────────────────────
 
@@ -882,38 +853,5 @@ export interface BatchConnectivityResponse {
 
 // ─── Adaptive Module Selection Types ────────────────────────────────────
 
-export type AdaptiveModuleAction = 'deploy' | 'skip' | 'upgrade' | 'investigate' | 'blocked';
-export type AdaptiveModuleConfidence = 'high' | 'medium' | 'low';
 
-export interface AdaptiveModule {
-  path: string;
-  name: string;
-  action: AdaptiveModuleAction;
-  reason: string;
-  confidence: AdaptiveModuleConfidence;
-  required: boolean;
-  order: number;
-  variable_overrides: Record<string, unknown>;
-  warnings: string[];
-  blockers: string[];
-  detected_info: Record<string, unknown>;
-}
 
-export interface AdaptiveModulePlanResponse {
-  cluster_id: number;
-  cluster_name: string;
-  template_slug: string | null;
-  template_name: string | null;
-  modules: AdaptiveModule[];
-  summary: {
-    deploy: number;
-    skip: number;
-    investigate: number;
-    blocked: number;
-    total: number;
-  };
-  global_blockers: string[];
-  global_warnings: string[];
-  suggested_variables: Record<string, unknown>;
-  is_ready: boolean;
-}

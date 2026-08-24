@@ -8,7 +8,8 @@ Architecture:
     AI Assistant ↔ MCP Protocol (Streamable HTTP) ↔ This Server ↔ HTTP ↔ FastAPI Backend
 
 Transport: Streamable HTTP (stateless) for Docker container deployment.
-Auth: Reuses BNK-Forge JWT tokens — auto-login with env credentials.
+Auth: none. bnkscope has no authentication; the bind address is the access
+      control, and this server is loopback-only.
 """
 
 from __future__ import annotations
@@ -25,12 +26,8 @@ from .config import MCPConfig, load_config
 from .observability import ObservabilityMCPProxy
 from .tools import (
     register_bnk_operations,
-    register_cloud_auth,
     register_cluster_management,
-    register_config_management,
     register_diagnostics_fleet,
-    register_helm,
-    register_iac_operations,
     register_system,
 )
 
@@ -52,7 +49,7 @@ def create_server(config: MCPConfig | None = None) -> FastMCP:
     This is the main factory function. It:
     1. Creates the FastMCP server with Streamable HTTP transport settings
     2. Sets up a lifespan manager for the HTTP client
-    3. Registers all tool modules (system, clusters, BNK, diagnostics, helm, config, IaC)
+    3. Registers the read-only tool modules (system, clusters, BNK, diagnostics)
     """
     if config is None:
         config = load_config()
@@ -78,7 +75,6 @@ def create_server(config: MCPConfig | None = None) -> FastMCP:
 
     logger.info("BNK-Forge MCP server configured")
     logger.info(f"  API URL: {config.api_base_url}")
-    logger.info(f"  Auth: {'token' if config.has_token else 'credentials' if config.has_credentials else 'NONE'}")
     logger.info(f"  Port: {config.port}")
 
     # Create FastMCP server — stateless HTTP for container deployment
@@ -103,10 +99,6 @@ def create_server(config: MCPConfig | None = None) -> FastMCP:
     register_cluster_management(ObservabilityMCPProxy(mcp, "cluster_management"), api_client)
     register_bnk_operations(ObservabilityMCPProxy(mcp, "bnk_operations"), api_client)
     register_diagnostics_fleet(ObservabilityMCPProxy(mcp, "diagnostics_fleet"), api_client)
-    register_helm(ObservabilityMCPProxy(mcp, "helm"), api_client)
-    register_config_management(ObservabilityMCPProxy(mcp, "config_management"), api_client)
-    register_iac_operations(ObservabilityMCPProxy(mcp, "iac_operations"), api_client)
-    register_cloud_auth(ObservabilityMCPProxy(mcp, "cloud_auth"), api_client)
 
     logger.info("All tool modules registered.")
 

@@ -28,27 +28,9 @@ def _stats_payload() -> dict:
     }
 
 
-class TestLlmObservabilityRbac:
-    def test_stats_allows_viewer(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster, sample_project):
-        cluster = make_k8s_cluster(project=sample_project, name="hgx")
-        with patch(_SVC) as MockSvc:
-            MockSvc.return_value.stats.return_value = _stats_payload()
-            resp = client.get(
-                f"/api/k8s/clusters/{cluster.id}/llm-observability/stats?range=1h",
-                headers=viewer_headers,
-            )
-        assert resp.status_code == 200, resp.text
-        MockSvc.return_value.stats.assert_called_once_with(cluster.id, "1h", None, None)
-
-    def test_stats_rejects_unauthenticated(self, client, make_k8s_cluster, sample_project):
-        cluster = make_k8s_cluster(project=sample_project, name="hgx2")
-        resp = client.get(f"/api/k8s/clusters/{cluster.id}/llm-observability/stats")
-        assert resp.status_code in (401, 403), resp.text
-
-
 class TestLlmObservabilityShapes:
-    def test_stats_response_shape(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster, sample_project):
-        cluster = make_k8s_cluster(project=sample_project, name="c1")
+    def test_stats_response_shape(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster):
+        cluster = make_k8s_cluster(name="c1")
         with patch(_SVC) as MockSvc:
             MockSvc.return_value.stats.return_value = _stats_payload()
             resp = client.get(
@@ -65,8 +47,8 @@ class TestLlmObservabilityShapes:
             assert key in body
         assert body["total_requests"] == 100
 
-    def test_histogram_forwards_metric_and_shape(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster, sample_project):
-        cluster = make_k8s_cluster(project=sample_project, name="c2")
+    def test_histogram_forwards_metric_and_shape(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster):
+        cluster = make_k8s_cluster(name="c2")
         payload = {
             "available": True,
             "endpoint": "http://loki.llm-egress:3100",
@@ -88,8 +70,8 @@ class TestLlmObservabilityShapes:
         assert body["series"][0]["name"] == "prompt"
         MockSvc.return_value.histogram.assert_called_once_with(cluster.id, "6h", "tokens", None, None)
 
-    def test_logs_forwards_params_and_shape(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster, sample_project):
-        cluster = make_k8s_cluster(project=sample_project, name="c3")
+    def test_logs_forwards_params_and_shape(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster):
+        cluster = make_k8s_cluster(name="c3")
         payload = {
             "available": True,
             "endpoint": "http://loki.llm-egress:3100",
@@ -114,8 +96,8 @@ class TestLlmObservabilityShapes:
         assert body["next_end"] == "1699999999999999999"
         MockSvc.return_value.logs.assert_called_once_with(cluster.id, "1h", None, None, 25, "err", None)
 
-    def test_logs_rejects_non_integer_end(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster, sample_project):
-        cluster = make_k8s_cluster(project=sample_project, name="c-end")
+    def test_logs_rejects_non_integer_end(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster):
+        cluster = make_k8s_cluster(name="c-end")
         resp = client.get(
             f"/api/k8s/clusters/{cluster.id}/llm-observability/logs?end=notanumber",
             headers=viewer_headers,
@@ -123,8 +105,8 @@ class TestLlmObservabilityShapes:
         # `end` is typed int at the route layer → FastAPI validates it (422)
         assert resp.status_code == 422, resp.text
 
-    def test_unavailable_envelope_serializes(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster, sample_project):
-        cluster = make_k8s_cluster(project=sample_project, name="c4")
+    def test_unavailable_envelope_serializes(self, client, viewer_headers, sample_viewer_user, make_k8s_cluster):
+        cluster = make_k8s_cluster(name="c4")
         with patch(_SVC) as MockSvc:
             MockSvc.return_value.stats.return_value = {
                 "available": False,

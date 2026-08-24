@@ -8,7 +8,7 @@ describe('STORAGE_KEYS', () => {
   it('has expected keys', () => {
     const expectedKeys = [
       'K8S_PROJECT', 'K8S_CLUSTER', 'HELM_CLUSTER',
-      'BNK_PROJECT', 'BNK_CLUSTER', 'AUTH_TOKEN',
+      'BNK_PROJECT', 'BNK_CLUSTER',
       'ONBOARDING_COMPLETE', 'MOCKUP_THEME',
     ];
     for (const key of expectedKeys) {
@@ -29,6 +29,5 @@ describe('STORAGE_KEYS', () => {
   });
 
   it('has auth token key', () => {
-    expect(STORAGE_KEYS.AUTH_TOKEN).toBe('auth_token');
   });
 });

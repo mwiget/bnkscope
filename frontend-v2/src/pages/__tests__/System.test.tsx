@@ -56,7 +56,6 @@ describe('System', () => {
   it('renders all tab labels', () => {
     render(<System />, { initialRoute: '/system' });
     expect(screen.getByText('System Monitor')).toBeInTheDocument();
-    expect(screen.getByText('Audit Log')).toBeInTheDocument();
     expect(screen.getByText('Alerts')).toBeInTheDocument();
     expect(screen.getByText('Defaults')).toBeInTheDocument();
     expect(screen.getByText('Appearance')).toBeInTheDocument();

@@ -21,6 +21,9 @@ interface CNFSidebarProps {
   onSelectCrd: (key: string) => void;
   expandedCategories: string[];
   onToggleCategory: (category: string) => void;
+  /** Below `lg` the tree is a drawer; these drive it. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function CNFSidebar({
@@ -29,6 +32,8 @@ export function CNFSidebar({
   onSelectCrd,
   expandedCategories,
   onToggleCategory,
+  open,
+  onOpenChange,
 }: CNFSidebarProps) {
   const groups = useMemo<ResourceCategoryGroup[]>(
     () =>
@@ -49,6 +54,8 @@ export function CNFSidebar({
 
   return (
     <ResourceCategorySidebar
+      open={open}
+      onOpenChange={onOpenChange}
       aria-label="CNF resource categories"
       groups={groups}
       selectedKey={selectedCrdKey}

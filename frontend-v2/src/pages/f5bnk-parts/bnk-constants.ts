@@ -5,8 +5,7 @@
 
 import {
   Shield, Globe, Route, Network, Lock, Server, Activity, Settings,
-  LayoutDashboard, Map, Code, ShieldAlert, List, FileText, GitBranch,
-  ArrowUpCircle, Stethoscope, Wand2, Hammer, Workflow,
+  LayoutDashboard, Map, Code, ShieldAlert, List, FileText, GitBranch, Stethoscope, Wand2, Hammer, Workflow,
   Bot, Radar, BookOpen,
 } from 'lucide-react';
 
@@ -15,7 +14,6 @@ export const VIEW_HEALTH = 'view-health';
 export const VIEW_POLICY_MAP = 'view-policy-map';
 export const VIEW_AI_ANALYZERS = 'view-ai-analyzers';
 export const VIEW_TOPOLOGY = 'view-topology';
-export const VIEW_UPGRADE = 'view-upgrade';
 export const VIEW_DIAGNOSTICS = 'view-diagnostics';
 export const VIEW_BACKENDS = 'view-backends';
 export const VIEW_POLICY_BUILDER = 'view-policy-builder';
@@ -29,7 +27,7 @@ export const VIEW_A2A_TEMPLATES = 'view-a2a-templates';
 export const VIEW_A2A_IRULE_LIBRARY = 'view-a2a-irule-library';
 export const VIEW_A2A_REFERENCE = 'view-a2a-reference';
 
-export const SPECIAL_VIEWS = [VIEW_HEALTH, VIEW_POLICY_MAP, VIEW_AI_ANALYZERS, VIEW_TOPOLOGY, VIEW_TRAFFIC_FLOW, VIEW_UPGRADE, VIEW_DIAGNOSTICS, VIEW_BACKENDS, VIEW_POLICY_BUILDER, VIEW_CONFIG_BUILDER, VIEW_DPF_INFRA, VIEW_A2A_DISCOVERY, VIEW_A2A_TEMPLATES, VIEW_A2A_IRULE_LIBRARY, VIEW_A2A_REFERENCE];
+export const SPECIAL_VIEWS = [VIEW_HEALTH, VIEW_POLICY_MAP, VIEW_AI_ANALYZERS, VIEW_TOPOLOGY, VIEW_TRAFFIC_FLOW, VIEW_DIAGNOSTICS, VIEW_BACKENDS, VIEW_POLICY_BUILDER, VIEW_CONFIG_BUILDER, VIEW_DPF_INFRA, VIEW_A2A_DISCOVERY, VIEW_A2A_TEMPLATES, VIEW_A2A_IRULE_LIBRARY, VIEW_A2A_REFERENCE];
 
 export const isSpecialView = (type: string) => SPECIAL_VIEWS.includes(type);
 
@@ -45,7 +43,6 @@ export const bnkResourceCategories = [
       { key: VIEW_TOPOLOGY, label: 'Gateway Topology', icon: GitBranch },
       { key: VIEW_POLICY_MAP, label: 'Policy Gateway Map', icon: Map },
       { key: VIEW_AI_ANALYZERS, label: 'AI Analyzers', icon: Activity },
-      { key: VIEW_UPGRADE, label: 'Upgrade', icon: ArrowUpCircle },
       { key: VIEW_DIAGNOSTICS, label: 'Diagnostics', icon: Stethoscope },
     ],
   },

@@ -8,6 +8,7 @@ import pytest
 
 from models.system import ApplicationSetting
 from services.defaults_service import (
+    DEFAULT_REPO_URL,
     SYSTEM_DEFAULTS,
     _convert_value,
     check_required_configured,
@@ -88,14 +89,15 @@ class TestGetDefault:
 
     def test_returns_seeded_value(self, db):
         seed_defaults(db)
-        result = get_default(db, "opentofu.timeout.init")
-        assert result == 300  # int conversion
+        result = get_default(db, "execution.retry_delay")
+        assert result == 5  # int conversion
 
     def test_returns_none_for_empty_value(self, db):
+        # An empty stored value means "not set", not "the empty string" —
+        # otherwise a caller falls back on "" instead of its own default.
         seed_defaults(db)
-        # git_token defaults to "" (empty)
-        result = get_default(db, "module_library.git_token")
-        assert result is None
+        set_default(db, "cloud.aws.default_region", "")
+        assert get_default(db, "cloud.aws.default_region") is None
 
     def test_type_conversion_int(self, db):
         seed_defaults(db)
@@ -185,12 +187,7 @@ class TestGetAllDefaults:
     def test_returns_all_categories(self, db):
         seed_defaults(db)
         result = get_all_defaults(db)
-        assert "module_library" in result
-        assert "blueprint_library" in result
-        assert "bnk" in result
-        assert "cloud" in result
-        assert "opentofu" in result
-        assert "execution" in result
+        assert set(result) == {"system", "cloud", "execution"}
 
     def test_includes_metadata(self, db):
         seed_defaults(db)
@@ -206,11 +203,11 @@ class TestGetAllDefaults:
     def test_unconfigured_setting_marked(self, db):
         """Settings with empty values are marked as not configured."""
         seed_defaults(db)
+        set_default(db, "system.update_repo_url", "")
         result = get_all_defaults(db)
-        token = result["module_library"]["git_token"]
-        # git_token defaults to "" which means not configured
-        assert token["is_configured"] is False
-        assert token["is_optional"] is True
+        repo = result["system"]["update_repo_url"]
+        assert repo["is_configured"] is False
+        assert repo["is_optional"] is True
 
     def test_empty_db_returns_all_keys(self, db):
         """Even with no DB records, all system defaults are listed."""
@@ -244,9 +241,8 @@ class TestCheckRequiredConfigured:
         """Optional settings are not reported as missing."""
         result = check_required_configured(db)
         missing_keys = [m["key"] for m in result["missing"]]
-        # git_token and project.default_type are optional
-        assert "module_library.git_token" not in missing_keys
-        assert "project.default_type" not in missing_keys
+        # update_repo_url is optional
+        assert "system.update_repo_url" not in missing_keys
 
     def test_count_fields(self, db):
         seed_defaults(db)
@@ -276,25 +272,36 @@ class TestSystemDefaults:
             assert defn["value_type"] in valid_types, f"{key} has invalid type: {defn['value_type']}"
 
     def test_categories_are_known(self):
-        known = {"module_library", "blueprint_library", "project", "cloud", "opentofu", "execution", "system", "bnk", "container"}
+        known = {"system", "cloud", "execution"}
         for key, defn in SYSTEM_DEFAULTS.items():
             assert defn["category"] in known, f"{key} has unknown category: {defn['category']}"
 
-    def test_encrypted_bnk_default_is_stored_encrypted_and_masked_in_listing(self, db):
+    # There is no encrypted entry in SYSTEM_DEFAULTS any more — the FAR pull
+    # secret was the only one, and it had no reader. `set_default`'s
+    # is_encrypted branch is therefore currently unexercised; restore a test
+    # here if an encrypted default comes back.
+
+    def test_rewrites_a_superseded_default(self, db):
+        """A stale default from before the fork is not a user's choice.
+
+        `system.update_repo_url` was seeded as f5devcentral/bnk-forge. Seeding
+        only ever creates rows, so changing the default left every existing
+        install asking bnk-forge whether bnkscope had an update — and being
+        told yes, against a version line it shares nothing with.
+        """
         seed_defaults(db)
-        assert set_default(db, "bnk.far_pull_secret_default", "abc123") is True
+        set_default(db, "system.update_repo_url", "https://github.com/f5devcentral/bnk-forge")
 
-        row = db.query(ApplicationSetting).filter(
-            ApplicationSetting.key == "bnk.far_pull_secret_default"
-        ).first()
-        assert row is not None
-        assert row.is_encrypted is True
-        assert row.value != "abc123"
+        seed_defaults(db)
 
-        assert get_default(db, "bnk.far_pull_secret_default") == "abc123"
+        assert get_default(db, "system.update_repo_url") == DEFAULT_REPO_URL
 
-        all_defaults = get_all_defaults(db)
-        bnk_default = all_defaults["bnk"]["far_pull_secret_default"]
-        assert bnk_default["is_encrypted"] is True
-        assert bnk_default["raw_value"] == ""
-        assert bnk_default["is_configured"] is True
+    def test_leaves_an_operators_own_value_alone(self, db):
+        """Only the known stale values are rewritten — not a real choice."""
+        seed_defaults(db)
+        mine = "https://gitlab.internal.example/mirrors/bnkscope"
+        set_default(db, "system.update_repo_url", mine)
+
+        seed_defaults(db)
+
+        assert get_default(db, "system.update_repo_url") == mine

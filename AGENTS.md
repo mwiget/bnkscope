@@ -15,7 +15,10 @@ context an autonomous agent needs and a human does not.
 
 ## Roadmap & Tracking — what to work on
 
-**Asked "what's next"?** Read `docs/ROADMAP.md` (the shared roadmap; clickable human view `docs/roadmap.html`) and take the highest-priority **unblocked** item with an open GitHub issue. New decisions/epics flow **ADR → GitHub issue → roadmap → PR** per `docs/ROADMAP_PROCESS.md`. **GitHub issues are the source of truth for "done"**.
+**GitHub issues are the source of truth.** The shared roadmap (`docs/ROADMAP.md`,
+its generated HTML view, and the `bin/roadmap-*.py` generators) belonged to
+bnk-forge's release process and went with it. New decisions still flow
+**ADR → GitHub issue → PR**; ADRs live in `docs/adr/`.
 
 ---
 
@@ -80,7 +83,31 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+### 5. Rigorous Code & PR Review Framework
+
+When reviewing Pull Requests, look beyond syntax and passing unit tests. Systematically check for runtime edge cases:
+
+1. **Infrastructure & Container Lifecycle**:
+   - **Container Creation Order**: Does a Docker Compose `subpath:` or volume mount require a file to exist at `docker create` time before any entrypoint runs?
+   - **Cross-UID Permissions**: Are shared volume files accessible across container UIDs? Are file modes explicitly set via `chmod` or dedicated volumes?
+
+2. **Credential & Token Lifecycles**:
+   - **Renewal Window**: Do token validation steps enforce an early renewal buffer (e.g. `exp - now < 30d`) so credentials don't expire mid-flight?
+   - **Daemon Hot-Reloading**: Do long-running agents or background daemons re-read rotated tokens from disk on reconnect/retry loops?
+
+3. **File Permission Invariants**:
+   - **POSIX Mode Retention**: Does writing to existing files retain restrictive permissions (`0600`) unless `os.chmod()` is explicitly called post-write?
+
+4. **Static Test Blindspot Auditing**:
+   - Ask: *"What ordering or environment condition does this unit test assume?"* (e.g. writer running before reader, pre-created directories, fresh DB sessions).
+
+5. **Loopback & Proxy Security Protocols (PR #150)**:
+   - **Verification over Local Tunnels**: When traffic is routed through SSH tunnels or local proxies (`127.0.0.1:<port>`), check if TLS verification was disabled (`insecure-skip-tls-verify`). Enforce protocol mechanisms (e.g. `tls-server-name` in kubeconfig) to keep CA verification enabled while dialling loopback endpoints.
+   - **Fail-Safe Preserving**: Security hardening must preserve explicit user choices (e.g. explicitly unverified setups remain unverified, while setups with valid CAs restore TLS verification).
+
+6. **Interrupted Workflows & Fail-Closed Resource Teardowns (PR #151)**:
+   - **Interrupted Worker Recovery**: Assume background tasks/workers can die at any point (SIGKILL/OOM). Ensure interrupted transitional states (`applying`, `destroying`) do not bypass teardown handlers and leave orphaned external resources (cloud infrastructure, IAM roles).
+   - **Fail-Closed Teardowns**: When choosing between fast DB deletion and full destruction tasks, **fail closed**. Only states positively known to hold zero external resources (`NO_INFRA_STATUSES`) may skip destruction.
 
 ---
 

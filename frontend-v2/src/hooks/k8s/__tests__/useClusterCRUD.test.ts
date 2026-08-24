@@ -13,14 +13,11 @@ import { server } from '@/test/mocks/server';
 import {
   useK8sResourceTypes,
   useAllClusters,
-  useProjectClusters,
   useCluster,
   useCreateCluster,
   useUpdateCluster,
   useDeleteCluster,
   useTestClusterConnection,
-  useDetectEKSClusters,
-  useRefreshClusterKubeconfig,
   useClusterNamespaces,
   useClusterResources,
 } from '../useClusterCRUD';
@@ -121,26 +118,6 @@ describe('useAllClusters', () => {
 });
 
 // ============================================================================
-// useProjectClusters
-// ============================================================================
-
-describe('useProjectClusters', () => {
-  it('fetches clusters for a project', async () => {
-    const { result } = renderHook(() => useProjectClusters(1), { wrapper: createWrapper() });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    expect(result.current.data).toBeDefined();
-    expect(Array.isArray(result.current.data)).toBe(true);
-  });
-
-  it('does not fetch when projectId is 0', () => {
-    const { result } = renderHook(() => useProjectClusters(0), { wrapper: createWrapper() });
-    expect(result.current.fetchStatus).toBe('idle');
-  });
-});
-
-// ============================================================================
 // useCluster
 // ============================================================================
 
@@ -173,8 +150,7 @@ describe('useCreateCluster', () => {
 
     act(() => {
       result.current.mutate({
-        projectId: 1,
-        data: {
+                data: {
           name: 'new-cluster',
           cluster_type: 'eks',
           api_server: 'https://new.eks.amazonaws.com',
@@ -282,60 +258,6 @@ describe('useTestClusterConnection', () => {
 // ============================================================================
 // useDetectEKSClusters
 // ============================================================================
-
-describe('useDetectEKSClusters', () => {
-  it('detects and registers EKS clusters', async () => {
-    server.use(
-      http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () => {
-        return HttpResponse.json({
-          success: true,
-          message: 'Found 2 EKS clusters',
-          registered: [{ id: 10, name: 'eks-1', module_id: 1, status: 'connected' }],
-          skipped: [],
-          errors: [],
-        });
-      }),
-    );
-
-    const { result } = renderHook(() => useDetectEKSClusters(), { wrapper: createWrapper() });
-
-    act(() => {
-      result.current.mutate(1);
-    });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    expect(result.current.data!.registered).toHaveLength(1);
-    expect(result.current.data!.registered[0].name).toBe('eks-1');
-  });
-});
-
-// ============================================================================
-// useRefreshClusterKubeconfig
-// ============================================================================
-
-describe('useRefreshClusterKubeconfig', () => {
-  it('refreshes kubeconfig for a cluster', async () => {
-    server.use(
-      http.post('*/api/k8s/clusters/:clusterId/refresh-kubeconfig', () => {
-        return HttpResponse.json({ success: true, message: 'Kubeconfig refreshed' });
-      }),
-    );
-
-    const { result } = renderHook(() => useRefreshClusterKubeconfig(), { wrapper: createWrapper() });
-
-    act(() => {
-      result.current.mutate(1);
-    });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    expect(result.current.data).toMatchObject({
-      success: true,
-      message: 'Kubeconfig refreshed',
-    });
-  });
-});
 
 // ============================================================================
 // useClusterNamespaces

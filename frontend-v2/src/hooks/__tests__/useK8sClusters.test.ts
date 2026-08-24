@@ -12,14 +12,11 @@ import { server } from '@/test/mocks/server';
 import {
   useK8sResourceTypes,
   useAllClusters,
-  useProjectClusters,
   useCluster,
   useCreateCluster,
   useUpdateCluster,
   useDeleteCluster,
   useTestClusterConnection,
-  useDetectEKSClusters,
-  useRefreshClusterKubeconfig,
 } from '@/hooks/useK8sClusters';
 import type { K8sClusterCreateRequest, K8sClusterUpdateRequest } from '@/types';
 import React from 'react';
@@ -99,30 +96,6 @@ describe('useAllClusters', () => {
   });
 });
 
-describe('useProjectClusters', () => {
-  it('fetches clusters for a project', async () => {
-    const { result } = renderHook(
-      () => useProjectClusters(1),
-      { wrapper: createWrapper() }
-    );
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(result.current.data).toBeDefined();
-  });
-
-  it('does not fetch when projectId is 0', () => {
-    const { result } = renderHook(
-      () => useProjectClusters(0),
-      { wrapper: createWrapper() }
-    );
-
-    expect(result.current.fetchStatus).toBe('idle');
-  });
-});
-
 describe('useCluster', () => {
   it('fetches a single cluster', async () => {
     const { result } = renderHook(
@@ -158,7 +131,7 @@ describe('useCreateCluster', () => {
   it('sends correct payload shape (ClusterCreateRequest)', async () => {
     let capturedBody: Record<string, unknown> | null = null;
     server.use(
-      http.post('*/api/projects/:projectId/k8s/clusters', async ({ request }) => {
+      http.post('*/api/k8s/clusters', async ({ request }) => {
         capturedBody = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({
           id: 10,
@@ -172,8 +145,7 @@ describe('useCreateCluster', () => {
     const { result } = renderHook(() => useCreateCluster(), { wrapper: createWrapper() });
 
     result.current.mutate({
-      projectId: 1,
-      data: {
+            data: {
         name: 'new-cluster',
         kubeconfig: 'base64encodedconfig',
         cloud_provider: 'aws',
@@ -308,48 +280,3 @@ describe('useTestClusterConnection', () => {
   });
 });
 
-describe('useDetectEKSClusters', () => {
-  it('detects EKS clusters for a project', async () => {
-    server.use(
-      http.post('*/api/projects/:projectId/k8s/clusters/detect-eks', () => {
-        return HttpResponse.json({
-          success: true,
-          message: 'Found 2 EKS clusters',
-          registered: [{ id: 10, name: 'eks-prod', module_id: 1, status: 'connected' }],
-          skipped: [],
-          errors: [],
-        });
-      })
-    );
-
-    const { result } = renderHook(() => useDetectEKSClusters(), { wrapper: createWrapper() });
-
-    result.current.mutate(1);
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(result.current.data!.registered).toHaveLength(1);
-  });
-});
-
-describe('useRefreshClusterKubeconfig', () => {
-  it('refreshes kubeconfig successfully', async () => {
-    server.use(
-      http.post('*/api/k8s/clusters/:clusterId/refresh-kubeconfig', () => {
-        return HttpResponse.json({ success: true, message: 'Kubeconfig refreshed' });
-      })
-    );
-
-    const { result } = renderHook(() => useRefreshClusterKubeconfig(), { wrapper: createWrapper() });
-
-    result.current.mutate(1);
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(result.current.data).toMatchObject({ success: true });
-  });
-});

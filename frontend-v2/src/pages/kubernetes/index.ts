@@ -18,6 +18,3 @@ export { K8sDetailPanel } from './K8sDetailPanel';
 export { K8sDialogs, K8sClusterScanView, K8sDpfInfraView, useK8sDialogs } from './K8sDialogs';
 
 // K8S-UX-004: Helm integration
-export { K8sHelmReleasesTable } from './K8sHelmReleasesTable';
-export type { HelmAction } from './K8sHelmReleasesTable';
-export { K8sHelmChartBrowser } from './K8sHelmChartBrowser';

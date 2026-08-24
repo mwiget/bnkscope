@@ -1,634 +1,334 @@
-# DD-014: Role-specific images — api, worker, beat built from one multi-target Dockerfile
-# API + beat use slim base (~300-400MB), workers get full CLI tools (~700-900MB)
-# Resource limits prevent runaway containers from exhausting host resources
-# Health checks enable orchestration and dependency management
+# bnkscope — local troubleshooting and monitoring for F5 BNK clusters.
 #
-# OPT-001: Build performance
-#   Normal code changes:  `docker compose build backend frontend`  (~30s cached)
-#   Deps/tool changes:    `docker compose build --no-cache`        (~3-5 min)
-#   Smart build:          `./scripts/build.sh --deploy`            (auto-detects changes)
-#   See: make help
+# Three services. There is no database server, no broker, no worker pool and no
+# reverse proxy, because a single-user tool watching a handful of clusters needs
+# none of them: the API is one process holding a SQLite file, a thread pool and
+# an APScheduler instance (see backend/core/background.py).
+#
+#   backend    the API, the WebSocket fan-out, the probes and the periodic jobs
+#   frontend   static assets served by nginx
+#   mcp        optional — read-only MCP tools for an AI agent (profile: mcp)
+#
+# SECURITY: bnkscope has no authentication. network_mode: host is used so the
+# backend can reach clusters on the host's networks without Docker's bridge
+# iptables getting in the way of SSH and VPN routes — which means the bind
+# address is the only thing keeping the API off the network. The backend binds
+# 127.0.0.1 (see backend/Dockerfile). Do not change that without putting an
+# authenticating proxy in front of it.
+#
+# That bind matters more from Phase 5 on, because the backend now reads your
+# kubeconfig and your cloud credentials (the read-only mounts below). Those
+# mounts are what let bnkscope find your clusters without being told about
+# them, and what let it mint EKS/GKE tokens natively instead of shipping a
+# 100 MB AWS CLI. They are also, together with the missing authentication,
+# the reason this must never be exposed beyond loopback: anything that can
+# reach the API can reach a cluster you can reach.
+#
+# All three are :ro. bnkscope never writes to your home directory.
+#
+# Start with `make up`, not `docker compose up`. Docker creates a bind-mount
+# source that does not exist — as an empty directory owned by root, inside your
+# home. `make up` creates ~/.aws and ~/.config/gcloud as you first, so that
+# cannot happen. If you run compose directly and do not have them, either
+# mkdir them yourself or delete those two mount lines.
 
-# QW-012: YAML anchors to DRY repeated environment and volume blocks
-x-backend-env: &backend-env
-  # DEPLOY: Use 'localhost' (not container names) because all services run
-  # with network_mode: host to avoid Docker bridge iptables breaking SSH.
-  DATABASE_URL: postgresql://bnkforge:${POSTGRES_PASSWORD:-bnkforge_dev_password}@localhost:5432/bnkforge
-  REDIS_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
-  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
-  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-bnkforge_redis_dev}@localhost:6379/0
-  TF_PLUGIN_CACHE_DIR: /app/provider-cache
-
-x-worker-volumes: &worker-volumes
-  # Module catalog persisted in Docker volume
-  - module_catalog:/tmp/bnk-forge-modules
-  # Persist ONLY project data and keys (not entire /app!)
-  - bnk-forge-data:/app/projects
-  - bnk-forge-keys:/app/keys
-  # Persist OpenTofu state files (critical for destroy operations!)
-  - state_data:/app/state
-  # Persist Helm repository data (user home for non-root container)
-  - helm_cache:/home/bnkforge/.cache/helm
-  - helm_config:/home/bnkforge/.config/helm
-  # Persist uploaded/cloned Helm charts
-  - helm_charts:/app/helm_charts
-  # Persist OpenTofu workspaces (for persistent workspace feature - WORK-001)
-  - workspace_data:/app/workspaces
-  # Persist shared OpenTofu provider cache across containers
-  - provider_cache:/app/provider-cache
-  # DPU Provisioning: cached BFB bundles (preserved across rebuilds/upgrades,
-  # wiped only by `make install`).
-  - bfb_cache:/app/bfb-cache
-  # Mount secrets directory (for FAR credentials, etc.)
-  - ./secrets:/app/secrets:ro
-  # *bnkctl family binaries (linux/amd64). Only the worker needs the binary —
-  # the API container deliberately omits CLI tools.
-  # Provisioned by `make fetch-awsbnkctl` (pinned + checksum-verified release
-  # download); build-worker depends on it. Override with AWSBNKCTL_VERSION.
-  - ./bin/awsbnkctl:/usr/local/bin/awsbnkctl:ro
-
-x-logging: &default-logging
+x-default-logging: &default-logging
   driver: json-file
   options:
     max-size: "10m"
     max-file: "3"
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: bnk-forge-postgres
-    network_mode: host
-    logging: *default-logging
-    environment:
-      POSTGRES_USER: bnkforge
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bnkforge_dev_password}
-      POSTGRES_DB: bnkforge
-      PGDATA: /var/lib/postgresql/data/pgdata
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bnkforge"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 512M
-        reservations:
-          cpus: '0.25'
-          memory: 128M
-
-  redis:
-    image: redis:7-alpine
-    container_name: bnk-forge-redis
-    network_mode: host
-    logging: *default-logging
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-bnkforge_redis_dev}
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-bnkforge_redis_dev}
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
-
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: api
-    image: bnk-forge-api:latest
-    container_name: bnk-forge-backend
+      args:
+        DOCKERHUB_PREFIX: ${BNKSCOPE_DOCKERHUB_PREFIX:-}
+    image: bnkscope-api:latest
+    container_name: bnkscope-backend
     network_mode: host
     logging: *default-logging
     environment:
-      <<: *backend-env
-      BNK_FORGE_DEPLOY_MODE: ${BNK_FORGE_DEPLOY_MODE:-server}
-      # Host repo path for GUI upgrade (System > Upgrade Now)
-      HOST_REPO_PATH: ${HOST_REPO_PATH:-}
+      # SQLite lives on the data volume; the schema is created from the ORM
+      # models at startup (backend/database.py:init_database).
+      DATABASE_URL: sqlite:////app/data/bnkscope.db
+      # Loopback only — see the security note above.
+      BNKSCOPE_API_HOST: ${BNKSCOPE_API_HOST:-127.0.0.1}
+      # Host networking shares the port space with everything else on the box.
+      BNKSCOPE_API_PORT: ${BNKSCOPE_API_PORT:-8000}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Encrypts kubeconfigs and cloud credentials at rest. Generated and
+      # persisted to the keys volume on first start if unset.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      # Point the cloud SDKs at the read-only mounts below. boto3 and
+      # google-auth both resolve credentials from these paths on their own, so
+      # naming them here is all it takes for ambient credentials to work.
+      AWS_CONFIG_FILE: /host/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /host/.aws/credentials
+      # Null value, not empty string: compose passes AWS_PROFILE through only
+      # when the shell has it set. `AWS_PROFILE=""` is not the same as unset —
+      # botocore would look for a profile named "" and raise ProfileNotFound.
+      AWS_PROFILE:
+      GOOGLE_APPLICATION_CREDENTIALS: /host/.config/gcloud/application_default_credentials.json
+      # When bnkscope runs its own telemetry stack (the `telemetry` profile),
+      # these say so. The backend prefers them over tmmscope's discovery file —
+      # passed as env rather than by mounting bnkscope's own config directory,
+      # since the CLI already knows the negotiated ports at `up` time.
+      BNKSCOPE_TELEMETRY: ${BNKSCOPE_TELEMETRY:-off}
+      BNKSCOPE_LOKI_URL: http://127.0.0.1:${BNKSCOPE_LOKI_PORT:-3100}
+      BNKSCOPE_LOKI_PUSH_URL: http://127.0.0.1:${BNKSCOPE_LOKI_PORT:-3100}/loki/api/v1/push
+      BNKSCOPE_PROMETHEUS_PORT: ${BNKSCOPE_PROMETHEUS_PORT:-}
+      BNKSCOPE_GRAFANA_PORT: ${BNKSCOPE_GRAFANA_PORT:-}
+      # Grafana is published on this address only, so it is also the address
+      # the backend has to probe — see tmmscope_service._telemetry_host.
+      BNKSCOPE_UI_BIND: ${BNKSCOPE_UI_BIND:-127.0.0.1}
     volumes:
-      # Same as x-worker-volumes plus backend-specific mounts
-      - module_catalog:/tmp/bnk-forge-modules
-      - bnk-forge-data:/app/projects
-      - bnk-forge-keys:/app/keys
-      - state_data:/app/state
-      - helm_cache:/home/bnkforge/.cache/helm
-      - helm_config:/home/bnkforge/.config/helm
-      - helm_charts:/app/helm_charts
-      - workspace_data:/app/workspaces
-      - provider_cache:/app/provider-cache
-      - bfb_cache:/app/bfb-cache
-      - ./secrets:/app/secrets:ro
-      # Backend-specific volumes (not needed by workers)
+      - bnkscope-data:/app/data
+      - bnkscope-keys:/app/keys
+      # Read-write here, read-only in Alloy: the backend publishes the
+      # collector's config and one kubeconfig per cluster into it.
+      - bnkscope-telemetry:/telemetry
       - ./VERSION:/app/VERSION:ro
-      # SEC-004: Docker socket moved to docker-compose.override.yml (opt-in).
-      # Only needed for GUI "Upgrade Now" feature (System → Upgrade).
-      # To enable: copy docker-compose.override.example.yml → docker-compose.override.yml
-    # With network_mode: host, backend listens on port 8000 directly on the host.
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      # Read-only view of the operator's own credentials. Set BNKSCOPE_HOST_HOME
+      # if your kubeconfig lives somewhere other than $HOME.
+      #
+      # ~/.kube    the cluster list itself — every context here is probed, and
+      #            the ones with an F5/BNK namespace register themselves
+      # ~/.aws     boto3's own resolution chain reads this to mint EKS tokens
+      #            (services/kubernetes/_base.py::_generate_eks_token)
+      # ~/.config/gcloud   the same, for GKE, via google-auth
+      # ~/.config/tmmscope tmmscope's discovery file — which ports its
+      #            Prometheus and Grafana landed on. They move when the
+      #            preferred ones are taken, so they must be read, not assumed.
+      - ${BNKSCOPE_HOST_HOME:-$HOME}/.kube:/host/.kube:ro
+      - ${BNKSCOPE_HOST_HOME:-$HOME}/.aws:/host/.aws:ro
+      - ${BNKSCOPE_HOST_HOME:-$HOME}/.config/gcloud:/host/.config/gcloud:ro
+      - ${BNKSCOPE_HOST_HOME:-$HOME}/.config/tmmscope:/host/.config/tmmscope:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/system/health"]
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:${BNKSCOPE_API_PORT:-8000}/api/system/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 256M
-
-  celery-worker:
-    build:
-      context: ./backend
-      target: worker
-    image: bnk-forge-worker:latest
-    container_name: bnk-forge-celery-worker
-    network_mode: host
-    logging: *default-logging
-    # S15-025: Worker-1 handles orchestrator queue (lightweight dispatch+wait tasks)
-    # plus opentofu queue for actual module operations, and cli queue for bnkctl dispatch
-    command: celery -A celery_app worker --loglevel=info --concurrency=4 --queues=default,opentofu,orchestrator,cli
-    environment:
-      <<: *backend-env
-      # Artifact (container-image) engine talks to the daemon through the
-      # scoped socket proxy — never the raw host socket. Sibling containers
-      # bind-mount the workspace volume by its host path (see WORKSPACE_HOST_BASE).
-      DOCKER_HOST: tcp://127.0.0.1:2375
-    volumes: *worker-volumes
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
-    # OPS-001: Health check via celery inspect ping — detects zombie workers
-    healthcheck:
-      test: ["CMD-SHELL", "celery -A celery_app inspect ping --destination celery@$$HOSTNAME --timeout 5 2>/dev/null | grep -q 'pong' || exit 1"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-
-  # Scoped Docker Engine API proxy for the artifact (container-image) engine.
-  # Opt-in WIDE proxy for artifacts that provision Docker infrastructure rather
-  # than just running a container: k3s-in-docker tools (ocibnkctl) and compose
-  # stacks need networks/volumes/exec, which the narrow proxy denies by design
-  # (guide §14.6). Disabled unless explicitly enabled:
-  #
-  #     COMPOSE_PROFILES=docker-infra make deploy
-  #
-  # HONEST LIMITATION (#445): pointing a module's DOCKER_HOST at this proxy is
-  # configuration, not enforcement. Both proxies share the artifact network, so
-  # while this is running ANY artifact image can reach these wider rights by
-  # name, not just the modules that declare it. Enable it only on installs where
-  # you trust every module image you run; real per-module scoping needs a
-  # separate artifact network per capability tier (not built).
-  docker-socket-proxy-infra:
-    image: tecnativa/docker-socket-proxy:0.3.0
-    container_name: bnk-forge-docker-socket-proxy-infra
-    profiles: ["docker-infra"]
-    ports:
-      # Distinct host port from the narrow proxy's 2375; loopback only, for the
-      # same reason (never bind a root-equivalent API on a routable address).
-      - "127.0.0.1:2376:2375"
-    networks:
-      - bnk-forge-artifacts
-    logging: *default-logging
-    environment:
-      CONTAINERS: "1"
-      POST: "1"
-      IMAGES: "1"
-      AUTH: "1"
-      # The three the narrow proxy denies — the whole point of this instance.
-      NETWORKS: "1"   # k3s/compose create their own networks
-      VOLUMES: "1"    # ...and volumes
-      EXEC: "1"       # ...and exec into nodes / --wait health checks
-      # Still denied: cluster-wide and secret surfaces.
-      SECRETS: "0"
-      SWARM: "0"
-      SERVICES: "0"
-      TASKS: "0"
-      NODES: "0"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    restart: unless-stopped
-
-  # The worker NEVER mounts the raw host socket; this proxy exposes only the
-  # containers sub-API (create/start/logs/wait) so a misbehaving artifact image
-  # cannot reach host bind mounts, the network/volume APIs, or privileged ops.
-  docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:0.3.0
-    container_name: bnk-forge-docker-socket-proxy
-    # NOT network_mode: host — under host networking the proxy would bind
-    # 0.0.0.0:2375 on the server (a root-equivalent surface) and the service
-    # name would not resolve for the host-net workers. Instead publish ONLY to
-    # the host loopback; host-net workers reach it via 127.0.0.1:2375, and the
-    # local (bridge) overlay overrides workers to the service-DNS form.
-    ports:
-      - "127.0.0.1:2375:2375"
-    # Also on the artifact-runner network so container artifacts can reach the
-    # proxy by service DNS (#445). This is the ONLY service that can join it:
-    # every other service is network_mode: host on a server install, and a
-    # host-networked service may not attach to a bridge network. Without this
-    # there is no address an artifact can use — the published port above is the
-    # HOST loopback, which inside an artifact container is its own loopback.
-    networks:
-      - bnk-forge-artifacts
-    logging: *default-logging
-    environment:
-      # Allow only container create + start/logs/wait. Everything else stays 0.
-      # NOTE: these switches gate the Engine API by *path*, not by request body.
-      # They narrow which endpoints are reachable; they do NOT inspect a
-      # /containers/create HostConfig, so this is not a bind-mount/privileged
-      # firewall. Safe here because the only caller (DockerRunner) builds a
-      # fixed argv — treat the argv builder as the security boundary.
-      CONTAINERS: "1"
-      POST: "1"
-      # Explicitly deny the dangerous surfaces (defaults are 0, set for clarity).
-      IMAGES: "1"   # required so `docker run` can pull the digest-pinned image
-      AUTH: "1"     # required so `docker --config` authfile is honored on pull
-      EXEC: "0"
-      VOLUMES: "0"
-      NETWORKS: "0"
-      SECRETS: "0"
-      SWARM: "0"
-      SERVICES: "0"
-      NODES: "0"
-      TASKS: "0"
-      INFO: "0"
-      PLUGINS: "0"
-      SYSTEM: "0"
-      DISTRIBUTION: "0"
-    volumes:
-      # The proxy itself needs the socket (read-only); workers reach the daemon
-      # ONLY through this proxy's TCP port, never the socket directly.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 128M
-        reservations:
-          cpus: '0.1'
-          memory: 32M
-
-  celery-worker-2:
-    image: bnk-forge-worker:latest  # Reuses worker image built by celery-worker service
-    container_name: bnk-forge-celery-worker-2
-    network_mode: host
-    logging: *default-logging
-    command: celery -A celery_app worker --loglevel=info --concurrency=4 --queues=default,opentofu,cli
-    environment:
-      <<: *backend-env
-      DOCKER_HOST: tcp://127.0.0.1:2375
-    volumes: *worker-volumes
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
-    # OPS-001: Health check via celery inspect ping — detects zombie workers
-    healthcheck:
-      test: ["CMD-SHELL", "celery -A celery_app inspect ping --destination celery@$$HOSTNAME --timeout 5 2>/dev/null | grep -q 'pong' || exit 1"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-
-  celery-beat:
-    build:
-      context: ./backend
-      target: beat
-    image: bnk-forge-beat:latest
-    container_name: bnk-forge-celery-beat
-    network_mode: host
-    logging: *default-logging
-    environment:
-      <<: *backend-env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
-    # OPS-001: Health check — beat liveness via schedule-file freshness.
-    # PersistentScheduler re-syncs /app/celerybeat-schedule every ~180s; a crashed
-    # or corrupt-gdbm beat stops updating the file → mtime goes stale → unhealthy.
-    # 600s window = ~3× the sync cadence. start_period=90s absorbs cold-start lag
-    # before the first 180s sync completes. Does NOT use `celery inspect ping`
-    # (targets workers only, never answers for beat).
-    healthcheck:
-      test: ["CMD", "python", "-c", "import os,time,sys; p='/app/celerybeat-schedule'; sys.exit(0 if os.path.exists(p) and (time.time()-os.stat(p).st_mtime)<600 else 1)"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 90s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
+      start_period: 20s
 
   frontend:
     build:
       context: .
       dockerfile: frontend-v2/Dockerfile
-    container_name: bnk-forge-frontend
+      args:
+        DOCKERHUB_PREFIX: ${BNKSCOPE_DOCKERHUB_PREFIX:-}
+    image: bnkscope-frontend:latest
+    container_name: bnkscope-frontend
     network_mode: host
     logging: *default-logging
     environment:
-      - BRAND=${BRAND:-}
+      # Both ports are settable because host networking shares the port space
+      # with everything else on the box.
+      BNKSCOPE_UI_PORT: ${BNKSCOPE_UI_PORT:-8080}
+      # Loopback unless deliberately widened — nginx proxies /api through to an
+      # API with no authentication, so this bind is the real access control,
+      # not the backend's. `bnkscope up --listen <addr>` sets it.
+      BNKSCOPE_UI_BIND: ${BNKSCOPE_UI_BIND:-127.0.0.1}
+      BNKSCOPE_API_UPSTREAM: 127.0.0.1:${BNKSCOPE_API_PORT:-8000}
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
-    # Note: VITE_API_URL removed - frontend now uses relative URLs for portability
-    # All API requests go through the proxy at /api/ which forwards to backend
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://${BNKSCOPE_UI_BIND:-127.0.0.1}:${BNKSCOPE_UI_PORT:-8080}/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 128M
-        reservations:
-          cpus: '0.1'
-          memory: 32M
 
-  proxy:
-    build: ./proxy
-    container_name: bnk-forge-proxy
-    network_mode: host
-    logging: *default-logging
-    depends_on:
-      frontend:
-        condition: service_healthy
-      backend:
-        condition: service_healthy
-    # With network_mode: host, ports directives are ignored — proxy listens
-    # on 8082 (HTTP redirect) and 8443 (HTTPS) directly on the host.
-    # 8082, not 8080, because the frontend container already owns host :8080.
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fk https://localhost:8443/api/system/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 128M
-        reservations:
-          cpus: '0.1'
-          memory: 32M
-
-  # MCP Server — AI-accessible tools for BNK-Forge
-  # Exposes the BNK-Forge API as MCP tools via Streamable HTTP transport.
-  # Connect any MCP-compatible AI assistant to https://<host>/mcp/
+  # Read-only MCP tools so an AI agent can query cluster health and read TMM's
+  # config. Runs by default; `./bnkscope up --no-mcp` skips it.
   mcp:
+    profiles: ["mcp"]
     build:
       context: ./mcp-server
-    image: bnk-forge-mcp:latest
-    container_name: bnk-forge-mcp
+      args:
+        DOCKERHUB_PREFIX: ${BNKSCOPE_DOCKERHUB_PREFIX:-}
+    image: bnkscope-mcp:latest
+    container_name: bnkscope-mcp
     network_mode: host
     logging: *default-logging
     environment:
-      BNK_FORGE_API_URL: http://localhost:8000
-      BNK_FORGE_USERNAME: ${MCP_SERVICE_USERNAME:-mcp}
-      # MCP authenticates as the dedicated service account seeded by the backend.
-      # Set MCP_SERVICE_PASSWORD in .env; backend reconciles the stored hash on
-      # every startup so backend and MCP always stay in sync.
-      BNK_FORGE_PASSWORD: ${MCP_SERVICE_PASSWORD:-mcp-service-changeme}
+      BNK_FORGE_API_URL: http://127.0.0.1:8000
+      # Explicit: the server defaults to 0.0.0.0, and under host networking
+      # nothing else was pinning it.
+      MCP_HOST: 127.0.0.1
       MCP_PORT: "8081"
-      MCP_LOG_LEVEL: INFO
+      MCP_LOG_LEVEL: ${MCP_LOG_LEVEL:-INFO}
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
-    # Auth-probe healthcheck: attempts to log in to the backend with the configured
-    # credentials. Exits non-zero on 401 so a password drift surfaces as UNHEALTHY
-    # instead of silent per-call failures. start_period absorbs backend startup races.
-    healthcheck:
-      test: ["CMD", "python", "-m", "bnk_forge_mcp.healthcheck"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
 
-  # Built-in Forge benchmark agent — always-present, zero-click test client.
-  # Registers as "forge-local" with builtin:true tag; appears in Agents tab.
-  # BENCHMARK_AGENT_AUTH_REQUIRED can be enabled later — the agent always sends a token.
-  forge-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    image: bnk-forge-agent:latest
-    container_name: bnk-forge-agent
-    network_mode: host
-    # aiperf is a multiprocess load generator: it spawns workers that pass data
-    # via shared memory + a ZMQ bus. The 64M default /dev/shm + a tight memory
-    # cap starve it ("ZMQ message bus / worker connection probe still waiting").
-    shm_size: '2gb'
+  # Optional: the TMM telemetry stack — Prometheus as a remote_write receiver,
+  # plus Grafana. Start with `./bnkscope up --telemetry`.
+  #
+  # Bridge networking, unlike everything above. These two only need to reach
+  # each other (Grafana -> prometheus:9090 over the compose network) and to be
+  # reachable from the host, and a published port is the honest way to say that:
+  # the exporters push to the host gateway from inside your clusters, and the
+  # bind address is what decides who else can.
+  prometheus:
+    profiles: ["telemetry"]
+    image: ${BNKSCOPE_DOCKERHUB_PREFIX:-}prom/prometheus:v3.1.0
+    container_name: bnkscope-prometheus
     logging: *default-logging
-    environment:
-      # Point at the backend on the same host (host networking)
-      FORGE_URL: http://localhost:8000
-      AGENT_NAME: ${FORGE_AGENT_NAME:-forge-local}
-      AGENT_TOKEN: ${FORGE_AGENT_TOKEN:-}
-      # Leave blank to let the agent resolve its own IP via socket
-      AGENT_ADVERTISE_IP: ${FORGE_AGENT_ADVERTISE_IP:-}
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          # aiperf needs real headroom while a run executes; stays idle otherwise.
-          cpus: '2.0'
-          memory: 4G
-        reservations:
-          cpus: '0.05'
-          memory: 64M
-
-  # DEVOPS-002: Automated PostgreSQL backups
-  # Runs pg_dump daily at 2 AM and retains 7 days of backups
-  # Backups stored in Docker volume (can also mount ./backups for easy access)
-  postgres-backup:
-    image: postgres:16-alpine
-    container_name: bnk-forge-postgres-backup
-    network_mode: host
-    logging: *default-logging
-    environment:
-      PGHOST: localhost
-      PGUSER: bnkforge
-      PGPASSWORD: ${POSTGRES_PASSWORD:-bnkforge_dev_password}
-      PGDATABASE: bnkforge
-      BACKUP_RETENTION_DAYS: "7"
-    volumes:
-      - postgres_backups:/backups
-      # Optionally also mount to host for easy access:
-      # - ./backups:/backups
-    depends_on:
-      postgres:
-        condition: service_healthy
-    # Run backup script on container start, then schedule daily
-    entrypoint: ["/bin/sh", "-c"]
     command:
-      - |
-        # Create backup directory
-        mkdir -p /backups
-        
-        # Backup function
-        do_backup() {
-          TIMESTAMP=$$(date +%Y%m%d_%H%M%S)
-          BACKUP_FILE="/backups/bnkforge_$${TIMESTAMP}.sql.gz"
-          echo "[$$TIMESTAMP] Starting backup..."
-          pg_dump | gzip > "$$BACKUP_FILE"
-          if [ $$? -eq 0 ]; then
-            echo "[$$TIMESTAMP] Backup completed: $$BACKUP_FILE"
-            # Cleanup old backups
-            find /backups -name "bnkforge_*.sql.gz" -mtime +$${BACKUP_RETENTION_DAYS} -delete
-            echo "[$$TIMESTAMP] Cleaned up backups older than $${BACKUP_RETENTION_DAYS} days"
-          else
-            echo "[$$TIMESTAMP] Backup failed!"
-          fi
-        }
-        
-        # Initial backup on start
-        do_backup
-        
-        # Schedule daily backup at 2 AM
-        while true; do
-          # Calculate seconds until next 2 AM
-          CURRENT_HOUR=$$(date +%H)
-          CURRENT_MIN=$$(date +%M)
-          # Strip leading zero so 08/09 are not misread as invalid octal in arithmetic
-          CURRENT_HOUR=$${CURRENT_HOUR#0}
-          CURRENT_MIN=$${CURRENT_MIN#0}
-          if [ $$CURRENT_HOUR -lt 2 ]; then
-            WAIT_HOURS=$$((2 - CURRENT_HOUR))
-          else
-            WAIT_HOURS=$$((26 - CURRENT_HOUR))
-          fi
-          WAIT_SECS=$$((WAIT_HOURS * 3600 - CURRENT_MIN * 60))
-          echo "Next backup in $$WAIT_HOURS hours ($$WAIT_SECS seconds)"
-          sleep $$WAIT_SECS
-          do_backup
-        done
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # A live window, not a store. A destroyed cluster cleans itself up.
+      - --storage.tsdb.retention.time=24h
+      # TMM hooks inbound TCP on its dataplane interfaces, so the sidecars
+      # cannot be scraped — they push here.
+      - --web.enable-remote-write-receiver
+      - --web.listen-address=0.0.0.0:9090
+    ports:
+      # Not loopback-only: the whole point is that pods in your clusters reach
+      # it via the host gateway. It receives metrics and serves queries — it
+      # holds no credentials and can change nothing.
+      - "${BNKSCOPE_PROMETHEUS_PORT:-9491}:9090"
+    volumes:
+      - ./telemetry/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - bnkscope-prometheus:/prometheus
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
-# The artifact runner network (bnk-forge-artifacts) is declared EXTERNAL: it is
-# created by `make ensure-artifact-network` (a prerequisite of deploy/up/install)
-# and by dist/install.sh, which pick a free subnet — a fixed one collides with
-# some hosts' VPN/management routes (#422). external:true keeps that ownership:
-# compose attaches to it but never creates it with a default subnet.
-#
-# Only docker-socket-proxy joins it (#445), so artifacts can reach the scoped
-# daemon API by service DNS. No other service can: under host networking a
-# service may not also attach to a bridge network. The DockerRunner attaches
-# artifact steps to the same network by name — see CONTAINER_ARTIFACT_NETWORK.
+  grafana:
+    profiles: ["telemetry"]
+    image: ${BNKSCOPE_DOCKERHUB_PREFIX:-}grafana/grafana:11.4.0
+    container_name: bnkscope-grafana
+    logging: *default-logging
+    environment:
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_SERVER_ROOT_URL: "http://localhost:${BNKSCOPE_GRAFANA_PORT:-3000}/"
+      # TMM Live embeds the dashboard in an iframe, and an embed that demanded
+      # a login would be an embed nobody can read. Anonymous is Viewer only.
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      # Always on. TMM Live embeds the dashboard in an iframe that loads from
+      # the operator's browser, so requiring a login here does not protect
+      # Grafana — it just puts a login box inside bnkscope's own page, for a
+      # dashboard the same person is already looking at.
+      #
+      # Tying this to the bind was tried and reverted: with --listen the
+      # browser *is* remote, so "anonymous only on loopback" means "no embedded
+      # dashboard whenever you use it remotely", which is when TMM Live matters
+      # most. Anonymous Grafana on a network bind is consistent with the
+      # documented posture — that bind has no protection at all, by design and
+      # in writing. The admin password below is still generated, because
+      # Grafana admin can add a datasource pointing anywhere.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      # Explore — ad-hoc LogQL and PromQL — is an Editor capability by default,
+      # so an anonymous Viewer does not merely lack access: Grafana hides the
+      # menu, and the feature looks absent rather than forbidden. This grants
+      # Viewers that one capability. Nothing is escalated in a tool with no
+      # authentication whose boundary is the bind address.
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
+      GF_USERS_DEFAULT_THEME: "dark"
+      # Generated per install by `bnkscope up`. The old default was the
+      # literal string "bnkscope", which is in this file, in git, and worked
+      # over the network — Grafana admin can add a datasource pointing at the
+      # API, which is a way around any gate the UI ever grows.
+      GF_SECURITY_ADMIN_PASSWORD: ${BNKSCOPE_GRAFANA_PASSWORD:?run bnkscope up}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      # Follows the UI's bind, and for the same reason. Published wildcard,
+      # Grafana's anonymous Viewer plus its datasource proxy is an
+      # unauthenticated read gateway into Loki — i.e. every log line from
+      # every registered cluster, to anyone on the network, without touching
+      # bnkscope at all. Loki being loopback-only does not help: the proxy is
+      # on this side of it.
+      - "${BNKSCOPE_UI_BIND:-127.0.0.1}:${BNKSCOPE_GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./telemetry/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./telemetry/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - bnkscope-grafana:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
-networks:
-  bnk-forge-artifacts:
-    external: true
-    name: ${ARTIFACT_NETWORK:-bnk-forge-artifacts}
+  # Logs, beside the metrics and kept for the same 24h. Loki stays on the
+  # bridge with Grafana (which reaches it as loki:3100) and publishes only to
+  # loopback — nothing outside this machine queries it.
+  loki:
+    profiles: ["telemetry"]
+    image: ${BNKSCOPE_DOCKERHUB_PREFIX:-}grafana/loki:3.3.2
+    container_name: bnkscope-loki
+    logging: *default-logging
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    ports:
+      - "127.0.0.1:${BNKSCOPE_LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./telemetry/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - bnkscope-loki:/loki
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready | grep -q ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  # The log collector. Host networking, unlike Loki and Grafana: it dials your
+  # clusters' API servers, which is the same reach the backend needs.
+  #
+  # Its config is generated by the backend into the shared volume below —
+  # bnkscope's registered clusters live in its database, and only some of them
+  # are in the operator's ~/.kube/config, so a mounted kubeconfig would cover
+  # an arbitrary subset and look healthy doing it.
+  alloy:
+    profiles: ["telemetry"]
+    image: ${BNKSCOPE_DOCKERHUB_PREFIX:-}grafana/alloy:v1.18.1
+    container_name: bnkscope-alloy
+    network_mode: host
+    logging: *default-logging
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy
+      - /telemetry/config.alloy
+    volumes:
+      - bnkscope-telemetry:/telemetry:ro
+      - bnkscope-alloy:/var/lib/alloy
+    depends_on:
+      # The config has to exist before Alloy reads it, and the backend is what
+      # writes it.
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
-  module_catalog:
-    driver: local
-  bnk-forge-data:
-    driver: local
-  bnk-forge-keys:
-    driver: local
-  state_data:
-    driver: local
-  workspace_data:
-    driver: local
-  provider_cache:
-    driver: local
-  helm_cache:
-    driver: local
-  helm_config:
-    driver: local
-  helm_charts:
-    driver: local
-  postgres_data:
-    driver: local
-  postgres_backups:
-    driver: local
-  redis_data:
-    driver: local
-  bfb_cache:
-    driver: local
+  # The SQLite database. Back it up from System → Backup, which snapshots the
+  # database and the encryption key together — one is useless without the other.
+  bnkscope-data:
+  # ENCRYPTION_KEY when it is auto-generated rather than supplied.
+  bnkscope-keys:
+  # The telemetry profile's stores. 24h of TMM counters and logs, plus
+  # Grafana's own state and Alloy's read positions.
+  bnkscope-prometheus:
+  bnkscope-grafana:
+  bnkscope-loki:
+  bnkscope-alloy:
+  # Generated collector config and the per-cluster kubeconfigs it needs.
+  # Credentials: written 0600, and this volume is never mounted anywhere else.
+  bnkscope-telemetry:

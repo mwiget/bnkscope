@@ -72,13 +72,6 @@ interface SystemDefaultsResponse {
   project: Record<string, SystemDefaultSetting>;
 }
 
-interface DefaultsStatusResponse {
-  all_configured: boolean;
-  missing: Array<{ key: string; description: string; category: string; suggested_value?: string }>;
-  total_required: number;
-  configured_count: number;
-}
-
 export function useSystemDefaults() {
   const queryClient = useQueryClient();
 
@@ -106,20 +99,3 @@ export function useSystemDefaults() {
   };
 }
 
-export function useDefaultsStatus() {
-  const { data, isLoading, error } = useQuery<DefaultsStatusResponse>({
-    queryKey: queryKeys.system.defaultsStatus(),
-    queryFn: () => settingsApi.getDefaultsStatus(),
-    // Check frequently for unconfigured required settings
-    staleTime: 30000,
-  });
-
-  return {
-    allConfigured: data?.all_configured ?? true,
-    missing: data?.missing ?? [],
-    totalRequired: data?.total_required ?? 0,
-    configuredCount: data?.configured_count ?? 0,
-    isLoading,
-    error,
-  };
-}

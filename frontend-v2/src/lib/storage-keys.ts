@@ -10,6 +10,12 @@
 export const STORAGE_KEYS = {
   // Kubernetes & Cluster Management
   K8S_PROJECT: 'bnk-forge-k8s-project',
+  // The cluster you are looking at, shared by every page. The per-page keys
+  // below are superseded and read only as a one-time fallback — see
+  // hooks/useSelectedCluster.ts.
+  SELECTED_CLUSTER: 'bnkscope-selected-cluster',
+  /** Logs page: collapse repeated lines. 'off' opts out; anything else is on. */
+  LOGS_COLLAPSE: 'bnkscope-logs-collapse',
   K8S_CLUSTER: 'bnk-forge-k8s-cluster',
   K8S_NAMESPACE: 'bnk-forge-k8s-namespace',
   K8S_RESOURCE_TYPE: 'bnk-forge-k8s-resource-type',
@@ -28,7 +34,6 @@ export const STORAGE_KEYS = {
   CNF_CLUSTER: 'bnk-forge-cnf-cluster',
 
   // Authentication
-  AUTH_TOKEN: 'auth_token',
 
   // Onboarding & First-time User Experience
   ONBOARDING_COMPLETE: 'bnk-forge-onboarding-complete',

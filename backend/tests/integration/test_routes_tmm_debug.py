@@ -33,20 +33,14 @@ def _mock_k8s_service():
 class TestListTMMDebugPods:
     """GET /api/k8s/clusters/{cluster_id}/tmm-debug/pods."""
 
-    def test_requires_auth(self, client, sample_project, make_k8s_cluster):
-        """Unauthenticated request returns 401."""
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-noauth")
-        response = client.get(f"/api/k8s/clusters/{cluster.id}/tmm-debug/pods")
-        assert response.status_code == 401
-
     @patch("routes.k8s.tmm_debug.list_tmm_debug_pods")
     @patch("routes.k8s.tmm_debug.KubernetesService")
     def test_returns_pod_list(
         self, mock_k8s_cls, mock_list_pods,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can list TMM pods with debug sidecar info."""
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-pods-cluster")
+        cluster = make_k8s_cluster(name="tmm-pods-cluster")
         mock_k8s_cls.return_value = _mock_k8s_service()
         mock_list_pods.return_value = [
             {"name": "f5-tmm-abc", "namespace": "f5-bnk", "has_debug": True, "status": "Running"},
@@ -73,22 +67,14 @@ class TestListTMMDebugPods:
 class TestTMMDebugExec:
     """POST /api/k8s/clusters/{cluster_id}/tmm-debug/exec."""
 
-    def test_requires_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-exec-noauth")
-        response = client.post(
-            f"/api/k8s/clusters/{cluster.id}/tmm-debug/exec",
-            json={"pod_name": "f5-tmm-abc", "command": "ls"},
-        )
-        assert response.status_code == 401
-
     @patch("routes.k8s.tmm_debug.exec_debug_command")
     @patch("routes.k8s.tmm_debug.KubernetesService")
     def test_exec_raw_command(
         self, mock_k8s_cls, mock_exec,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can exec a raw command in the debug sidecar."""
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-exec-cluster")
+        cluster = make_k8s_cluster(name="tmm-exec-cluster")
         mock_k8s_cls.return_value = _mock_k8s_service()
         mock_exec.return_value = {
             "stdout": "bin  dev  etc  proc",
@@ -123,10 +109,10 @@ class TestTMMDebugExec:
     @patch("routes.k8s.tmm_debug.KubernetesService")
     def test_exec_default_namespace(
         self, mock_k8s_cls, mock_exec,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Default namespace is f5-bnk when not specified."""
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-exec-ns-cluster")
+        cluster = make_k8s_cluster(name="tmm-exec-ns-cluster")
         mock_k8s_cls.return_value = _mock_k8s_service()
         mock_exec.return_value = {"stdout": "", "stderr": "", "exit_code": 0}
 
@@ -143,12 +129,12 @@ class TestTMMDebugExec:
     @patch("routes.k8s.tmm_debug.KubernetesService")
     def test_exec_resolves_cluster_default_namespace(
         self, mock_k8s_cls, mock_exec,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Namespace resolves from the cluster's default_namespace (e.g. direct-helm
         installs where the tenant namespace isn't 'f5-bnk')."""
         cluster = make_k8s_cluster(
-            project=sample_project, name="tmm-exec-defns-cluster", default_namespace="bnk-app1",
+            name="tmm-exec-defns-cluster", default_namespace="bnk-app1",
         )
         mock_svc = _mock_k8s_service()
         mock_svc.get_cluster.return_value = cluster
@@ -173,22 +159,14 @@ class TestTMMDebugExec:
 class TestTMMDebugTmctl:
     """POST /api/k8s/clusters/{cluster_id}/tmm-debug/tmctl."""
 
-    def test_requires_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-tmctl-noauth")
-        response = client.post(
-            f"/api/k8s/clusters/{cluster.id}/tmm-debug/tmctl",
-            json={"pod_name": "f5-tmm-abc", "table": "virtual_server_stat"},
-        )
-        assert response.status_code == 401
-
     @patch("routes.k8s.tmm_debug.exec_tmctl")
     @patch("routes.k8s.tmm_debug.KubernetesService")
     def test_tmctl_query(
         self, mock_k8s_cls, mock_tmctl,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can execute a structured tmctl query."""
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-tmctl-cluster")
+        cluster = make_k8s_cluster(name="tmm-tmctl-cluster")
         mock_k8s_cls.return_value = _mock_k8s_service()
         mock_tmctl.return_value = {
             "columns": ["name", "clientside.bits_in", "clientside.bits_out"],
@@ -227,22 +205,14 @@ class TestTMMDebugTmctl:
 class TestTMMDebugConfigview:
     """POST /api/k8s/clusters/{cluster_id}/tmm-debug/configview."""
 
-    def test_requires_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-cv-noauth")
-        response = client.post(
-            f"/api/k8s/clusters/{cluster.id}/tmm-debug/configview",
-            json={"pod_name": "f5-tmm-abc", "uuid": "abc-123"},
-        )
-        assert response.status_code == 401
-
     @patch("routes.k8s.tmm_debug.exec_configview")
     @patch("routes.k8s.tmm_debug.KubernetesService")
     def test_configview_uuid(
         self, mock_k8s_cls, mock_configview,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can inspect a CR config by UUID."""
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-cv-cluster")
+        cluster = make_k8s_cluster(name="tmm-cv-cluster")
         mock_k8s_cls.return_value = _mock_k8s_service()
         mock_configview.return_value = {
             "uuid": "abc-123",
@@ -272,22 +242,14 @@ class TestTMMDebugConfigview:
 class TestTMMDebugConfigviewUuids:
     """POST /api/k8s/clusters/{cluster_id}/tmm-debug/configview/uuids."""
 
-    def test_requires_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-uuids-noauth")
-        response = client.post(
-            f"/api/k8s/clusters/{cluster.id}/tmm-debug/configview/uuids",
-            json={"pod_name": "f5-tmm-abc"},
-        )
-        assert response.status_code == 401
-
     @patch("routes.k8s.tmm_debug.discover_configview_uuids")
     @patch("routes.k8s.tmm_debug.KubernetesService")
     def test_discover_uuids(
         self, mock_k8s_cls, mock_discover,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can discover available configview UUIDs."""
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-uuids-cluster")
+        cluster = make_k8s_cluster(name="tmm-uuids-cluster")
         mock_k8s_cls.return_value = _mock_k8s_service()
         mock_discover.return_value = {
             "uuids": ["abc-123", "def-456", "ghi-789"],
@@ -314,22 +276,14 @@ class TestTMMDebugConfigviewUuids:
 class TestTMMDebugBdt:
     """POST /api/k8s/clusters/{cluster_id}/tmm-debug/bdt."""
 
-    def test_requires_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-bdt-noauth")
-        response = client.post(
-            f"/api/k8s/clusters/{cluster.id}/tmm-debug/bdt",
-            json={"pod_name": "f5-tmm-abc", "subcommand": "arp"},
-        )
-        assert response.status_code == 401
-
     @patch("routes.k8s.tmm_debug.exec_bdt_cli")
     @patch("routes.k8s.tmm_debug.KubernetesService")
     def test_bdt_arp(
         self, mock_k8s_cls, mock_bdt,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can execute bdt_cli arp subcommand."""
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-bdt-cluster")
+        cluster = make_k8s_cluster(name="tmm-bdt-cluster")
         mock_k8s_cls.return_value = _mock_k8s_service()
         mock_bdt.return_value = {
             "output": "10.1.1.1  00:0c:29:xx:xx:xx  internal_vlan",
@@ -354,10 +308,10 @@ class TestTMMDebugBdt:
     @patch("routes.k8s.tmm_debug.KubernetesService")
     def test_bdt_connection_list(
         self, mock_k8s_cls, mock_bdt,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can execute bdt_cli 'connection list' subcommand."""
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-bdt-conn-cluster")
+        cluster = make_k8s_cluster(name="tmm-bdt-conn-cluster")
         mock_k8s_cls.return_value = _mock_k8s_service()
         mock_bdt.return_value = {
             "output": "Total connections: 42",
@@ -382,23 +336,3 @@ class TestTMMDebugBdt:
 class TestTMMDebugAllEndpointsRequireAuth:
     """All TMM debug endpoints reject unauthenticated requests."""
 
-    def test_all_endpoints_require_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="tmm-bulk-noauth")
-        cid = cluster.id
-
-        endpoints = [
-            ("GET", f"/api/k8s/clusters/{cid}/tmm-debug/pods"),
-            ("POST", f"/api/k8s/clusters/{cid}/tmm-debug/exec"),
-            ("POST", f"/api/k8s/clusters/{cid}/tmm-debug/tmctl"),
-            ("POST", f"/api/k8s/clusters/{cid}/tmm-debug/configview"),
-            ("POST", f"/api/k8s/clusters/{cid}/tmm-debug/configview/uuids"),
-            ("POST", f"/api/k8s/clusters/{cid}/tmm-debug/bdt"),
-        ]
-        body = {"pod_name": "f5-tmm-abc", "command": "ls", "table": "t", "uuid": "u", "subcommand": "arp"}
-
-        for method, url in endpoints:
-            if method == "GET":
-                resp = client.get(url)
-            else:
-                resp = client.post(url, json=body)
-            assert resp.status_code == 401, f"{method} {url} should require auth"

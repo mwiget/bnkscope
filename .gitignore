@@ -158,7 +158,11 @@ screenshots/
 .agent/
 .opencode
 .opencode/
+.claude
 .claude/
+.gemini
+.gemini/
+.cursor
 .cursor/
 .aider*
 # CLAUDE.md go ahead and share
@@ -182,7 +186,9 @@ nohup.out
 # Editor
 # Node
 node_modules/
-package-lock.json
+# package-lock.json is intentionally TRACKED — `npm ci` and the CI setup-node
+# cache both require it. Ignoring it silently drops the lockfile from any export
+# built off the working tree, which breaks every frontend CI job.
 *.pyc
 # Environment
 # OpenCode
@@ -249,10 +255,24 @@ cli/go/
 .env
 .env.*
 !.env.example
+# Includes bnkscope backups, which carry the database *and* the Fernet key that
+# decrypts it — wrapped only with whatever passphrase the caller chose. One
+# committed by accident is a credential leak, not a large file. (A bnk-forge-era
+# archive was tracked here until 2026-08-23, force-added past this rule.)
 *.tar.gz
+# ...and the near-miss that actually got through: the tracked archive was named
+# `bnkforge-backup-take5tar.gz` — no dot before `tar` — so `*.tar.gz` never
+# matched it. Match on the word instead of trusting the extension.
+*backup*.gz
+*backup*.tgz
 *.bnk
 .ssh/
-secrets/
+# Anchored to the repo root on purpose: an unanchored `secrets/` also matches
+# frontend-v2/src/components/secrets/, which silently removed a shipped component.
+# `/secrets/*` rather than `/secrets/`: git will not descend into an excluded
+# directory, so the tracked placeholder README could not be negated otherwise.
+/secrets/*
+!/secrets/README.md
 .agent/
 .agent-prev/
 .agent-local/
@@ -267,3 +287,4 @@ next-session-prompt
 agent-selection
 handoffs/
 *.code-workspace
+

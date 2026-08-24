@@ -382,7 +382,10 @@ class TestHandleExceptionAwsBotocore:
         exc = exc_info.value
         assert exc.status_code == 401
         assert exc.code == "REMOTE_AUTHENTICATION_FAILED"
-        assert "Credential Templates" in exc.details.get("suggested_action", "")
+        # The guidance has to name where the credentials actually live. bnkscope
+        # reads them from the host environment -- there is no in-app credential
+        # store to send the user to.
+        assert "aws sso login" in exc.details.get("suggested_action", "")
 
     def test_invalid_client_token_maps_to_authentication_error(self):
         err = _make_client_error("InvalidClientTokenId", "The security token is invalid")

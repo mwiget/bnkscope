@@ -9,13 +9,15 @@ import os
 import tempfile
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
 
 from sqlalchemy.orm import Session
 
 from core.encryption import decrypt_value
 from models import KubernetesCluster
-from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeconfig
+from services.kubeconfig_normalizer import (
+    NormalizationSource,
+    normalize_kubeconfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,41 +118,6 @@ def kubeconfig_for_cluster(
         _cleanup_kubeconfig(kubeconfig_path)
 
 
-def prepare_kubeconfig(cluster: KubernetesCluster, db: Session) -> Any:
-    """
-    Prepare kubeconfig file for cluster operations.
-
-    IMPORTANT: Caller MUST clean up the temp file when done.
-    Prefer using `kubeconfig_for_cluster()` context manager instead,
-    which guarantees cleanup.
-
-    For EKS clusters, also sets AWS credentials in environment so that
-    the kubeconfig's 'aws eks get-token' command can authenticate.
-
-    For SSH/on-prem clusters, opens an SSH tunnel and rewrites the
-    kubeconfig server URL to route through the tunnel.
-
-    Args:
-        cluster: Kubernetes cluster configuration
-        db: Database session (for credential lookup)
-
-    Returns:
-        Temporary file object (NamedTemporaryFile) - caller must clean up
-        Use .name to get the file path, and os.unlink(.name) to delete.
-
-    Raises:
-        ValueError: If cluster has no kubeconfig
-    """
-    kubeconfig_path = _write_kubeconfig(cluster, db)
-
-    # Return a simple object with .name for backward compat with callers
-    # that do kubeconfig_file.name
-    class _KubeconfigFile:
-        def __init__(self, path: str):
-            self.name = path
-        def close(self):
-            pass  # already closed
-    return _KubeconfigFile(kubeconfig_path)
 
 
 def _write_kubeconfig(cluster: KubernetesCluster, db: Session) -> str:
@@ -180,29 +147,11 @@ def _write_kubeconfig(cluster: KubernetesCluster, db: Session) -> str:
         kubeconfig_content, source=NormalizationSource.INTERNAL_REREAD
     )
 
-    # Check if project uses SSH credential template — open tunnel if so
-    tunnel_port = _maybe_open_ssh_tunnel(cluster)
-    if tunnel_port:
-        import yaml as yaml_lib
-        kubeconfig_dict = yaml_lib.safe_load(kubeconfig_content)
-        for c in kubeconfig_dict.get('clusters', []):
-            # Use 127.0.0.1 explicitly, not "localhost" — the latter
-            # resolves to both ::1 and 127.0.0.1, and the tunnel listener
-            # binds to 0.0.0.0 (IPv4 only). httpx/kr8s try ::1 first and
-            # bail out with "All connection attempts failed" instead of
-            # falling back to the IPv4 address.
-            c['cluster']['server'] = f'https://127.0.0.1:{tunnel_port}'
-            c['cluster']['insecure-skip-tls-verify'] = True
-            c['cluster'].pop('certificate-authority-data', None)
-            c['cluster'].pop('certificate-authority', None)
-        kubeconfig_content = yaml_lib.dump(kubeconfig_dict, default_flow_style=False)
-
     # For EKS/AWS clusters, set AWS credentials in environment
     # The kubeconfig's 'aws eks get-token' command will use these
     if cluster.cloud_provider in ["eks", "aws"]:
         from services.credentials_service import get_cloud_credentials_env
-        project = cluster.project
-        aws_env = get_cloud_credentials_env(project, db)
+        aws_env = get_cloud_credentials_env(cluster, db)
 
         # Set AWS credentials in current process environment
         for key, value in aws_env.items():
@@ -219,14 +168,13 @@ def _write_kubeconfig(cluster: KubernetesCluster, db: Session) -> str:
     # backend container.  Mirrors the EKS token-rewrite path on KubernetesService.
     if cluster.cloud_provider in ["gke", "gcp"]:
         from services.credentials_service import get_gcp_service_account_info
-        project = cluster.project
-        sa_info = get_gcp_service_account_info(project, db)
+        sa_info = get_gcp_service_account_info(cluster, db)
         if not sa_info:
             logger.warning(
-                "No GCP service-account credentials configured for cluster %s "
-                "(project '%s'); shell-out clients will fail without "
-                "gke-gcloud-auth-plugin in the container",
-                cluster.name, project.name if project else "<none>",
+                "No GCP service-account credentials configured for cluster %s; "
+                "shell-out clients will fail without gke-gcloud-auth-plugin in "
+                "the container",
+                cluster.name,
             )
         else:
             try:
@@ -274,132 +222,6 @@ def _cleanup_kubeconfig(kubeconfig_path: str | None) -> None:
             pass
 
 
-def _maybe_open_ssh_tunnel(cluster: KubernetesCluster) -> int | None:
-    """
-    Check if the cluster has SSH tunneling enabled (per-cluster opt-in).
-    If so, open/reuse an SSH tunnel and return the local port.
-    Returns None if tunneling is not enabled.
-
-    SSH credential resolution order:
-      1. Per-cluster SSHCredential (ssh_credential_id)
-      2. Project-level SSHCredential (project.ssh_credential_id)
-
-    SSH is orthogonal to cloud_provider: an AWS cluster behind a private VPC
-    might need SSH tunneling, and an on-prem cluster might not.
-
-    Shared by kubernetes_service.py and cluster_utils.prepare_kubeconfig().
-    """
-    try:
-        # Per-cluster opt-in: only tunnel if explicitly enabled
-        if not cluster.ssh_tunnel_enabled:
-            return None
-
-        ssh_host = None
-        ssh_port = 22
-        ssh_username = None
-        ssh_auth_type = "key"
-        ssh_password_encrypted = None
-        ssh_key_encrypted = None
-        ssh_key_passphrase_encrypted = None
-        resolved_from = None
-
-        # 1. First-class: per-cluster SSHCredential
-        if cluster.ssh_credential_id and cluster.ssh_credential:
-            cred = cluster.ssh_credential
-            # ssh_host_override allows reusing a credential's key for a different host
-            # (e.g. kind on a directly-reachable node that shares the jumphost's SSH key)
-            ssh_host = cluster.ssh_host_override or cred.host
-            ssh_port = cred.port or 22
-            ssh_username = cred.username
-            ssh_auth_type = cred.auth_type or "key"
-            ssh_password_encrypted = cred.password_encrypted
-            ssh_key_encrypted = cred.private_key_encrypted
-            ssh_key_passphrase_encrypted = cred.key_passphrase_encrypted
-            if cluster.ssh_host_override:
-                resolved_from = f"cluster.ssh_credential (id={cred.id}, host_override={cluster.ssh_host_override})"
-            else:
-                resolved_from = f"cluster.ssh_credential (id={cred.id})"
-
-        # 2. First-class: project-level SSHCredential
-        if not ssh_host:
-            project = cluster.project
-            if project and project.ssh_credential_id and project.ssh_credential:
-                cred = project.ssh_credential
-                ssh_host = cred.host
-                ssh_port = cred.port or 22
-                ssh_username = cred.username
-                ssh_auth_type = cred.auth_type or "key"
-                ssh_password_encrypted = cred.password_encrypted
-                ssh_key_encrypted = cred.private_key_encrypted
-                ssh_key_passphrase_encrypted = cred.key_passphrase_encrypted
-                resolved_from = f"project.ssh_credential (id={cred.id})"
-
-        # Legacy fallbacks removed (K8S-013).
-        # ssh_credential_template_id and project.credential_template SSH paths
-        # are no longer supported. All SSH operations use ssh_credential_id.
-
-        if not ssh_host:
-            logger.warning(
-                f"Cluster {cluster.name} has ssh_tunnel_enabled but no SSH credential found. "
-                f"Set an SSH credential on the cluster or project."
-            )
-            return None
-
-        logger.debug(f"Cluster {cluster.name}: SSH credential resolved from {resolved_from}")
-
-        # If the project has a separate SSH credential from the cluster
-        # (typical bare-metal: project.ssh_credential = jumphost,
-        # cluster.ssh_credential = host's own creds), the tunnel must
-        # hop through the jumphost first — the worker can't reach the
-        # host's mgmt IP directly. Without this, paramiko gets
-        # "Connection refused" at SSH layer and the OpenTofu modules see
-        # "connection refused" at the K8s API layer downstream.
-        jumphost_dict: dict | None = None
-        project = cluster.project
-        if (
-            project
-            and project.ssh_credential_id
-            and project.ssh_credential
-            and project.ssh_credential_id != getattr(cluster.ssh_credential, "id", None)
-        ):
-            jh = project.ssh_credential
-            jumphost_dict = {
-                "host": jh.host,
-                "port": jh.port or 22,
-                "username": jh.username,
-                "auth_type": jh.auth_type or "key",
-                "password_encrypted": jh.password_encrypted,
-                "key_encrypted": jh.private_key_encrypted,
-                "key_passphrase_encrypted": jh.key_passphrase_encrypted,
-            }
-            logger.info(
-                "Cluster %s tunnel will hop via project jumphost %s@%s:%d",
-                cluster.name, jh.username, jh.host, jh.port or 22,
-            )
-
-        from services.ssh_tunnel_manager import get_tunnel_manager
-        tunnel_mgr = get_tunnel_manager()
-
-        local_port = tunnel_mgr.get_or_open_tunnel(
-            cluster_id=cluster.id,
-            ssh_host=ssh_host,
-            ssh_port=ssh_port,
-            ssh_username=ssh_username,
-            ssh_auth_type=ssh_auth_type,
-            ssh_password_encrypted=ssh_password_encrypted,
-            ssh_key_encrypted=ssh_key_encrypted,
-            ssh_key_passphrase_encrypted=ssh_key_passphrase_encrypted,
-            remote_k8s_host=cluster.ssh_remote_k8s_host or "localhost",
-            remote_k8s_port=cluster.ssh_remote_k8s_port or 6443,
-            jumphost=jumphost_dict,
-        )
-        return local_port
-
-    except Exception as e:
-        logger.error(f"Failed to open SSH tunnel for cluster {cluster.name}: {e}")
-        raise ValueError(f"SSH tunnel error: {e}")
-
-
 def _generate_gcp_token(sa_info: dict) -> str | None:
     """
     Mint a GKE-compatible OAuth access token from a GCP service-account key dict.
@@ -427,21 +249,3 @@ def _generate_gcp_token(sa_info: dict) -> str | None:
     return credentials.token
 
 
-def decrypt_credential(encrypted_value: str, field_name: str) -> str | None:
-    """
-    Safely decrypt a credential field with error handling.
-
-    Args:
-        encrypted_value: The encrypted value to decrypt
-        field_name: Name of field (for logging)
-
-    Returns:
-        Decrypted value or None if decryption fails
-    """
-    if not encrypted_value:
-        return None
-    try:
-        return decrypt_value(encrypted_value)
-    except Exception as e:
-        logger.error(f"Error decrypting {field_name}: {e}")
-        return None

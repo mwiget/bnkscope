@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
+import { NAV_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 
 // ---------------------------------------------------------------------------
 // useReducedMotion — programmatic check for prefers-reduced-motion
@@ -38,24 +39,18 @@ export function useReducedMotion(): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Title map — maps route paths to human-readable page titles.
- * Expand as new routes are added.
+ * Title map — route path to the name a screen reader announces.
+ *
+ * Derived from NAV_SHORTCUTS rather than written out again, because the
+ * hand-maintained copy drifted badly: it announced nine routes the router had
+ * already dropped (Projects, Modules, Blueprints, Helm, Fleet, Operators,
+ * Tasks, Auth Templates, Workflows) and named the surviving ones differently
+ * from the sidebar a sighted user reads. Sharing one source means a new page
+ * is announced by the same name it is navigated by.
  */
-const ROUTE_TITLES: Record<string, string> = {
-  '/': 'Dashboard',
-  '/projects': 'Projects',
-  '/modules': 'Modules',
-  '/stacks': 'Blueprints',
-  '/bnk': 'F5 BNK',
-  '/kubernetes': 'Kubernetes',
-  '/helm': 'Helm Packages',
-  '/fleet': 'Fleet Overview',
-  '/operators': 'Operators',
-  '/tasks': 'Task History',
-  '/system': 'System Settings',
-  '/auth-templates': 'Auth Templates',
-  '/workflows': 'Workflows',
-};
+const ROUTE_TITLES: Record<string, string> = Object.fromEntries(
+  NAV_SHORTCUTS.map(({ path, label }) => [path, label]),
+);
 
 /**
  * On every route change, announces the new page title via an `aria-live`
@@ -90,12 +85,10 @@ export function useRouteAnnouncer(): void {
     if (!regionRef.current) return;
 
     const path = location.pathname;
-    // Exact match first, then check dynamic routes
-    let title = ROUTE_TITLES[path];
-    if (!title) {
-      if (path.startsWith('/projects/')) title = 'Project Detail';
-      else title = 'Page';
-    }
+    // The one nested route that is not its own nav entry.
+    const title =
+      ROUTE_TITLES[path] ??
+      (path === '/observability/ai-gateway/logs' ? 'AI Gateway Logs' : 'Page');
 
     // Small delay so the DOM update + aria announcement don't collide
     const timer = setTimeout(() => {

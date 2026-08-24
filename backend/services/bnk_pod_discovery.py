@@ -427,36 +427,6 @@ def discover_f5_pods(
         return [], []
 
 
-def discover_f5_pods_with_ns_tracking(
-    api_client,
-    *,
-    include_sweep: bool = True,
-    extra_namespaces: tuple[str, ...] | list[str] = (),
-) -> tuple[list[dict], list[dict], list[str]]:
-    """
-    Discover F5 BNK pods and return the set of namespaces where pods were found.
-
-    Wraps ``discover_f5_pods`` and adds namespace tracking so callers can
-    persist the result back to the cluster record
-    (``cluster.discovered_namespaces``).
-
-    Returns:
-        (tenant_pods, utils_pods, discovered_namespaces)
-
-    ``discovered_namespaces`` is a sorted list of namespace strings where at
-    least one F5 BNK pod was found — suitable for JSON serialisation.
-    """
-    tenant_pods, utils_pods = discover_f5_pods(
-        api_client,
-        include_sweep=include_sweep,
-        extra_namespaces=extra_namespaces,
-    )
-    found_ns: set[str] = set()
-    for pod in tenant_pods + utils_pods:
-        ns = pod.get("namespace")
-        if ns:
-            found_ns.add(ns)
-    return tenant_pods, utils_pods, sorted(found_ns)
 
 
 # -----------------------------------------------------------------------

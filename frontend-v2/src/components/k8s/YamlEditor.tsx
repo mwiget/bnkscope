@@ -1,4 +1,4 @@
-import { Editor } from '@monaco-editor/react';
+import { MonacoEditor } from './MonacoEditor';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Check, X, AlertTriangle } from 'lucide-react';
@@ -119,7 +119,7 @@ export function YamlEditor({
       )}
 
       <Card className="overflow-hidden">
-        <Editor
+        <MonacoEditor
           height={height}
           defaultLanguage="yaml"
           value={value}

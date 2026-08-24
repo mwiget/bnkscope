@@ -25,7 +25,6 @@ from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
 from database import get_db
-from routes.auth import require_operator
 from services.kubernetes_service import KubernetesService
 from services.qkview_service import (
     CWC_LICENSE_CERTS_SECRET,
@@ -326,7 +325,6 @@ def _find_and_restart_pods(
 @router.get(
     "/k8s/clusters/{cluster_id}/recovery/status",
     response_model=RecoveryStatusResponse,
-    dependencies=[Depends(require_operator)],
 )
 @handle_route_errors("check recovery status")
 def get_recovery_status(
@@ -360,7 +358,6 @@ def get_recovery_status(
 @router.post(
     "/k8s/clusters/{cluster_id}/recovery/cwc-certs",
     response_model=CWCCertResyncResponse,
-    dependencies=[Depends(require_operator)],
 )
 @handle_route_errors("resync CWC certs")
 def resync_cwc_certs(
@@ -462,7 +459,6 @@ def resync_cwc_certs(
 @router.post(
     "/k8s/clusters/{cluster_id}/recovery/platform-restart",
     response_model=PlatformRestartResponse,
-    dependencies=[Depends(require_operator)],
 )
 @handle_route_errors("platform restart")
 def platform_restart(

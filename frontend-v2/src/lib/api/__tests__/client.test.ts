@@ -5,7 +5,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { apiClient } from '../client';
-import { STORAGE_KEYS } from '../../storage-keys';
 
 describe('apiClient', () => {
   beforeEach(() => {
@@ -26,79 +25,36 @@ describe('apiClient', () => {
     expect(apiClient.defaults.headers['Content-Type']).toBe('application/json');
   });
 
-  it('attaches auth token from localStorage', async () => {
-    localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'test-token-123');
-
-    let capturedAuth = '';
-    server.use(
-      http.get('*/api/test-auth', ({ request }) => {
-        capturedAuth = request.headers.get('Authorization') || '';
-        return HttpResponse.json({ ok: true });
-      })
-    );
-
-    await apiClient.get('/api/test-auth');
-    expect(capturedAuth).toBe('Bearer test-token-123');
-  });
-
-  it('does not attach auth header when no token', async () => {
-    let capturedAuth: string | null = '';
-    server.use(
-      http.get('*/api/test-no-auth', ({ request }) => {
-        capturedAuth = request.headers.get('Authorization');
-        return HttpResponse.json({ ok: true });
-      })
-    );
-
-    await apiClient.get('/api/test-no-auth');
-    expect(capturedAuth).toBeNull();
-  });
-
-  it('clears token on 401 for non-login requests', async () => {
-    localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'expired-token');
+  it('surfaces a 401 without navigating away', async () => {
+    // There is no login page to send anyone to. The interceptor used to set
+    // window.location to /login on an UNAUTHORIZED envelope, which in a router
+    // with no such route blanked the app instead of showing the error.
+    const before = window.location.href;
 
     server.use(
-      http.get('*/api/protected-resource', () => {
-        return HttpResponse.json(
+      http.get('*/api/protected-resource', () =>
+        HttpResponse.json(
           { error: { code: 'UNAUTHORIZED', message: 'Token expired' } },
-          { status: 401 }
-        );
-      })
+          { status: 401 },
+        ),
+      ),
     );
 
     await expect(apiClient.get('/api/protected-resource')).rejects.toThrow();
-    expect(localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN)).toBeNull();
+    expect(window.location.href).toBe(before);
   });
 
-  it('does not clear token on 401 for login requests', async () => {
+  it('sends no Authorization header', async () => {
+    let captured: string | null = '';
     server.use(
-      http.post('*/api/auth/login', () => {
-        return HttpResponse.json(
-          { error: { code: 'UNAUTHORIZED', message: 'Bad credentials' } },
-          { status: 401 }
-        );
-      })
+      http.get('*/api/test-no-auth', ({ request }) => {
+        captured = request.headers.get('Authorization');
+        return HttpResponse.json({ ok: true });
+      }),
     );
 
-    localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'some-token');
-    await expect(apiClient.post('/api/auth/login', { username: 'bad', password: 'bad' })).rejects.toThrow();
-    expect(localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN)).toBe('some-token');
-  });
-
-  it('does not clear token on non-auth 401 responses', async () => {
-    localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'still-valid-session-token');
-
-    server.use(
-      http.get('*/api/k8s/clusters/5/resources/pod', () => {
-        return HttpResponse.json(
-          { error: { code: 'K8S_API_ERROR', message: 'Unauthorized' } },
-          { status: 401 }
-        );
-      })
-    );
-
-    await expect(apiClient.get('/api/k8s/clusters/5/resources/pod')).rejects.toThrow();
-    expect(localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN)).toBe('still-valid-session-token');
+    await apiClient.get('/api/test-no-auth');
+    expect(captured).toBeNull();
   });
 
   it('returns data on successful request', async () => {

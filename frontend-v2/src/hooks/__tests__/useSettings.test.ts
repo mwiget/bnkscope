@@ -9,7 +9,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
-import { useSettings, useSystemDefaults, useDefaultsStatus } from '@/hooks/useSettings';
+import { useSettings, useSystemDefaults } from '@/hooks/useSettings';
 import React from 'react';
 
 function createWrapper() {
@@ -222,28 +222,6 @@ describe('useSystemDefaults', () => {
 // ============================================================================
 // useDefaultsStatus
 // ============================================================================
-
-describe('useDefaultsStatus', () => {
-  beforeEach(() => {
-    server.use(...settingsHandlers);
-  });
-
-  it('fetches defaults status and returns computed fields', async () => {
-    const { result } = renderHook(() => useDefaultsStatus(), {
-      wrapper: createWrapper(),
-    });
-
-    await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
-    });
-
-    expect(result.current.allConfigured).toBe(true);
-    expect(result.current.missing).toEqual([]);
-    expect(result.current.totalRequired).toBe(5);
-    expect(result.current.configuredCount).toBe(5);
-    expect(result.current.error).toBeNull();
-  });
-});
 
 // ============================================================================
 // Error handling

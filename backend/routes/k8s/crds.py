@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
 from database import get_db
-from routes.auth import require_viewer
 from schemas.k8s import CrdListEnvelope
 from services.crd_discovery_service import CrdDiscoveryService
 
@@ -23,7 +22,6 @@ router = APIRouter(prefix="/api", tags=["k8s-crds"])
 @router.get(
     "/k8s/clusters/{cluster_id}/crds",
     response_model=CrdListEnvelope,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("discover CRDs")
 def get_cluster_crds(

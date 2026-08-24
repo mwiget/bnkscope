@@ -4,8 +4,7 @@ System Service — DB and business logic for system administration.
 Extracted from routes/system.py to separate HTTP handling from domain logic.
 
 Covers:
-- System health checks (DB, Redis, Celery)
-- Task queue metrics
+- System health checks (SQLite)
 - Performance metrics
 - Recent errors
 - Database stats, cleanup, vacuum
@@ -17,19 +16,15 @@ import os
 import subprocess
 import threading
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import requests
-from sqlalchemy import func, text
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import inspect, text
+from sqlalchemy.orm import Session
 
-from celery_app import celery_app
 from core.cache import cache
-from core.errors import BadRequestError
-from core.worker_heartbeat import heartbeat
-from models import ApplicationSetting, AuditLog, DeploymentLog, ModuleLibrary, Project, ProjectModule, Task
-from models.enums import TaskStatus
+from models import ApplicationSetting
 from services.defaults_service import DEFAULT_REPO_URL
 
 logger = logging.getLogger(__name__)
@@ -71,291 +66,100 @@ class SystemService:
         except Exception as e:
             health_data["services"]["database"] = {"status": "offline", "error": str(e)}
 
-        # Redis
-        try:
-            redis_start = time.time()
-            celery_app.backend.client.ping()
-            health_data["services"]["redis"] = {
-                "status": "healthy",
-                "response_time_ms": round((time.time() - redis_start) * 1000, 2)
-            }
-        except Exception as e:
-            health_data["services"]["redis"] = {"status": "offline", "error": str(e)}
-
-        # Celery Workers
-        try:
-            worker_status = heartbeat.get_worker_status()
-            if worker_status.get("error"):
-                health_data["services"]["celery"] = {
-                    "status": "degraded", "workers": 0, "active_tasks": 0,
-                    "error": worker_status["error"]
-                }
-            elif worker_status["total"] > 0:
-                health_data["services"]["celery"] = {
-                    "status": "healthy", "workers": worker_status["total"],
-                    "active_tasks": worker_status["active_tasks"]
-                }
-            else:
-                health_data["services"]["celery"] = {
-                    "status": "degraded", "workers": 0, "active_tasks": 0,
-                    "error": "No workers available"
-                }
-        except Exception as e:
-            health_data["services"]["celery"] = {"status": "offline", "error": str(e)}
-
-        cache.set("system:health", health_data, ttl_seconds=30)
+        # Redis and the Celery worker pool used to be probed here too. They are
+        # in-process now (Phase 4), so the two services above are the whole list.
+        cache.set("system:health", health_data, 30)
         return health_data
-
-    # ================================================================
-    # Queue Metrics
-    # ================================================================
-
-    def get_queue_metrics(self) -> dict[str, Any]:
-        """Get task queue depth and worker metrics (cached 30s)."""
-        cached = cache.get("system:queue-metrics")
-        if cached:
-            return cached
-
-        metrics = {"queues": {}, "workers": {}, "tasks": {}}
-
-        try:
-            worker_status = heartbeat.get_worker_status()
-            queue_stats = heartbeat.get_queue_stats()
-            metrics["queues"] = queue_stats
-            metrics["workers"] = {
-                "total": worker_status["total"], "active": worker_status["active"],
-                "offline": worker_status["offline"], "inspection_timeout": False
-            }
-            total_pending = sum(q["pending"] for q in queue_stats.values())
-            total_active = sum(q["active"] for q in queue_stats.values())
-        except Exception as e:
-            logger.error(f"Failed to get Celery metrics: {e}")
-            metrics["queues"] = {"default": {"pending": 0, "active": 0},
-                                 "opentofu": {"pending": 0, "active": 0}}
-            metrics["workers"] = {"total": 0, "active": 0, "offline": 0}
-            total_pending = 0
-            total_active = 0
-
-        one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
-        completed_last_hour = self.db.query(Task).filter(
-            Task.status == TaskStatus.COMPLETED, Task.completed_at >= one_hour_ago
-        ).count()
-        queued_in_db = self.db.query(Task).filter(Task.status == TaskStatus.QUEUED).count()
-
-        metrics["tasks"] = {
-            "pending": max(total_pending, queued_in_db),
-            "active": total_active,
-            "completed_last_hour": completed_last_hour
-        }
-
-        cache.set("system:queue-metrics", metrics, ttl_seconds=30)
-        return metrics
-
-    # ================================================================
-    # Performance Metrics
-    # ================================================================
-
-    def get_performance_metrics(self) -> dict[str, Any]:
-        """Get system performance metrics (cached 30s)."""
-        cache_key = "system:performance"
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        metrics = {"api": {}, "database": {}, "tasks": {}}
-        one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
-
-        avg_result = self.db.query(func.avg(Task.duration_seconds)).filter(
-            Task.status == TaskStatus.COMPLETED, Task.completed_at >= one_hour_ago,
-            Task.duration_seconds.isnot(None)
-        ).scalar()
-        avg_duration = float(avg_result) if avg_result else 0
-
-        failed_tasks_count = self.db.query(func.count(Task.id)).filter(
-            Task.status == TaskStatus.FAILED, Task.completed_at >= one_hour_ago
-        ).scalar() or 0
-
-        total_tasks_last_hour = self.db.query(func.count(Task.id)).filter(
-            Task.created_at >= one_hour_ago
-        ).scalar() or 0
-
-        longest_running = self.db.query(Task).filter(
-            Task.status == TaskStatus.IN_PROGRESS
-        ).order_by(Task.started_at.asc()).first()
-
-        metrics["api"] = {
-            "avg_task_duration_ms": round(avg_duration * 1000, 2) if avg_duration else 0,
-            "avg_task_duration_seconds": round(avg_duration, 2) if avg_duration else 0,
-            "tasks_last_hour": total_tasks_last_hour,
-            "failed_tasks_last_hour": failed_tasks_count,
-            "avg_response_time_ms": round(avg_duration * 1000, 2) if avg_duration else 0,
-            "requests_last_hour": total_tasks_last_hour,
-            "failed_requests_last_hour": failed_tasks_count
-        }
-
-        try:
-            result = self.db.execute(text(
-                "SELECT pg_database_size(current_database()) as size"
-            )).fetchone()
-            db_size_mb = round((result[0] if result else 0) / (1024 * 1024), 2)
-
-            result = self.db.execute(text(
-                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
-            )).fetchone()
-            connection_count = result[0] if result else 0
-
-            metrics["database"] = {"size_mb": db_size_mb, "connections": connection_count,
-                                   "slow_queries_last_hour": 0}
-        except Exception as e:
-            logger.error(f"Database metrics failed: {e}")
-            metrics["database"] = {"size_mb": 0, "connections": 0, "slow_queries_last_hour": 0}
-
-        if longest_running:
-            duration = (datetime.now(UTC) - longest_running.started_at).total_seconds()
-            metrics["tasks"] = {
-                "avg_duration_seconds": round(avg_duration, 2),
-                "longest_running": {
-                    "id": longest_running.id,
-                    "duration": round(duration, 2),
-                    "type": longest_running.task_type
-                }
-            }
-        else:
-            metrics["tasks"] = {"avg_duration_seconds": round(avg_duration, 2),
-                                "longest_running": None}
-
-        cache.set(cache_key, metrics, ttl_seconds=30)
-        return metrics
-
-    # ================================================================
-    # Recent Errors
-    # ================================================================
-
-    def get_recent_errors(self, limit: int = 10) -> dict[str, Any]:
-        """Get recent failed tasks (cached 30s)."""
-        if limit > 50:
-            limit = 50
-
-        cache_key = f"system:errors:{limit}"
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        failed_tasks = self.db.query(Task).options(
-            joinedload(Task.project).load_only(Project.id, Project.name),
-            joinedload(Task.module).joinedload(ProjectModule.library_module).load_only(
-                ModuleLibrary.id, ModuleLibrary.name,
-            ),
-        ).filter(Task.status == TaskStatus.FAILED).order_by(Task.created_at.desc()).limit(limit).all()
-
-        errors_list = []
-        for task in failed_tasks:
-            errors_list.append({
-                "task_id": task.id, "type": task.task_type,
-                "error": task.error or "No error message",
-                "timestamp": task.created_at.isoformat(),
-                "project": task.project.name if task.project else "Unknown",
-                "module": (task.module.library_module.name if task.module and task.module.library_module else task.module.path_in_project if task.module else None),
-                "exit_code": task.exit_code
-            })
-
-        total_failed = self.db.query(Task).filter(Task.status == TaskStatus.FAILED).count()
-
-        result = {"errors": errors_list, "total": total_failed}
-        cache.set(cache_key, result, ttl_seconds=30)
-        return result
 
     # ================================================================
     # Database Management
     # ================================================================
 
-    def get_database_stats(self) -> dict[str, Any]:
-        """Get detailed database statistics including table sizes."""
-        result = self.db.execute(text(
-            "SELECT pg_database_size(current_database()) as size"
-        )).fetchone()
-        total_size_mb = round((result[0] if result else 0) / (1024 * 1024), 2)
+    def _database_size_mb(self) -> float:
+        """On-disk size of the SQLite database, including its WAL."""
+        from database import DATABASE_URL, IS_SQLITE
 
-        tables = {"tasks": Task, "deployment_logs": DeploymentLog, "audit_logs": AuditLog}
-        table_stats = {}
-        for table_name, model in tables.items():
-            row_count = self.db.query(model).count()
+        if not IS_SQLITE:
+            return 0.0
+        path = DATABASE_URL.split("sqlite:///", 1)[-1]
+        total = 0
+        for suffix in ("", "-wal", "-shm"):
             try:
-                result = self.db.execute(
-                    text("SELECT pg_total_relation_size(:tbl) as size"),
-                    {"tbl": model.__tablename__}
-                ).fetchone()
-                table_size_mb = round((result[0] if result else 0) / (1024 * 1024), 2)
-            except Exception:
-                table_size_mb = 0
-            table_stats[table_name] = {"rows": row_count, "size_mb": table_size_mb}
+                total += os.path.getsize(path + suffix)
+            except OSError:
+                pass
+        return round(total / (1024 * 1024), 2)
 
-        return {"size_mb": total_size_mb, "tables": table_stats}
+    def get_database_stats(self) -> dict[str, Any]:
+        """Database size plus a per-table row count."""
+        from sqlalchemy import inspect as sa_inspect
 
-    def cleanup_database(self, cleanup_type: str, older_than_days: int = 30) -> dict[str, Any]:
-        """Cleanup old records from database."""
-        if older_than_days < 7:
-            raise BadRequestError("Cannot delete records newer than 7 days",
-                                  code="CLEANUP_TOO_RECENT")
+        table_stats: dict[str, Any] = {}
+        for table in sorted(sa_inspect(self.db.get_bind()).get_table_names()):
+            try:
+                rows = int(self.db.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar() or 0)  # noqa: S608
+            except Exception:  # noqa: BLE001 — a stats panel must not 500
+                continue
+            table_stats[table] = {"rows": rows}
 
-        cutoff_date = datetime.now(UTC) - timedelta(days=older_than_days)
-
-        result = self.db.execute(text(
-            "SELECT pg_database_size(current_database()) as size"
-        )).fetchone()
-        size_before = result[0] if result else 0
-
-        if cleanup_type == "deployment_logs":
-            deleted_count = self.db.query(DeploymentLog).filter(
-                DeploymentLog.timestamp < cutoff_date
-            ).delete()
-        elif cleanup_type == "audit_logs":
-            deleted_count = self.db.query(AuditLog).filter(
-                AuditLog.timestamp < cutoff_date
-            ).delete()
-        elif cleanup_type == "completed_tasks":
-            deleted_count = self.db.query(Task).filter(
-                Task.status.in_([TaskStatus.COMPLETED, TaskStatus.FAILED]),
-                Task.completed_at < cutoff_date
-            ).delete()
-        else:
-            raise BadRequestError(f"Invalid cleanup type: {cleanup_type}",
-                                  code="INVALID_CLEANUP_TYPE")
-
-        self.db.flush()
-
-        result = self.db.execute(text(
-            "SELECT pg_database_size(current_database()) as size"
-        )).fetchone()
-        size_after = result[0] if result else 0
-        freed_mb = round((size_before - size_after) / (1024 * 1024), 2)
-
-        logger.info(f"Cleanup completed: {deleted_count} records deleted, {freed_mb}MB freed")
-        return {"deleted": deleted_count, "freed_mb": freed_mb}
+        return {"size_mb": self._database_size_mb(), "tables": table_stats}
 
     def vacuum_database(self) -> dict[str, Any]:
-        """Run VACUUM ANALYZE on the database."""
-        start_time = time.time()
-        self.db.flush()  # Flush pending changes before switching to AUTOCOMMIT for VACUUM
-        raw_connection = self.db.connection().connection
-        old_isolation_level = raw_connection.isolation_level
+        """Run VACUUM to reclaim space from deleted rows.
 
+        SQLite's VACUUM cannot run inside a transaction, so the session is
+        committed first and the statement issued on the raw DBAPI connection
+        with autocommit semantics.
+        """
+        start_time = time.time()
+        self.db.commit()
         try:
-            raw_connection.set_isolation_level(0)  # AUTOCOMMIT
-            cursor = raw_connection.cursor()
-            cursor.execute("VACUUM ANALYZE")
-            cursor.close()
-        except Exception as e:
-            logger.warning(f"VACUUM command failed: {e}")
-            return {"status": "skipped",
-                    "message": "VACUUM operation not permitted or not needed",
-                    "duration_seconds": 0}
-        finally:
-            raw_connection.set_isolation_level(old_isolation_level)
+            connection = self.db.connection().connection
+            connection.isolation_level = None  # autocommit — VACUUM needs it
+            cursor = connection.cursor()
+            try:
+                cursor.execute("VACUUM")
+            finally:
+                cursor.close()
+                connection.isolation_level = ""
+        except Exception as e:  # noqa: BLE001
+            logger.warning("VACUUM failed: %s", e)
+            return {
+                "status": "skipped",
+                "message": f"VACUUM did not run: {e}",
+                "duration_seconds": 0,
+            }
 
         duration = round(time.time() - start_time, 2)
-        logger.info(f"Database vacuum completed in {duration}s")
+        logger.info("Database vacuum completed in %ss", duration)
         return {"status": "success", "duration_seconds": duration}
+
+    # ================================================================
+    # Performance / errors
+    # ================================================================
+
+    def get_performance_metrics(self) -> dict[str, Any]:
+        """System performance metrics (cached 30s)."""
+        cache_key = "system:performance"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        metrics: dict[str, Any] = {
+            "api": {},
+            "database": {"size_mb": self._database_size_mb()},
+            "tasks": {},
+        }
+        cache.set(cache_key, metrics, ttl_seconds=30)
+        return metrics
+
+    def get_recent_errors(self, limit: int = 10) -> dict[str, Any]:
+        """Recent failures.
+
+        The task/operations log this read was the pipeline's and went with it
+        (Phase 1). The endpoint stays so the System panel keeps its shape.
+        """
+        return {"errors": [], "total": 0}
 
     # ================================================================
     # Version & Upgrade
@@ -625,49 +429,26 @@ class SystemService:
         except Exception as e:
             checks["database"] = {"status": "fail", "error": str(e)}
 
-        # 3. Redis health
+        # 3. Schema check. There is no migration head to compare a revision
+        # against any more — Phase 4 dropped Alembic and the schema is created
+        # from the ORM models at startup. What is worth verifying after an
+        # upgrade is that every table the models declare is actually present
+        # in the database file we came up on.
         try:
-            celery_app.backend.client.ping()
-            checks["redis"] = {"status": "pass"}
-        except Exception as e:
-            checks["redis"] = {"status": "fail", "error": str(e)}
+            from database import Base
 
-        # 4. Celery workers
-        try:
-            worker_status = heartbeat.get_worker_status()
-            if worker_status.get("error"):
-                checks["celery"] = {"status": "warn", "error": worker_status["error"],
-                                    "note": "Workers may still be starting after upgrade"}
-            elif worker_status["total"] > 0:
-                checks["celery"] = {"status": "pass", "workers": worker_status["total"]}
+            existing = set(inspect(self.db.get_bind()).get_table_names())
+            missing = sorted(set(Base.metadata.tables) - existing)
+            if missing:
+                checks["schema"] = {
+                    "status": "fail",
+                    "missing_tables": missing,
+                    "error": f"{len(missing)} table(s) declared by the models are absent",
+                }
             else:
-                checks["celery"] = {"status": "warn", "workers": 0,
-                                    "note": "No workers yet — may still be starting"}
+                checks["schema"] = {"status": "pass", "table_count": len(Base.metadata.tables)}
         except Exception as e:
-            checks["celery"] = {"status": "warn", "error": str(e),
-                                "note": "Workers may still be starting after upgrade"}
-
-        # 5. Alembic migration status
-        try:
-            from alembic.config import Config as AlembicConfig
-            from alembic.runtime.migration import MigrationContext
-            from alembic.script import ScriptDirectory
-
-            alembic_cfg = AlembicConfig("/app/alembic.ini")
-            script = ScriptDirectory.from_config(alembic_cfg)
-            context = MigrationContext.configure(self.db.connection())
-            current_rev = context.get_current_revision()
-            head_rev = script.get_current_head()
-
-            if current_rev == head_rev:
-                checks["migrations"] = {"status": "pass", "current_revision": current_rev}
-            else:
-                checks["migrations"] = {"status": "warn", "current_revision": current_rev,
-                                        "head_revision": head_rev,
-                                        "note": "Database may have pending migrations"}
-        except Exception as e:
-            # Alembic not available in this context — not critical
-            checks["migrations"] = {"status": "skip", "note": f"Could not check: {e}"}
+            checks["schema"] = {"status": "skip", "note": f"Could not check: {e}"}
 
         # Overall verdict
         statuses = [c["status"] for c in checks.values()]
@@ -716,19 +497,7 @@ class SystemService:
 
         # ---- UP-010: Pre-upgrade safety checks ----
 
-        # 1. Check for active deployments (in-progress or queued tasks)
-        active_tasks = self.db.query(Task).filter(
-            Task.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.QUEUED])
-        ).count()
-        if active_tasks > 0:
-            return {
-                "status": "blocked",
-                "message": f"Cannot upgrade: {active_tasks} deployment(s) in progress or queued. "
-                           f"Wait for them to complete or cancel them first.",
-                "active_tasks": active_tasks,
-            }
-
-        # 2. Verify Docker daemon is responsive
+        # 1. Verify Docker daemon is responsive
         try:
             docker_check = subprocess.run(
                 ["docker", "info", "--format", "{{.ServerVersion}}"],
@@ -751,7 +520,7 @@ class SystemService:
                 "message": "Docker CLI not found. Cannot start upgrade.",
             }
 
-        # 3. Record current git commit SHA for rollback reference
+        # 2. Record current git commit SHA for rollback reference
         pre_upgrade_commit = None
         try:
             git_result = subprocess.run(
@@ -796,23 +565,19 @@ class SystemService:
         }
 
         def _publish_upgrade_msg(line: str, level: str = "info", phase: str | None = None):
-            """Publish an upgrade message to WebSocket via Redis."""
-            try:
-                from services.websocket_service import TASK_UPDATES_CHANNEL, get_sync_redis_client
-                redis_client = get_sync_redis_client()
-                import json as _json
-                msg: dict[str, Any] = {
-                    "type": "system_upgrade",
-                    "level": level,
-                    "line": line,
-                    "timestamp": datetime.now(UTC).isoformat() + "Z",
-                }
-                if phase:
-                    msg["phase"] = phase
-                    msg["phase_label"] = _phase_labels.get(phase, phase)
-                redis_client.publish(TASK_UPDATES_CHANNEL, _json.dumps(msg))
-            except Exception:
-                pass  # Don't break upgrade if Redis publish fails
+            """Push an upgrade message straight to connected WebSocket clients."""
+            from services.websocket_service import broadcast_sync
+
+            msg: dict[str, Any] = {
+                "type": "system_upgrade",
+                "level": level,
+                "line": line,
+                "timestamp": datetime.now(UTC).isoformat() + "Z",
+            }
+            if phase:
+                msg["phase"] = phase
+                msg["phase_label"] = _phase_labels.get(phase, phase)
+            broadcast_sync(msg)
 
         # Exit code descriptions from upgrade.sh
         _exit_code_msgs = {

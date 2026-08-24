@@ -2,65 +2,20 @@ import { useState } from 'react';
 import { SectionCard } from '@/components/ui/section-card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Loader2, RefreshCw, Database, Trash2, Sparkles, HardDrive, Table, ChevronDown } from 'lucide-react';
-import { useDatabaseStats, useCleanupDatabase, useVacuumDatabase } from '@/hooks/useSystem';
+import { Loader2, RefreshCw, Database, Sparkles, HardDrive, Table, ChevronDown } from 'lucide-react';
+import { useDatabaseStats, useVacuumDatabase } from '@/hooks/useSystem';
 import { notify, notifyError } from '@/lib/notify';
 import { cn } from '@/lib/utils';
-import type { CleanupType } from '@/types/system';
 
 // D-020: token-pure — no isDark, no raw palette classes.
 
 export default function DatabaseManagement() {
   const { data: dbStats, isLoading, refetch } = useDatabaseStats();
-  const cleanupMutation = useCleanupDatabase();
   const vacuumMutation = useVacuumDatabase();
 
-  const [cleanupType, setCleanupType] = useState<CleanupType>('deployment_logs');
-  const [olderThanDays, setOlderThanDays] = useState<number>(30);
   const [isOpen, setIsOpen] = useState(false);
 
-  const handleCleanup = () => {
-    if (olderThanDays < 7) {
-      notify.error('Cannot delete records newer than 7 days');
-      return;
-    }
-
-    const typeLabels: Record<CleanupType, string> = {
-      deployment_logs: 'deployment logs',
-      audit_logs: 'audit logs',
-      completed_tasks: 'completed tasks',
-    };
-
-    const label = typeLabels[cleanupType as CleanupType];
-
-    if (
-      confirm(
-        `Delete ${label} older than ${olderThanDays} days? This action cannot be undone.`
-      )
-    ) {
-      cleanupMutation.mutate(
-        { type: cleanupType, olderThanDays },
-        {
-          onSuccess: (data: unknown) => {
-            const d = data as { deleted: number; freed_mb: number };
-            notify.success(
-              `Deleted ${d.deleted} record(s), freed ${d.freed_mb}MB`,
-              undefined,
-              { category: 'system' },
-            );
-            refetch();
-          },
-          onError: (error: unknown) => {
-            notifyError(error);
-          },
-        }
-      );
-    }
-  };
 
   const handleVacuum = () => {
     if (
@@ -112,7 +67,7 @@ export default function DatabaseManagement() {
                 Database management
               </p>
               <p className="text-sm text-muted-foreground mt-1">
-                Monitor database size, cleanup old records, and optimize performance
+                Monitor database size and reclaim unused space
               </p>
             </div>
             <ChevronDown className={cn(
@@ -154,7 +109,7 @@ export default function DatabaseManagement() {
                           Total Database Size
                         </div>
                         <div className="text-2xl font-bold text-foreground">
-                          {formatSize(dbStats.size_mb)}
+                          {formatSize(dbStats.size_mb ?? 0)}
                         </div>
                       </div>
                     </div>
@@ -167,7 +122,11 @@ export default function DatabaseManagement() {
                     Table Statistics
                   </h3>
                   <div className="space-y-2">
-                    {Object.entries(dbStats.tables).map(([tableName, stats]) => (
+                    {/* `?? {}` deliberately: this panel blanked the whole
+                        System page when the endpoint it points at returned a
+                        different shape, and Object.entries(undefined) throws.
+                        A missing field should cost a row, not the page. */}
+                    {Object.entries(dbStats.tables ?? {}).map(([tableName, stats]) => (
                       <div
                         key={tableName}
                         className="flex items-center justify-between p-3 rounded-lg border border-border bg-card"
@@ -179,106 +138,47 @@ export default function DatabaseManagement() {
                               {tableName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              {formatNumber(stats.rows)} rows
+                              rows
                             </div>
                           </div>
                         </div>
                         <Badge variant="outline">
-                          {formatSize(stats.size_mb)}
+                          {formatNumber(stats.rows)}
                         </Badge>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* Cleanup Tools */}
+                {/* Maintenance */}
                 <div className="pt-4 border-t border-border">
                   <h3 className="text-sm font-semibold mb-3 text-foreground">
-                    Cleanup Tools
+                    Maintenance
                   </h3>
 
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="cleanup-type">
-                          Record Type
-                        </Label>
-                        <Select
-                          value={cleanupType}
-                          onValueChange={(value) => setCleanupType(value as CleanupType)}
-                        >
-                          <SelectTrigger id="cleanup-type">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="deployment_logs">Deployment Logs</SelectItem>
-                            <SelectItem value="audit_logs">Audit Logs</SelectItem>
-                            <SelectItem value="completed_tasks">Completed Tasks</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleVacuum}
+                    disabled={vacuumMutation.isPending}
+                  >
+                    {vacuumMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Optimizing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Vacuum &amp; Optimize
+                      </>
+                    )}
+                  </Button>
 
-                      <div>
-                        <Label htmlFor="older-than">
-                          Older Than (days)
-                        </Label>
-                        <Input
-                          id="older-than"
-                          type="number"
-                          min={7}
-                          value={olderThanDays}
-                          onChange={(e) => setOlderThanDays(parseInt(e.target.value) || 7)}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={handleCleanup}
-                        disabled={cleanupMutation.isPending || olderThanDays < 7}
-                      >
-                        {cleanupMutation.isPending ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Cleaning...
-                          </>
-                        ) : (
-                          <>
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete Old Records
-                          </>
-                        )}
-                      </Button>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleVacuum}
-                        disabled={vacuumMutation.isPending}
-                      >
-                        {vacuumMutation.isPending ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Optimizing...
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="h-4 w-4 mr-2" />
-                            Vacuum & Optimize
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-warning/20 bg-warning/10 p-4 mt-4">
-                    <p className="text-sm text-warning">
-                      <strong>Note:</strong> Cleanup operations cannot be undone. Records older than 7 days can be deleted.
-                      VACUUM may take time on large databases.
-                    </p>
-                  </div>
+                  <p className="text-xs text-muted-foreground mt-3">
+                    Reclaims space SQLite is still holding after deletes. May take
+                    a while on a large database.
+                  </p>
                 </div>
               </>
             ) : (

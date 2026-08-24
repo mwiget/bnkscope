@@ -1,6 +1,8 @@
 # Development Guide
 
-> Monorepo: Python 3.11 backend (FastAPI), TypeScript frontend (React 18 + Vite), Python MCP server, Kopf-based Kubernetes operator. All runtime services ship as Docker containers driven from `Makefile` + `docker-compose.yml`.
+> Monorepo: Python 3.11 backend (FastAPI), TypeScript frontend (React 18 + Vite),
+> and an optional Python MCP server. Two runtime containers, driven from
+> `Makefile` + `docker-compose.yml`. `./bnkscope up` is the supported entry point.
 
 Everything below is tool-neutral: build, test, architecture, style, and workflow
 conventions for anyone working on this repo. Contribution process lives in
@@ -50,6 +52,17 @@ cd frontend-v2 && npx tsc --noEmit   # type check
 cd frontend-v2 && npm run build      # build check (catches TS errors tsc may miss)
 ```
 
+Those assume `node_modules` in the working tree. It can also live in the
+`bnkscope-node` docker volume, which `scripts/bnkscope-verify-frontend.sh`
+mounts over an empty `frontend-v2/node_modules` — no Node needed on the host.
+The `make` targets below detect which you have and run either way; the bare
+`cd frontend-v2 && …` lines above only work with a tree install.
+
+```bash
+make lint-frontend typecheck-frontend test-frontend   # either layout
+make frontend-deps                                    # install into the docker volume
+```
+
 ### MCP Server (Python — separate package)
 
 ```bash
@@ -65,75 +78,96 @@ make openapi-types-check   # CI-style check: fails if types are stale
 # MUST run after changing any route, request model, or response model
 ```
 
-### Deployment
+### Running it
 
 ```bash
-make local-deploy          # laptop/macOS/Windows — bridge networking, https://localhost
-make deploy                # Linux server — host networking
-make deploy-backend        # rebuild + restart backend + workers (most common)
-make deploy-frontend       # rebuild + restart frontend only
-make upgrade-safe          # preferred server upgrade (preflight + strict verification)
-make install               # DESTRUCTIVE first-time bootstrap — wipes all bnk-forge volumes
-make mcp-readiness         # two-layer: container liveness + MCP runtime readiness
+./bnkscope up              # the supported entry point — see below
+./bnkscope up --no-build   # skip the build, use the images you have
+./bnkscope down [--purge]  # stop; --purge drops the database and key
+./bnkscope status          # running state, ports, registered clusters
 ```
 
-**CRITICAL:** The celery worker runs the same backend code (`tasks/`, `services/`).
-`make build` and `make deploy-backend` both include `build-worker` automatically.
-If you only run `make build-backend` without `make build-worker`, code changes
-to tasks/services will NOT take effect in the running workers.
+Prefer `./bnkscope up` over a bare `docker compose up`. It picks the right
+compose files for the platform, negotiates ports, and creates the read-only host
+mounts **as you** — Docker would otherwise create the missing ones as empty
+root-owned directories inside your home.
+
+The `make deploy` / `deploy-backend` / `deploy-frontend` / `upgrade-safe`
+targets still exist for a long-lived server install.
 
 ---
 
 ## Architecture
 
-Single Docker Compose stack. Nginx proxy fronts React frontend + FastAPI backend; backend writes to Postgres, caches in Redis, fans tasks out to Celery workers, and talks to customer Kubernetes clusters either directly (kubeconfig) or via a bnk-operator agent running in the cluster.
+Two containers. No database server, no message broker, no worker pool, no
+reverse proxy — a single-user tool watching a handful of clusters needs none of
+them.
 
 ```
-Browser → Nginx (HTTPS + WS) → Frontend (React/Vite) + Backend (FastAPI)
-                                            ↓
-                               PostgreSQL / Redis / Celery / K8s (kubeconfig or bnk-operator)
-                                            ↓
-                                       MCP Server (REST wrapper, /mcp endpoint)
+                      your browser
+                            │
+                  ┌─────────┴─────────┐
+                  │  frontend (nginx) │  React 18 + Vite
+                  └─────────┬─────────┘
+                            │ /api  /ws
+                  ┌─────────┴─────────┐
+                  │  backend (uvicorn)│  FastAPI, one process:
+                  │                   │   HTTP API · WebSockets
+                  │  SQLite ◀── data  │   probes · periodic jobs
+                  │  thread pool      │   4-thread background pool
+                  │  APScheduler      │
+                  └─────────┬─────────┘
+                            │ kubeconfig (read-only)
+                     your BNK clusters
 ```
 
-### Deployment modes
+An optional third container exposes read-only MCP tools
+(`docker compose --profile mcp up`).
 
-Two compose topologies layered from the same `docker-compose.yml`:
-- **Server (Linux)**: `docker-compose.yml` only — `network_mode: host`, services bind directly to host ports.
-- **Laptop (macOS/Windows)**: `docker-compose.yml` + `docker-compose.local.yml` overlay — bridge networking with port mappings.
+Persistence is SQLite in WAL mode with a `busy_timeout`; the schema is created
+by `Base.metadata.create_all`, not migrations. Background work runs on a
+4-thread pool in `core/background.py` (`submit()` / `run_sync()`); periodic jobs
+run under APScheduler in `backend/jobs/`.
 
-The Makefile selects the right combination via `COMPOSE_SERVER` / `COMPOSE_LOCAL`. Never mix `make deploy` on a laptop or `make local-deploy` on a server.
+### Networking
+
+`network_mode: host`, so the backend can reach clusters on your own networks
+without Docker's bridge iptables getting between it and your VPN routes. On
+macOS and WSL2 that binds inside Docker Desktop's VM instead, so `bnkscope up`
+detects those platforms and layers `docker-compose.local.yml` — a bridge overlay
+that publishes to `127.0.0.1` only.
+
+Let `./bnkscope up` pick; it also negotiates ports and creates the read-only
+host mounts as you.
 
 ---
 
 ## Project Structure
 
 ```
-backend/                   # FastAPI + SQLAlchemy + Celery
-  routes/                  # ~42 API route files (thin HTTP handlers)
-  services/                # ~73 service files (business logic)
+backend/                   # FastAPI + SQLAlchemy
+  routes/                  # 23 route files (thin HTTP handlers)
+  services/                # 44 service files (business logic)
   schemas/                 # Pydantic request/response models
   models/                  # SQLAlchemy ORM models
-  modules/                 # Python-defined deployment modules (bnk/, k8s/, bare_metal/, app/)
-  core/                    # Auth, errors, config, encryption, cache
-  tasks/                   # Celery tasks (async/scheduled work)
-  alembic/                 # DB migrations (run via Alembic, not bare SQL)
-  tests/unit/              # Pure unit tests (no DB)
-  tests/component/         # Service + DB tests
-  tests/contract/          # Golden response-shape tests
+  core/                    # errors, config, encryption, background pool, logging
+  jobs/                    # APScheduler periodic jobs
+  utils/                   # shared helpers
+  data/                    # static data shipped with the image
+  tests/unit/              # pure unit tests (no DB)
+  tests/component/         # service + DB tests
+  tests/contract/          # golden response-shape tests
 frontend-v2/               # React 18 + Vite + TailwindCSS + shadcn/ui
   src/hooks/               # React Query hooks (one per domain)
   src/lib/api/             # Axios API modules (one per domain)
   src/types/               # TypeScript types (hand-written + generated)
   src/components/          # UI components (shadcn/ui + custom)
-  src/pages/               # Route pages (lazy-loaded)
-mcp-server/                # Standalone MCP server (thin REST wrapper, /mcp endpoint)
-  src/bnk_forge_mcp/       # Python package source
-bnk-operator/              # Kopf-based Python agent run inside customer clusters
-proxy/                     # Nginx config + TLS
-cli/                       # CLI helpers
-scripts/                   # Build/maintenance/upgrade (notably upgrade.sh, mcp_live_smoke.py)
-vm-bnk-forge/              # cloud-init harness: fresh KVM/cloud VM that self-installs bnk-forge
+  src/pages/               # route pages (lazy-loaded)
+mcp-server/                # standalone MCP server (read-only tools, /mcp)
+scripts/                   # build, verification and doc generation
+bin/                       # small maintenance helpers
+vm-bnk-forge/              # cloud-init harness: a fresh KVM/cloud VM that self-installs
+bnkscope                   # the CLI: up · down · status · open · logs · endpoint
 ```
 
 ### Backend layering
@@ -142,9 +176,11 @@ vm-bnk-forge/              # cloud-init harness: fresh KVM/cloud VM that self-in
 - `services/` — business logic. Services take `db: Session` in `__init__`. Routes delegate here.
 - `schemas/` — Pydantic v2 request/response models. **Schemas live in TWO places**: `backend/schemas/*.py` AND inline in `backend/routes/*.py` — check both.
 - `models/` — SQLAlchemy ORM models.
-- `modules/` — Python-defined deployment modules for the BNK stack. These replace the legacy OpenTofu modules. Dependency wiring and parallel execution are handled by `services/dependency_graph_service.py` + `services/execution/`.
-- `core/` — auth middleware, domain errors, config, encryption, cache, structured logging, maintenance gate. **mypy is strict here and in `schemas/`** — everywhere else is gradual.
-- `tasks/` — Celery tasks (async/scheduled work).
+- `core/` — domain errors, config, encryption, the background thread pool,
+  structured logging. **mypy is strict here and in `schemas/`** — everywhere
+  else is gradual. There is no auth middleware: bnkscope has no authentication,
+  and the bind address is the access control.
+- `jobs/` — APScheduler periodic work (cluster probes, refreshes).
 
 ### Frontend layering
 
@@ -157,8 +193,9 @@ vm-bnk-forge/              # cloud-init harness: fresh KVM/cloud VM that self-in
 
 ### Other services
 
-- `bnk-operator/` — Kopf-based Python agent that runs inside customer clusters. Talks to the backend via persistent WebSocket (default) or HTTP polling; executes K8s ops locally using its ServiceAccount. Key files: `main.py`, `command_handlers.py`, `control_plane_client.py`, `polling_client.py`.
-- `mcp-server/` — standalone MCP server exposing backend routes as AI-callable tools (`/mcp` endpoint). Thin REST wrapper; its own `pyproject.toml` and test suite.
+- `mcp-server/` — a standalone MCP server exposing **read-only** backend routes
+  as AI-callable tools at `/mcp`. Thin REST wrapper with its own `pyproject.toml`
+  and test suite. Started only with `docker compose --profile mcp up`.
 
 ---
 
@@ -233,11 +270,13 @@ vm-bnk-forge/              # cloud-init harness: fresh KVM/cloud VM that self-in
 - **K8s API returns `null`, not missing keys** — defensively use `(spec.get("ports") or [])` rather than truthy chaining.
 - **OpenAPI + generated TS types must stay in sync** — run `make openapi-types` after any route/schema change; `make openapi-types-check` fails CI otherwise.
 - **MCP body vs. query drift** — backend routes may require query params where the MCP server sends JSON body. Read the route signature before writing MCP wiring.
-- **Frontend-only deploy misses backend changes** — use `make deploy` (or `make deploy-backend`) whenever backend code changed, not just `make deploy-frontend`.
-- **Two module libraries** — `backend/modules/` holds Python-defined modules (current). Any references to OpenTofu/Terraform modules are legacy; the current stack has **zero OpenTofu dependency** for BNK deployments.
-- **`make install` is destructive** — wipes all `bnk-forge` Docker volumes/images. Use `make upgrade-safe` or `make update` for in-place updates.
-- **Image build/publish already exists** — building and pushing all six images is covered by the `Makefile` (`build`, `build-all`, `build-*`, `buildx-setup`, `push-images`, `dist`), `docker-bake.hcl`, and `.github/workflows/release.yml`. Extend these before adding any new build or publish logic (PR #213 re-implemented this from scratch without noticing).
-- **Celery `include` list is high stomping risk** — `celery_app.py` has all task modules on a single line. Rewriting the line to add a module can silently drop another (regression `eb32caf2` dropped `tasks.ssh_tasks`). The regression guard test `tests/unit/test_celery_task_registration.py` AST-parses `task_dispatch.py` to catch this.
+- **Docs are generated where they can drift** — `docs/API_REFERENCE.md` comes
+  from `backend/openapi.json` via `scripts/gen-api-reference.py`; edit the code,
+  then `make api-docs`. `make api-docs-check` fails CI otherwise.
+- **A shortcut or nav entry can outlive its route** — `NAV_SHORTCUTS` in
+  `hooks/useKeyboardShortcuts.ts` is checked against `router.tsx` by test. Nine
+  shortcuts once pointed at deleted pages while the help modal advertised them.
+- **`./bnkscope up` is not `docker compose up`** — see *Running it* above.
 - **`invalidateQueries` + polling `refetchInterval` race condition** — When a mutation triggers an async backend process (deploy, discover, flash, etc.) and a polling hook uses a data-dependent `refetchInterval`, using `invalidateQueries` in `onSuccess` creates a race: the interval evaluator fires on stale cached data (old terminal status) and returns `false`, so polling never starts. Fix: use `await queryClient.refetchQueries()` for the specific key that feeds the polling hook. `invalidateQueries` is fine for non-polling queries.
 
 ---

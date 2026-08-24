@@ -32,10 +32,6 @@ vi.mock('@/hooks/useSystem', () => ({
 vi.mock('@/hooks/useBackup', () => ({
   useMaintenanceStatus: () => ({ data: null, isLoading: false }),
 }));
-vi.mock('@/components/layout/ProcessMetricsBar', () => ({
-  ProcessMetricsBar: () => null,
-}));
-
 // ─── Fixture data ─────────────────────────────────────────────────────────────
 
 const makeNotification = (

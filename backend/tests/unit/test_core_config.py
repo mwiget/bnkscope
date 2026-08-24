@@ -15,29 +15,22 @@ from core.config import Settings, _read_version_file, settings
 
 class TestSettingsDefaults:
     def test_app_name(self):
-        assert settings.APP_NAME == "bnk-forge"
+        assert settings.APP_NAME == "bnkscope"
 
     def test_environment_is_development(self):
         assert settings.ENVIRONMENT == "development"
 
     def test_api_host(self):
-        assert settings.API_HOST == "0.0.0.0"
+        # bnkscope has no auth; the loopback bind IS the access control (Phase 3).
+        assert settings.API_HOST == "127.0.0.1"
 
     def test_api_port(self):
         assert settings.API_PORT == 8000
-
-    def test_require_auth_is_true(self):
-        assert settings.REQUIRE_AUTH is True
 
     def test_database_url_is_set(self):
         """DATABASE_URL is always set — either from env (test: sqlite) or default (postgresql)."""
         assert settings.DATABASE_URL is not None
         assert len(settings.DATABASE_URL) > 10
-
-    def test_jwt_secret_key_is_set(self):
-        """Auto-generated or from env, but always present after init."""
-        assert settings.JWT_SECRET_KEY is not None
-        assert len(settings.JWT_SECRET_KEY) > 10
 
     def test_encryption_key_is_set(self):
         """Auto-generated or from env, but always present after init."""
@@ -45,24 +38,38 @@ class TestSettingsDefaults:
         assert len(settings.ENCRYPTION_KEY) > 10
 
     def test_logs_dir_default(self):
-        assert settings.LOGS_DIR == "/tmp/bnk-forge-logs"
+        assert settings.LOGS_DIR == "/tmp/bnkscope-logs"
 
 
 # ── CORS origins property ────────────────────────────────────────────
 
 
 class TestCorsOrigins:
+    """CORS is off by default, and that is the point.
+
+    The UI reaches this API through nginx on its own origin, so nothing the
+    app does is cross-origin and no CORS header is involved. Turning it on
+    grants access to pages that are NOT the UI — and this API has no
+    authentication and serves `POST /api/system/backup`, which is every
+    kubeconfig and cloud credential plus the key that decrypts them. The
+    default used to be `"*"`, which handed that to every site in the
+    operator's browser on a plain loopback install.
+    """
+
     def test_cors_origins_is_list(self):
         assert isinstance(settings.cors_origins, list)
 
-    def test_cors_origins_contains_localhost(self):
-        """Default ALLOWED_ORIGINS stays permissive for local development."""
-        origins = settings.cors_origins
-        assert "*" in origins or any("localhost" in o for o in origins)
+    def test_default_is_empty(self):
+        assert Settings(ALLOWED_ORIGINS="").cors_origins == []
 
-    def test_cors_origins_parsed_from_csv(self):
-        """ALLOWED_ORIGINS is CSV, cors_origins splits it."""
-        assert len(settings.cors_origins) >= 1
+    def test_parsed_from_csv(self):
+        s = Settings(ALLOWED_ORIGINS="http://localhost:5173,https://example.test")
+        assert s.cors_origins == ["http://localhost:5173", "https://example.test"]
+
+    def test_blank_entries_are_dropped(self):
+        # A trailing comma must not produce an empty origin, which would be
+        # matched against and is never what anyone meant.
+        assert Settings(ALLOWED_ORIGINS="http://a.test, ,").cors_origins == ["http://a.test"]
 
 
 # ── Version reading ──────────────────────────────────────────────────
@@ -100,11 +107,9 @@ class TestProductionValidation:
         """Production environment with auto-generated keys should fail."""
         s = Settings(
             ENVIRONMENT="production",
-            JWT_SECRET_KEY=None,  # Will auto-generate
             ENCRYPTION_KEY=None,  # Will auto-generate
         )
-        # Force the auto-generated flags
-        s._jwt_key_auto_generated = True
+        # Force the auto-generated flag
         s._encryption_key_auto_generated = True
 
         with pytest.raises(SystemExit):
@@ -114,12 +119,10 @@ class TestProductionValidation:
         """Production with explicitly set keys should pass."""
         s = Settings(
             ENVIRONMENT="production",
-            JWT_SECRET_KEY="explicit-jwt-key-for-production-use",
             ENCRYPTION_KEY="explicit-encryption-key-for-production",
             ALLOWED_ORIGINS="https://my-app.example.com",
         )
-        # Explicit keys set _auto_generated to False
-        assert s._jwt_key_auto_generated is False
+        # An explicitly supplied key leaves the auto-generated flag clear
         assert s._encryption_key_auto_generated is False
         # Should not raise
         s.validate_production()
@@ -128,29 +131,35 @@ class TestProductionValidation:
         """Production with wildcard CORS should fail."""
         s = Settings(
             ENVIRONMENT="production",
-            JWT_SECRET_KEY="explicit-key",
             ENCRYPTION_KEY="explicit-key",
             ALLOWED_ORIGINS="*",
         )
         with pytest.raises(SystemExit):
             s.validate_production()
 
-    def test_production_localhost_cors_fails(self):
-        """Production with localhost in CORS should fail."""
+    def test_production_wildcard_cors_fails(self):
+        """A wildcard is never right here — the API has no authentication."""
         s = Settings(
             ENVIRONMENT="production",
-            JWT_SECRET_KEY="explicit-key",
             ENCRYPTION_KEY="explicit-key",
-            ALLOWED_ORIGINS="http://localhost:3000",
+            ALLOWED_ORIGINS="*",
         )
         with pytest.raises(SystemExit):
             s.validate_production()
+
+    def test_production_empty_cors_passes(self):
+        """Empty is the shipped value: same-origin through nginx, no CORS."""
+        s = Settings(
+            ENVIRONMENT="production",
+            ENCRYPTION_KEY="explicit-key",
+            ALLOWED_ORIGINS="",
+        )
+        s.validate_production()
 
     def test_staging_skips_localhost_check(self):
         """Staging mode checks auto-keys but NOT localhost in CORS."""
         s = Settings(
             ENVIRONMENT="staging",
-            JWT_SECRET_KEY="explicit-key",
             ENCRYPTION_KEY="explicit-key",
             ALLOWED_ORIGINS="http://localhost:3000",
         )

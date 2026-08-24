@@ -127,12 +127,3 @@ export function compareSeverity(a: string, b: string): number {
   return (SEVERITY_ORDER[a] ?? 2) - (SEVERITY_ORDER[b] ?? 2);
 }
 
-/**
- * Get the worst severity from a list.
- */
-export function worstSeverity(severities: string[]): HealthSeverity {
-  if (severities.length === 0) return 'unknown';
-  return severities.reduce((worst, current) =>
-    compareSeverity(current, worst) < 0 ? current : worst
-  ) as HealthSeverity;
-}

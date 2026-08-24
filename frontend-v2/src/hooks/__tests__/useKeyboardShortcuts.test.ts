@@ -9,11 +9,15 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+// The route table as text: importing the module would pull in AppShell and
+// every lazy page just to read a list of strings.
+import routerSource from '../../router.tsx?raw';
 import {
   useKeyboardShortcuts,
   useSequenceShortcuts,
   getAvailableShortcuts,
   getSequenceShortcuts,
+  NAV_SHORTCUTS,
   formatShortcut,
   type KeyboardShortcut as _KeyboardShortcut,
 } from '@/hooks/useKeyboardShortcuts';
@@ -494,16 +498,66 @@ describe('getSequenceShortcuts', () => {
     }
   });
 
-  it('includes G → D (Go to Dashboard)', () => {
+  it('includes G → D (Go to Overview)', () => {
     const sequences = getSequenceShortcuts();
     const gd = sequences.find((s) => s.keys === 'G → D');
     expect(gd).toBeDefined();
-    expect(gd!.description).toBe('Go to Dashboard');
+    expect(gd!.description).toBe('Go to Overview');
   });
 
-  it('includes all 9 navigation sequences', () => {
+  it('advertises exactly the destinations that exist', () => {
     const sequences = getSequenceShortcuts();
-    expect(sequences).toHaveLength(9);
+    expect(sequences).toHaveLength(NAV_SHORTCUTS.length);
+  });
+});
+
+// ============================================================================
+// The shortcuts point somewhere real
+// ============================================================================
+
+describe('NAV_SHORTCUTS', () => {
+  // The bug this exists for: after the routes changed, nine of thirteen
+  // shortcuts navigated to /projects, /fleet, /operators, /tasks and /helm —
+  // pages deleted two phases earlier — and the help modal listed every one.
+  // The tests passed throughout, because they checked that the list had the
+  // right shape and length, never that a destination was reachable.
+  const routePaths = (() => {
+    const paths = [...routerSource.matchAll(/path: '([^']+)'/g)].map((m) => m[1]);
+    // Children are relative to the '/' root route; '*' is the 404.
+    return new Set(
+      paths
+        .filter((p) => p !== '*')
+        .map((p) => (p.startsWith('/') ? p : `/${p}`)),
+    );
+  })();
+
+  it('reads the real route table', () => {
+    // Guard the guard: if the regex stops matching, every assertion below
+    // would pass vacuously.
+    expect(routePaths.size).toBeGreaterThan(5);
+    expect(routePaths.has('/kubernetes')).toBe(true);
+  });
+
+  it.each(NAV_SHORTCUTS.map((s) => [s.label, s.path] as const))(
+    '%s -> %s is a route',
+    (_label, path) => {
+      expect(routePaths.has(path)).toBe(true);
+    },
+  );
+
+  it('binds each key once', () => {
+    const keys = NAV_SHORTCUTS.map((s) => s.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('goes where it says on the tin', () => {
+    // The description the help modal shows and the route actually navigated to
+    // come from the same row, so they cannot disagree.
+    const sequences = getSequenceShortcuts();
+    for (const [i, shortcut] of NAV_SHORTCUTS.entries()) {
+      expect(sequences[i].keys).toBe(`G → ${shortcut.key.toUpperCase()}`);
+      expect(sequences[i].description).toBe(`Go to ${shortcut.label}`);
+    }
   });
 });
 

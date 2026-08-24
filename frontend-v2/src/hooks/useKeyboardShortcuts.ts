@@ -145,50 +145,50 @@ export function useSequenceShortcuts(
 }
 
 /**
+ * Every navigable destination, and the `g`-sequence key that reaches it.
+ *
+ * One table, three consumers: the live bindings, the modifier list and the
+ * help modal. They used to be three separate literals, and when the routes
+ * changed nine of the thirteen shortcuts pointed at pages that no longer
+ * existed — `/projects`, `/fleet`, `/operators`, `/tasks`, `/helm` — while the
+ * help dialog went on advertising all of them. The tests never caught it
+ * because they asserted the shape of the list and its length, never that a
+ * destination was somewhere you could actually go.
+ *
+ * `__tests__/useKeyboardShortcuts.test.ts` now checks each `path` against the
+ * router, so a deleted route breaks the build instead of the shortcut.
+ */
+export const NAV_SHORTCUTS = [
+    { key: 'd', path: '/', label: 'Overview' },
+    { key: 'k', path: '/kubernetes', label: 'Clusters' },
+    { key: 'b', path: '/bnk', label: 'BNK Health' },
+    { key: 't', path: '/tmm-live', label: 'TMM Live' },
+    { key: 'l', path: '/logs', label: 'Logs' },
+    { key: 'c', path: '/cnf', label: 'CNF Resources' },
+    { key: 'a', path: '/observability/ai-gateway', label: 'AI Gateway' },
+    { key: 's', path: '/system', label: 'System' },
+    { key: 'm', path: '/mcp-server', label: 'MCP' },
+] as const;
+
+/**
  * Hook for common navigation shortcuts
  */
 export function useNavigationShortcuts() {
     const navigate = useNavigate();
 
-    useKeyboardShortcuts([
-        {
-            key: 'd',
-            meta: true,
-            action: () => navigate('/'),
-            description: 'Go to Dashboard',
-        },
-        {
-            key: 'p',
-            meta: true,
-            action: () => navigate('/projects'),
-            description: 'Go to Projects',
-        },
-        {
-            key: 'm',
-            meta: true,
-            action: () => navigate('/modules'),
-            description: 'Go to Modules',
-        },
-        {
-            key: 'e',
-            meta: true,
-            action: () => navigate('/tasks'),
-            description: 'Go to Tasks',
-        },
-    ]);
-
-    // G-then-X sequences — vim-style navigation without modifier keys
-    useSequenceShortcuts([
-        { leader: 'g', followUp: 'd', action: () => navigate('/'), description: 'Go to Dashboard' },
-        { leader: 'g', followUp: 'p', action: () => navigate('/projects'), description: 'Go to Projects' },
-        { leader: 'g', followUp: 'f', action: () => navigate('/fleet'), description: 'Go to Fleet' },
-        { leader: 'g', followUp: 'b', action: () => navigate('/bnk'), description: 'Go to BNK' },
-        { leader: 'g', followUp: 'k', action: () => navigate('/kubernetes'), description: 'Go to Kubernetes' },
-        { leader: 'g', followUp: 'o', action: () => navigate('/operators'), description: 'Go to Operators' },
-        { leader: 'g', followUp: 't', action: () => navigate('/tasks'), description: 'Go to Tasks' },
-        { leader: 'g', followUp: 'h', action: () => navigate('/helm'), description: 'Go to Helm' },
-        { leader: 'g', followUp: 's', action: () => navigate('/system'), description: 'Go to System' },
-    ]);
+    // G-then-X sequences — vim-style navigation without modifier keys.
+    //
+    // There is deliberately no Cmd/Ctrl navigation pair any more. The old set
+    // bound Meta+D, Meta+P and Meta+E, which are Bookmark, Print and the
+    // browser's own in every one of them; the sequences collide with nothing.
+    useSequenceShortcuts(
+        NAV_SHORTCUTS.map(({ key, path, label }) => ({
+            leader: 'g',
+            followUp: key,
+            action: () => navigate(path),
+            description: `Go to ${label}`,
+        })),
+    );
 }
 
 /**
@@ -208,36 +208,6 @@ export function getAvailableShortcuts(): KeyboardShortcut[] {
             action: () => { },
             description: 'Show keyboard shortcuts',
         },
-        {
-            key: 'd',
-            meta: true,
-            action: () => { },
-            description: 'Go to Dashboard',
-        },
-        {
-            key: 'p',
-            meta: true,
-            action: () => { },
-            description: 'Go to Projects',
-        },
-        {
-            key: 'm',
-            meta: true,
-            action: () => { },
-            description: 'Go to Modules',
-        },
-        {
-            key: 'e',
-            meta: true,
-            action: () => { },
-            description: 'Go to Tasks',
-        },
-        {
-            key: 'n',
-            meta: true,
-            action: () => { },
-            description: 'New deployment',
-        },
     ];
 }
 
@@ -245,17 +215,10 @@ export function getAvailableShortcuts(): KeyboardShortcut[] {
  * Get all available sequence shortcuts for display
  */
 export function getSequenceShortcuts(): Array<{ keys: string; description: string }> {
-    return [
-        { keys: 'G → D', description: 'Go to Dashboard' },
-        { keys: 'G → P', description: 'Go to Projects' },
-        { keys: 'G → F', description: 'Go to Fleet' },
-        { keys: 'G → B', description: 'Go to BNK' },
-        { keys: 'G → K', description: 'Go to Kubernetes' },
-        { keys: 'G → O', description: 'Go to Operators' },
-        { keys: 'G → T', description: 'Go to Tasks' },
-        { keys: 'G → H', description: 'Go to Helm' },
-        { keys: 'G → S', description: 'Go to System' },
-    ];
+    return NAV_SHORTCUTS.map(({ key, label }) => ({
+        keys: `G → ${key.toUpperCase()}`,
+        description: `Go to ${label}`,
+    }));
 }
 
 /**

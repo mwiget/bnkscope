@@ -41,7 +41,17 @@ interface TestProject {
 
 function resetK8sSelectionStorage() {
   window.localStorage.removeItem(STORAGE_KEYS.K8S_PROJECT);
-  window.localStorage.removeItem(STORAGE_KEYS.K8S_CLUSTER);
+  // Every cluster key, not just this page's: the selection is shared now, and
+  // useSelectedCluster falls back to the superseded per-page keys, so a
+  // leftover from another suite would look like a real selection.
+  for (const key of [
+    STORAGE_KEYS.SELECTED_CLUSTER,
+    STORAGE_KEYS.K8S_CLUSTER,
+    STORAGE_KEYS.BNK_CLUSTER,
+    STORAGE_KEYS.CNF_CLUSTER,
+  ]) {
+    window.localStorage.removeItem(key);
+  }
   window.localStorage.removeItem(STORAGE_KEYS.K8S_NAMESPACE);
   window.localStorage.removeItem(STORAGE_KEYS.K8S_RESOURCE_TYPE);
   window.localStorage.removeItem(STORAGE_KEYS.K8S_UNHEALTHY_ONLY);
@@ -70,12 +80,19 @@ interface TestCluster {
   ssh_host_override: string | null;
   last_synced_at: string | null;
   created_at: string | null;
+  meta_data?: Record<string, unknown>;
 }
 
-function buildCluster(id: number, projectId: number, name: string): TestCluster {
+function buildCluster(
+  id: number,
+  projectId: number,
+  name: string,
+  meta_data?: Record<string, unknown>,
+): TestCluster {
   return {
     id,
     name,
+    ...(meta_data ? { meta_data } : {}),
     context: `${name}-ctx`,
     api_server: `https://${name}.example.local`,
     cloud_provider: null,
@@ -175,30 +192,6 @@ describe('KubernetesV2', () => {
     });
   });
 
-  it('renders project dropdown', async () => {
-    render(<KubernetesV2 />);
-    await waitFor(() => {
-      const projectSelector = screen.queryByText(/select project/i) || screen.queryByText(/project/i);
-      expect(projectSelector).toBeInTheDocument();
-    });
-  });
-
-  it('auto-selects project when exactly one project exists and none is selected', async () => {
-    const singleProject = [{ id: 1, name: 'project-one' }];
-    const singleCluster = [buildCluster(101, 1, 'cluster-one')];
-    mockKubernetesPageApis({
-      projects: singleProject,
-      allClusters: singleCluster,
-      clustersByProject: { 1: singleCluster },
-    });
-
-    render(<KubernetesV2 />);
-
-    await waitFor(() => {
-      expect(window.localStorage.getItem(STORAGE_KEYS.K8S_PROJECT)).toBe('1');
-    });
-  });
-
   it('auto-selects cluster when exactly one cluster exists for the selected project', async () => {
     const singleProject = [{ id: 1, name: 'project-one' }];
     const singleCluster = [buildCluster(101, 1, 'cluster-one')];
@@ -211,7 +204,7 @@ describe('KubernetesV2', () => {
     render(<KubernetesV2 />);
 
     await waitFor(() => {
-      expect(window.localStorage.getItem(STORAGE_KEYS.K8S_CLUSTER)).toBe('101');
+      expect(window.localStorage.getItem(STORAGE_KEYS.SELECTED_CLUSTER)).toBe('101');
     });
   });
 
@@ -255,65 +248,50 @@ describe('KubernetesV2', () => {
       expect(screen.getByText('No cluster selected')).toBeInTheDocument();
     });
     expect(window.localStorage.getItem(STORAGE_KEYS.K8S_PROJECT)).toBeFalsy();
-    expect(window.localStorage.getItem(STORAGE_KEYS.K8S_CLUSTER)).toBeFalsy();
+    expect(window.localStorage.getItem(STORAGE_KEYS.SELECTED_CLUSTER)).toBeFalsy();
   });
 
-  it('does NOT auto-select while data is still loading', async () => {
-    const singleProject = [{ id: 1, name: 'project-one' }];
-    const singleCluster = [buildCluster(101, 1, 'cluster-one')];
+  // -------------------------------------------------------------------------
+  // DPF clusters land on DPF, not on the BNK Dashboard
+  // -------------------------------------------------------------------------
 
-    server.use(
-      http.get('*/api/projects', async () => {
-        await new Promise((r) => setTimeout(r, 200));
-        return HttpResponse.json({ projects: singleProject, total: singleProject.length });
-      }),
-      http.get('*/api/k8s/clusters', () => {
-        return HttpResponse.json({ clusters: singleCluster, count: singleCluster.length });
-      }),
-      http.get('*/api/projects/:projectId/k8s/clusters', ({ params: pathParams }) => {
-        const projectId = Number(pathParams.projectId);
-        const clusters = projectId === 1 ? singleCluster : [];
-        return HttpResponse.json({ clusters, count: clusters.length });
-      }),
-      http.get('*/api/k8s/clusters/:clusterId/nodes/count', ({ params: pathParams }) => {
-        return HttpResponse.json({ cluster_id: Number(pathParams.clusterId), node_count: 3 });
-      }),
-      http.get('*/api/k8s/clusters/:clusterId/namespaces', ({ params: pathParams }) => {
-        return HttpResponse.json({
-          namespaces: [{ name: 'default', status: 'Active', labels: null, created_at: null }],
-          count: 1,
-          cluster_id: Number(pathParams.clusterId),
-        });
-      }),
-      http.get('*/api/k8s/clusters/:id/resource-summary', ({ params: pathParams, request }) => {
-        const url = new URL(request.url);
-        return HttpResponse.json({
-          cluster_id: Number(pathParams.id),
-          namespace: url.searchParams.get('namespace'),
-          summary: {},
-        });
-      }),
-      http.get('*/api/k8s/clusters/:id/resources/:type', ({ params: pathParams }) => {
-        return HttpResponse.json({
-          resources: [],
-          count: 0,
-          resource_type: String(pathParams.type),
-          namespace: 'default',
-          cluster_id: Number(pathParams.id),
-        });
-      }),
-    );
+  it('lands a DPF cluster on the DPF view and drops the Dashboard tab', async () => {
+    // DPF runs on the infrastructure cluster; BNK runs on the Kamaji tenant.
+    // Landing a DPF cluster on the BNK readiness Dashboard offers a scan for a
+    // deployment that will not happen there.
+    const dpfCluster = buildCluster(1, 1, 'infra', { has_dpf: true });
+    mockKubernetesPageApis({
+      projects: [{ id: 1, name: "p" }],
+      allClusters: [dpfCluster],
+      clustersByProject: { 1: [dpfCluster] },
+    });
 
     render(<KubernetesV2 />);
 
-    expect(window.localStorage.getItem(STORAGE_KEYS.K8S_PROJECT)).toBeFalsy();
-
+    // The switch happens in an effect, one render after the tab appears.
     await waitFor(() => {
-      expect(window.localStorage.getItem(STORAGE_KEYS.K8S_PROJECT)).toBe('1');
-    }, { timeout: 3000 });
-
-    await waitFor(() => {
-      expect(window.localStorage.getItem(STORAGE_KEYS.K8S_CLUSTER)).toBe('101');
+      expect(screen.getByRole('tab', { name: /DPF/ })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
     });
+    expect(screen.queryByRole('tab', { name: /Dashboard/ })).not.toBeInTheDocument();
   });
+
+  it('keeps the Dashboard on a cluster without DPF', async () => {
+    const plain = buildCluster(1, 1, 'tenant');
+    mockKubernetesPageApis({
+      projects: [{ id: 1, name: "p" }],
+      allClusters: [plain],
+      clustersByProject: { 1: [plain] },
+    });
+
+    render(<KubernetesV2 />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /Dashboard/ })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('tab', { name: /DPF/ })).not.toBeInTheDocument();
+  });
+
 });

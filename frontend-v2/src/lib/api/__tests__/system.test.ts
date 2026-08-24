@@ -7,12 +7,8 @@ import { systemApi } from '../system';
 describe('systemApi', () => {
   it('getSystemHealth returns health data', async () => {
     const health = await systemApi.getSystemHealth();
-    expect(health).toHaveProperty('status');
-  });
-
-  it('getQueueMetrics returns metrics', async () => {
-    const metrics = await systemApi.getQueueMetrics();
-    expect(metrics).toBeDefined();
+    expect(health.services.backend.status).toBe('healthy');
+    expect(health.services.database.status).toBe('healthy');
   });
 
   it('getPerformanceMetrics returns metrics', async () => {

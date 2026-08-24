@@ -53,7 +53,6 @@ Phase 4 (P4): Security + Docker         ~3m    [automatic, blocks merge]
     ↓
 CI Gate: ✅ All phases passed → merge allowed
 
-Phase 5 (P5): E2E Tests                 ~10m   [manual/nightly, advisory]
     ↓
 Release: Version bump + tag + changelog          [manual, requires CI Gate]
 ```
@@ -75,10 +74,9 @@ Release: Version bump + tag + changelog          [manual, requires CI Gate]
 | `P2 · Proxy Config` | No (aggregated) | Nginx config via `make test-proxy` |
 | `P2 · DB Migrations` | No (aggregated) | Migration tests via `make test-db` |
 | `P2 · Build · Frontend` | No (aggregated) | Build check via `make build-frontend-check` |
-| `P3 · Integration Tests` | No (aggregated) | Integration tests via `make test-integration-full` |
+| `P3 · Integration Tests` | No (aggregated) | Integration tests via `make test-integration` + `make test-integration-full` (complementary marker sets — both are needed to cover `tests/integration/`) |
 | `P4 · Security Audit` | No (aggregated) | pip-audit + npm audit via `make security-audit` |
 | `P4 · Docker Build + Scan` | No (aggregated) | Docker build + Trivy scan |
-| `P5 · E2E Tests` | ❌ No | Manual/nightly only |
 
 ## Makefile Source-of-Truth
 
@@ -107,9 +105,7 @@ This means **`make pre-push` locally ≡ CI pipeline** — if pre-push passes, C
 |-------|----------|-------|
 | Pull Request | `main`, `staging`, `develop` | Main gate for feature branches |
 | Push | `main` | Post-merge deploy triggers |
-| Manual | — | Release workflow, E2E tests |
-| Nightly | — | E2E tests at 02:00 UTC |
-| Release tags | `v*` | E2E tests on release |
+| Manual | — | Release workflow |
 
 ### Path-based change detection
 
@@ -129,7 +125,6 @@ CI uses `dorny/paths-filter` to skip irrelevant jobs:
 | File | Purpose | Trigger |
 |------|---------|---------|
 | `.github/workflows/ci.yml` | Phases 1-4 + CI Gate | Push, PR |
-| `.github/workflows/e2e-tests.yml` | Phase 5 E2E tests | Manual, nightly, tags |
 | `.github/workflows/release.yml` | Release pipeline | Manual only |
 
 ## Release Process
@@ -137,13 +132,11 @@ CI uses `dorny/paths-filter` to skip irrelevant jobs:
 1. Ensure CI Gate has passed on your branch
 2. Go to **Actions → Release → Run workflow**
 3. Choose version bump type (patch/minor/major)
-4. Optionally enable E2E tests before release
 5. Enter release notes
 6. Click "Run workflow"
 
 The release workflow will:
 - ✅ Verify CI has passed
-- ✅ Run E2E tests (if selected)
 - ✅ Bump VERSION file
 - ✅ Update CHANGELOG.md
 - ✅ Commit, tag, push

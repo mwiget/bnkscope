@@ -238,7 +238,7 @@ export function A2AAgentDiscovery({ clusterId, namespace }: A2AAgentDiscoveryPro
   return (
     <div className="space-y-4">
       {/* Summary */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <SummaryCard label="HTTPRoute Backends" value={agents.length} icon={Bot} />
         <SummaryCard label="Confirmed Agents" value={confirmedCount} icon={Radar} />
         <SummaryCard label="Gateways" value={new Set(agents.flatMap(a => a.gateways)).size} icon={Globe} />

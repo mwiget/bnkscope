@@ -258,7 +258,7 @@ function RuleCard({
       {expanded && (
         <div className="px-3 pb-3 pt-1 space-y-3 border-t border-border">
           {/* Row 1: Name, Action, Protocol */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className="text-[10px] font-medium opacity-60">Name</label>
               <Input
@@ -649,10 +649,10 @@ export function PolicyBuilder({ clusterId, namespace }: PolicyBuilderProps) {
   const duplicateWarning = useMemo(() => {
     if (!state.targetGateway || !state.name) return null;
     const existing = existingPolicies.find(
-      p => p.gateway_name === state.targetGateway &&
+      p => p.kind !== 'egress' && p.gateway_name === state.targetGateway &&
            (state.targetListener === '' || p.listener_name === state.targetListener)
     );
-    if (existing) {
+    if (existing && existing.kind !== 'egress') {
       return `Gateway "${state.targetGateway}" listener "${state.targetListener || 'all'}" already has policy "${existing.bnk_policy_name}" attached.`;
     }
     return null;

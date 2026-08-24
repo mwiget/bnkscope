@@ -251,10 +251,10 @@ async def test_proxy_meta_risk_class_round_trips_to_start_event(caplog: pytest.L
     proxy = ObservabilityMCPProxy(mcp, "diagnostics_fleet")
 
     @proxy.tool()
-    async def fleet_health() -> str:
+    async def dpf_health() -> str:
         return json.dumps({"ok": True})
 
-    await mcp.tools["fleet_health"]()
+    await mcp.tools["dpf_health"]()
 
     assert '"risk_class":"read_only"' in caplog.text
     assert '"auth_expectation":"viewer"' in caplog.text

@@ -25,7 +25,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
-  Activity,
   Bot,
   Box,
   Check,
@@ -208,7 +207,7 @@ function SetupGuides({ baseUrl }: { baseUrl: string }) {
       name: 'Claude Desktop',
       icon: Bot,
       description: 'Add to your Claude Desktop configuration',
-      config: JSON.stringify({ mcpServers: { 'bnk-forge': { url: mcpUrl } } }, null, 2),
+      config: JSON.stringify({ mcpServers: { 'bnkscope': { url: mcpUrl } } }, null, 2),
       instructions:
         'Add to ~/Library/Application Support/Claude/claude_desktop_config.json (macOS) or %APPDATA%\\Claude\\claude_desktop_config.json (Windows)',
     },
@@ -218,7 +217,7 @@ function SetupGuides({ baseUrl }: { baseUrl: string }) {
       icon: Terminal,
       description: 'Add to your OpenCode configuration',
       config: JSON.stringify(
-        { mcp: { 'bnk-forge': { type: 'remote', url: mcpUrl } } },
+        { mcp: { 'bnkscope': { type: 'remote', url: mcpUrl } } },
         null,
         2,
       ),
@@ -231,7 +230,7 @@ function SetupGuides({ baseUrl }: { baseUrl: string }) {
       icon: Code2,
       description: 'Add to your VS Code settings',
       config: JSON.stringify(
-        { mcp: { servers: { 'bnk-forge': { type: 'http', url: mcpUrl } } } },
+        { mcp: { servers: { 'bnkscope': { type: 'http', url: mcpUrl } } } },
         null,
         2,
       ),
@@ -243,7 +242,7 @@ function SetupGuides({ baseUrl }: { baseUrl: string }) {
       name: 'Cursor',
       icon: Zap,
       description: 'Add to your Cursor MCP configuration',
-      config: JSON.stringify({ mcpServers: { 'bnk-forge': { url: mcpUrl } } }, null, 2),
+      config: JSON.stringify({ mcpServers: { 'bnkscope': { url: mcpUrl } } }, null, 2),
       instructions: "Add to ~/.cursor/mcp.json or your project's .cursor/mcp.json",
     },
   ];
@@ -251,7 +250,7 @@ function SetupGuides({ baseUrl }: { baseUrl: string }) {
   return (
     <SectionCard title="Quick setup" compact>
       <p className="text-sm text-muted-foreground -mt-1 mb-3">
-        Connect your AI assistant to BNK-Forge. Copy the config snippet for your tool.
+        Connect your AI assistant to bnkscope. Copy the config snippet for your tool.
       </p>
       <div className="space-y-2">
         {guides.map((guide) => {
@@ -404,7 +403,7 @@ export default function MCP() {
       {/* Header */}
       <PageHeader
         title="MCP Server"
-        subtitle="Connect AI assistants to BNK-Forge via the Model Context Protocol."
+        subtitle="Connect AI assistants to bnkscope via the Model Context Protocol."
         onRefresh={refresh}
         isRefreshing={isRefreshing}
       />
@@ -415,13 +414,6 @@ export default function MCP() {
         <SetupGuides baseUrl={baseUrl} />
         {data?.tool_catalog && <ToolCatalog catalog={data.tool_catalog} />}
       </div>
-
-      {/* Activity icon stays referenced through the rest of the page (legend
-          for the catalog header — keeps the import alive in case future
-          versions re-introduce a section heading icon). */}
-      <span className="hidden">
-        <Activity />
-      </span>
     </div>
   );
 }

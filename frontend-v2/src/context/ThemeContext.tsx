@@ -75,10 +75,3 @@ export function useThemeClasses() {
   };
 }
 
-/**
- * Dynamic theme class generator
- * Use this for inline conditional classes
- */
-export function tc(lightClass: string, darkClass: string, isDark: boolean): string {
-  return isDark ? darkClass : lightClass;
-}

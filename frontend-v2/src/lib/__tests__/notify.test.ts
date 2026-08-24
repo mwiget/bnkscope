@@ -37,7 +37,7 @@ vi.mock('../queryKeys', () => ({
 // ---------------------------------------------------------------------------
 // Import subject under test (after mocks)
 // ---------------------------------------------------------------------------
-import { notify, notifyError, deploymentNotify } from '../notify';
+import { notify, notifyError } from '../notify';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -130,39 +130,6 @@ describe('notify() — fields are passed through', () => {
 
     expect(mockCreateNotification).toHaveBeenCalledWith(
       expect.objectContaining({ category: 'general' }),
-    );
-  });
-});
-
-describe('deploymentNotify — routes to the bell', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('deploymentNotify.started persists an info bell entry', async () => {
-    deploymentNotify.started('vpc-module', 'apply');
-    await flushPromises();
-
-    expect(mockCreateNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ severity: 'info', category: 'deployment' }),
-    );
-  });
-
-  it('deploymentNotify.success persists a success bell entry', async () => {
-    deploymentNotify.success('vpc-module', 'apply');
-    await flushPromises();
-
-    expect(mockCreateNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ severity: 'success', category: 'deployment' }),
-    );
-  });
-
-  it('deploymentNotify.failed persists an error bell entry', async () => {
-    deploymentNotify.failed('vpc-module', 'apply', 'timeout');
-    await flushPromises();
-
-    expect(mockCreateNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ severity: 'error', category: 'deployment' }),
     );
   });
 });

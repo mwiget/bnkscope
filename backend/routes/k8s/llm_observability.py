@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
 from database import get_db
-from routes.auth import require_viewer
 from schemas.llm_observability import (
     LlmFilterDataResponse,
     LlmHistogramResponse,
@@ -46,7 +45,6 @@ _BASE = "/k8s/clusters/{cluster_id}/llm-observability"
 @router.get(
     f"{_BASE}/stats",
     response_model=LlmStatsResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway stats")
 async def get_llm_stats(
@@ -65,7 +63,6 @@ async def get_llm_stats(
 @router.get(
     f"{_BASE}/histogram",
     response_model=LlmHistogramResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway histogram")
 async def get_llm_histogram(
@@ -85,7 +82,6 @@ async def get_llm_histogram(
 @router.get(
     f"{_BASE}/rankings",
     response_model=LlmRankingsResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway rankings")
 async def get_llm_rankings(
@@ -104,7 +100,6 @@ async def get_llm_rankings(
 @router.get(
     f"{_BASE}/provider-usage",
     response_model=LlmProviderUsageResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway provider usage")
 async def get_llm_provider_usage(
@@ -124,7 +119,6 @@ async def get_llm_provider_usage(
 @router.get(
     f"{_BASE}/logs",
     response_model=LlmLogsResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway logs")
 async def get_llm_logs(
@@ -153,7 +147,6 @@ async def get_llm_logs(
 @router.get(
     f"{_BASE}/filterdata",
     response_model=LlmFilterDataResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get LLM gateway filter data")
 async def get_llm_filterdata(

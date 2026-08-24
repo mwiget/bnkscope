@@ -9,26 +9,50 @@ export interface F5FirewallRule {
   source: {
     addresses?: string[];
     ports?: number[];
+    addressLists?: string[];
+    portLists?: string[];
   };
   destination: {
     addresses?: string[];
     ports?: number[];
+    addressLists?: string[];
+    portLists?: string[];
   };
   logging: boolean;
 }
 
-export interface F5PolicyGatewayAssociation {
-  bnk_policy_name: string;
+export interface F5GatewayPolicyAssociation {
+  kind?: 'gateway';
+  bnk_policy_name?: string;
   namespace: string;
-  gateway_name: string;
-  listener_name: string;
+  gateway_name?: string;
+  listener_name?: string;
   firewall_policy_name: string;
   gateway_ip?: string;
   port?: number;
   protocol?: string;
   rules_count?: number;
   rules?: F5FirewallRule[];
+  egress_name?: string;
+  captured_namespaces?: string[];
+  snat_type?: string;
 }
+
+export interface F5EgressPolicyAssociation {
+  kind: 'egress';
+  namespace: string;
+  egress_name?: string;
+  firewall_policy_name: string;
+  captured_namespaces?: string[];
+  snat_type?: string;
+  rules_count?: number;
+  rules?: F5FirewallRule[];
+  bnk_policy_name?: string;
+  gateway_name?: string;
+  listener_name?: string;
+}
+
+export type F5PolicyGatewayAssociation = F5GatewayPolicyAssociation | F5EgressPolicyAssociation;
 
 export interface F5PolicyGatewayAssociationsResponse {
   associations: F5PolicyGatewayAssociation[];
@@ -259,87 +283,12 @@ export interface BnkVersionInfo {
   max_k8s?: string;
 }
 
-export interface BnkReleaseRegistryItem {
-  id: number;
-  ga_label: string;
-  product_line: string;
-  manifest_version: string | null;
-  flo_version_prefix: string | null;
-  flo_version_min: string | null;
-  flo_version_max: string | null;
-  min_k8s: string | null;
-  max_k8s: string | null;
-  source_type: 'clouddocs' | 'oci' | 'observed' | 'manual';
-  source_url: string | null;
-  notes: string | null;
-  is_active: boolean;
-}
 
-export interface BnkReleaseRegistryResponse {
-  releases: BnkReleaseRegistryItem[];
-  total: number;
-}
 
-export interface BnkCurrentVersion {
-  status: 'installed' | 'partial' | 'not_installed';
-  health: 'healthy' | 'degraded' | null;
-  flo_version: string | null;
-  ga_label?: string | null;
-  min_k8s?: string | null;
-  max_k8s?: string | null;
-  helm_release: {
-    name: string;
-    namespace: string;
-    version: string;
-    status: string;
-  } | null;
-  tmm_pods: {
-    pods: number;
-    running: number;
-    containers: {
-      total_containers: number;
-      ready_containers: number;
-      containers: string;
-    } | null;
-  };
-  vlans: Array<{
-    name: string;
-    interfaces: unknown[];
-    self_ips: string[];
-    mtu: number | null;
-    programmed: boolean;
-  }>;
-}
 
-// BNK Upgrade Versions Response
-export interface BnkUpgradeVersionsResponse {
-  current_version: string | null;
-  available_versions: Array<BnkVersionInfo & { source?: 'registry' | null }>;
-  registry_available: boolean;
-  registry_error: string | null;
-}
 
-// BNK Upgrade History Response
-export interface BnkUpgradeHistoryResponse {
-  upgrades: BnkUpgrade[];
-  total: number;
-}
 
-// BNK Upgrade Execution Response
-export interface BnkUpgradeExecuteResponse {
-  message: string;
-  upgrade_id: number;
-  celery_task_id: string;
-  status: 'in_progress';
-}
 
-// BNK Upgrade Rollback Response
-export interface BnkUpgradeRollbackResponse {
-  message: string;
-  upgrade_id: number;
-  celery_task_id: string;
-  status: 'rolling_back';
-}
 
 // ─── BNK Gateway Topology Types ──────────────────────────────────────
 
@@ -464,7 +413,16 @@ export interface TopologySnatPool {
 export interface TopologyEgress {
   name: string;
   namespace: string;
-  sourceTranslation: Record<string, unknown>;
+  snatType: string;
+  egressSnatpool: string | null;
+  firewallEnforcedPolicy: string | null;
+  logProfile: string | null;
+  capturedNamespaces: string[];
+  vxlan: {
+    tmmInterfaceName: string;
+    nodeInterfaceName: string;
+  } | null;
+  ready: boolean;
 }
 
 export interface TopologyDataPlane {
@@ -572,10 +530,6 @@ export interface BnkDataResponse {
   namespace: string | null;
 }
 
-// BNK Health endpoint response (adds cluster_id to health)
-export interface BnkHealthEndpointResponse extends BnkHealthResponse {
-  cluster_id: number;
-}
 
 // ─── Policy Builder Types ────────────────────────────────────────────
 

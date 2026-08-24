@@ -302,3 +302,33 @@ a[href="#main-content"]:focus {
     transform: none !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   bnkscope mark — triggered sweep.
+
+   The beam path carries class="beam" and pathLength="100" (see
+   scripts/bnkscope-icon/build.py), which normalises its length so a single
+   dashoffset animation works at any rendered size. Runs once on mount; the
+   reduced-motion block above already neutralises it, but the guard is repeated
+   here so the trace is drawn in full rather than left mid-sweep.
+   --------------------------------------------------------------------------- */
+.bnkscope-mark--sweep .beam {
+  stroke-dasharray: 100;
+  animation: bnkscope-sweep 900ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes bnkscope-sweep {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bnkscope-mark--sweep .beam {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}

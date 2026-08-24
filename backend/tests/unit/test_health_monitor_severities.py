@@ -43,7 +43,7 @@ class TestHealthMonitorSeverities:
         """health_monitor_task must never write the string 'critical' as a severity."""
         import inspect
 
-        import tasks.health_monitor_task as mod
+        import jobs.health_monitor as mod
         src = inspect.getsource(mod._get_cluster_health)
         # The old bad strings must not appear
         assert '"critical"' not in src, "Found hardcoded 'critical' severity string"
@@ -53,7 +53,7 @@ class TestHealthMonitorSeverities:
         """health_monitor_task must never write the string 'warning' as a component severity."""
         import inspect
 
-        import tasks.health_monitor_task as mod
+        import jobs.health_monitor as mod
         src = inspect.getsource(mod._get_cluster_health)
         assert '"warning"' not in src, "Found hardcoded 'warning' severity string"
         assert "'warning'" not in src, "Found hardcoded 'warning' severity string"
@@ -82,7 +82,7 @@ class TestFireHealthAlertSeverityMap:
         import ast
         import inspect
 
-        import tasks.health_monitor_task as mod
+        import jobs.health_monitor as mod
         src = inspect.getsource(mod._fire_health_alert)
         # No old string literals 'critical' or 'warning' should be map keys
         assert '"critical":' not in src.replace(" ", ""), \
@@ -92,7 +92,7 @@ class TestFireHealthAlertSeverityMap:
 
     def test_unhealthy_maps_to_critical_alert(self):
         """HealthSeverity.UNHEALTHY must map to 'critical' alert severity."""
-        import tasks.health_monitor_task as mod
+        import jobs.health_monitor as mod
         # Reconstruct the severity_map from the module
         severity_map = {
             HealthSeverity.UNHEALTHY: "critical",

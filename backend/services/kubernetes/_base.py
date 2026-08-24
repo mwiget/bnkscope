@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from core.encryption import decrypt_value
 from models import KubernetesCluster
-from services.cluster_utils import _maybe_open_ssh_tunnel
 from services.cluster_utils import get_cluster as get_cluster_util
 from services.kubeconfig_normalizer import NormalizationSource, normalize_kubeconfig
 from services.reachability import with_breaker
@@ -47,8 +46,6 @@ class KubernetesServiceBase:
         rewrites the kubeconfig user the same way, so the API container
         does not need gcloud / gke-gcloud-auth-plugin.
 
-        For SSH/on-prem clusters, opens an SSH tunnel and rewrites the
-        kubeconfig server URL to route through the tunnel.
         """
         if not cluster.kubeconfig_encrypted:
             raise ValueError(f"Cluster {cluster.name} has no kubeconfig configured")
@@ -64,22 +61,7 @@ class KubernetesServiceBase:
         kubeconfig_yaml = normalize_kubeconfig(
             kubeconfig_yaml, source=NormalizationSource.INTERNAL_REREAD
         )
-
-        # Check if project uses SSH credential template -- open tunnel if so
         import yaml as yaml_lib
-        tunnel_port = self._maybe_open_ssh_tunnel(cluster)
-        if tunnel_port:
-            # Rewrite kubeconfig to route through SSH tunnel
-            kubeconfig_dict = yaml_lib.safe_load(kubeconfig_yaml)
-            for c in kubeconfig_dict.get('clusters', []):
-                # 127.0.0.1 not "localhost" — see cluster_utils. Tunnel
-                # listener is IPv4-only and "localhost" resolves to ::1
-                # first on most installs, causing connection-refused.
-                c['cluster']['server'] = f'https://127.0.0.1:{tunnel_port}'
-                c['cluster']['insecure-skip-tls-verify'] = True
-                c['cluster'].pop('certificate-authority-data', None)
-                c['cluster'].pop('certificate-authority', None)
-            kubeconfig_yaml = yaml_lib.dump(kubeconfig_dict, default_flow_style=False)
 
         # Write to temporary file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
@@ -96,14 +78,13 @@ class KubernetesServiceBase:
                     CredentialUnavailableError,
                     get_cloud_credentials_env,
                 )
-                project = cluster.project
                 # strict=True: CredentialUnavailableError propagates when SSO
                 # keys are absent or expired — intentionally NOT caught below
                 # so test_connection returns success:false with a credential
                 # message rather than masking it as a 401.
                 # All other callers (tasks, tofu, drift, etc.) call with the
                 # default strict=False and retain graceful-degradation behaviour.
-                aws_env = get_cloud_credentials_env(project, self.db, strict=True)
+                aws_env = get_cloud_credentials_env(cluster, self.db, strict=True)
 
                 for key, value in aws_env.items():
                     if key.startswith('AWS_'):
@@ -144,36 +125,43 @@ class KubernetesServiceBase:
                         pass
                     logger.warning("Failed to generate boto3 EKS token for %s, falling back to exec plugin: %s", cluster.name, e)
 
-            # For GKE/GCP clusters, mint an OAuth access token from a service-account
-            # key via google-auth (Python-native) and rewrite the kubeconfig user to
-            # use it as a static token.  Mirrors the EKS path: avoids needing
+            # For GKE/GCP clusters, mint an OAuth access token via google-auth
+            # (Python-native) and rewrite the kubeconfig user to use it as a
+            # static token.  Mirrors the EKS path: avoids needing
             # gke-gcloud-auth-plugin or gcloud inside the container.
             elif cluster.cloud_provider in ["gke", "gcp"]:
                 from services.credentials_service import get_gcp_service_account_info
-                project = cluster.project
-                sa_info = get_gcp_service_account_info(project, self.db)
+                sa_info = get_gcp_service_account_info(cluster, self.db)
 
-                if not sa_info:
-                    logger.warning(
-                        "No GCP service-account credentials configured for cluster %s "
-                        "(project '%s'); kubeconfig exec plugin will be invoked and "
-                        "is expected to fail in slim API container",
-                        cluster.name, project.name if project else "<none>",
+                try:
+                    # A configured service-account key wins; otherwise fall back
+                    # to Application Default Credentials, which is how a locally
+                    # discovered context authenticates -- the operator's own
+                    # `gcloud auth application-default login` file, mounted
+                    # read-only at GOOGLE_APPLICATION_CREDENTIALS (Phase 5).
+                    token = (
+                        self._generate_gcp_token(sa_info)
+                        if sa_info
+                        else self._generate_gcp_token_from_adc()
                     )
-                else:
-                    try:
-                        token = self._generate_gcp_token(sa_info)
-                        if token:
-                            kubeconfig_dict = yaml_lib.safe_load(
-                                open(kubeconfig_path).read()
-                            )
-                            for user_entry in kubeconfig_dict.get("users", []):
-                                user_entry["user"] = {"token": token}
-                            with open(kubeconfig_path, "w") as f:
-                                yaml_lib.dump(kubeconfig_dict, f, default_flow_style=False)
-                            logger.info("Injected google-auth-generated bearer token for GKE cluster %s", cluster.name)
-                    except Exception as e:
-                        logger.warning("Failed to generate google-auth GCP token for %s, falling back to exec plugin: %s", cluster.name, e)
+                    if token:
+                        kubeconfig_dict = yaml_lib.safe_load(
+                            open(kubeconfig_path).read()
+                        )
+                        for user_entry in kubeconfig_dict.get("users", []):
+                            user_entry["user"] = {"token": token}
+                        with open(kubeconfig_path, "w") as f:
+                            yaml_lib.dump(kubeconfig_dict, f, default_flow_style=False)
+                        logger.info("Injected google-auth-generated bearer token for GKE cluster %s", cluster.name)
+                    else:
+                        logger.warning(
+                            "No GCP credentials resolved for cluster %s — neither a "
+                            "service-account key nor Application Default Credentials. "
+                            "The kubeconfig's exec plugin cannot run in this image.",
+                            cluster.name,
+                        )
+                except Exception as e:
+                    logger.warning("Failed to generate google-auth GCP token for %s: %s", cluster.name, e)
 
             # Load config from file
             k8s_config.load_kube_config(config_file=kubeconfig_path, context=cluster.context)
@@ -318,9 +306,39 @@ class KubernetesServiceBase:
         return credentials.token
 
     @staticmethod
-    def _maybe_open_ssh_tunnel(cluster: KubernetesCluster) -> int | None:
-        """Delegate to shared cluster_utils._maybe_open_ssh_tunnel()."""
-        return _maybe_open_ssh_tunnel(cluster)
+    def _generate_gcp_token_from_adc() -> str | None:
+        """Mint a GKE token from Application Default Credentials.
+
+        The path for a locally-discovered GKE context: no service-account key is
+        configured in bnkscope, but the operator has run ``gcloud auth
+        application-default login`` and their ADC file is mounted read-only
+        (``GOOGLE_APPLICATION_CREDENTIALS``, set by docker-compose.yml).
+
+        ``google.auth.default()`` handles both shapes ADC comes in — an
+        ``authorized_user`` refresh token and a service-account key — which is
+        why this is not just the function above with a different loader.
+
+        Returns None when nothing resolves; the caller logs and carries on.
+        """
+        try:
+            import google.auth
+            from google.auth.exceptions import DefaultCredentialsError
+            from google.auth.transport.requests import Request
+        except ImportError:
+            logger.warning("google-auth not available — cannot generate GCP token natively")
+            return None
+
+        try:
+            credentials, _project = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+        except DefaultCredentialsError as exc:
+            logger.debug("No GCP Application Default Credentials available: %s", exc)
+            return None
+
+        credentials.refresh(Request())
+        logger.info("Generated GCP access token from Application Default Credentials")
+        return credentials.token
 
     @with_breaker("cluster", target_id_arg="cluster_id")
     def test_connection(self, cluster_id: int) -> dict[str, Any]:

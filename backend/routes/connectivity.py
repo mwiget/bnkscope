@@ -23,19 +23,18 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.errors import BadRequestError, handle_route_errors
-from routes.auth import require_viewer
 from services.reachability import registry
 from services.reachability.registry import SSE_HEARTBEAT_SECONDS
 
 logger = logging.getLogger(__name__)
 
 
-router = APIRouter(prefix="/api/connectivity", tags=["connectivity"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api/connectivity", tags=["connectivity"])
 
 
 # ============================================================

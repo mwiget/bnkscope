@@ -12,8 +12,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, act } from '@testing-library/react';
 import { render } from '@/test/test-utils';
-import { useAuthStore } from '@/stores/authStore';
-import { mockUser } from '@/test/test-fixtures';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { http, HttpResponse } from 'msw';
@@ -35,9 +33,6 @@ vi.mock('react-router-dom', async () => {
 
 beforeEach(() => {
   mockNavigate.mockReset();
-  act(() => {
-    useAuthStore.getState().logout();
-  });
   localStorage.clear();
 
   // Add notification handlers so Header renders without unhandled request warnings
@@ -57,45 +52,30 @@ beforeEach(() => {
 
 describe('Navigation Integration', () => {
   // -------------------------------------------------------------------------
-  // 1. Sidebar renders all navigation sections
+  // 1. Sidebar renders the four lenses, flat
   // -------------------------------------------------------------------------
-  describe('Sidebar renders all navigation sections', () => {
-    it('shows OBSERVE, BUILD, OPERATE, and SETTINGS section headings with key nav items for admin', async () => {
-      act(() => {
-        useAuthStore.getState().login('mock-jwt-token', mockUser);
-      });
+  describe('Sidebar renders all navigation entries', () => {
+    it('shows the four lenses and the two utility links, with no sections', async () => {
 
       render(<Sidebar />);
 
       // Wait for async data (badge counts) to settle
       await waitFor(() => {
-        expect(screen.getByText('OBSERVE')).toBeInTheDocument();
+        expect(screen.getByText('Clusters')).toBeInTheDocument();
       });
 
-      // Section headings
-      expect(screen.getByText('BUILD')).toBeInTheDocument();
-      expect(screen.getByText('OPERATE')).toBeInTheDocument();
-      expect(screen.getByText('SETTINGS')).toBeInTheDocument();
+      expect(screen.getByText('BNK Health')).toBeInTheDocument();
+      expect(screen.getByText('CNF Resources')).toBeInTheDocument();
+      expect(screen.getByText('AI Gateway')).toBeInTheDocument();
 
-      // Command Center — standalone home item above the OBSERVE section
-      expect(screen.getByText('Command Center')).toBeInTheDocument();
-
-      // BUILD items — Catalog sits at the bottom after Operations Log.
-      expect(screen.getByText('Access Methods')).toBeInTheDocument();
-      expect(screen.getByText('Blueprints')).toBeInTheDocument();
-      expect(screen.getByText('Projects')).toBeInTheDocument();
-      expect(screen.getByText('Operations Log')).toBeInTheDocument();
-      expect(screen.getByText('Catalog')).toBeInTheDocument();
-      // K8S-UX-004: Helm Packages removed from sidebar — now integrated into Kubernetes page
-
-      // OPERATE items
-      expect(screen.getByText('Fleet')).toBeInTheDocument();
-      expect(screen.getByText('Kubernetes')).toBeInTheDocument();
-      expect(screen.getByText('F5 BNK')).toBeInTheDocument();
-      // K8S-UX-005: Operators merged into Fleet page — no longer a separate sidebar entry
-
-      // SETTINGS items (admin only)
+      // Utility links — demoted, not removed.
       expect(screen.getByText('System')).toBeInTheDocument();
+      expect(screen.getByText('MCP')).toBeInTheDocument();
+
+      // Phase 6 collapsed five sections into one flat list.
+      expect(screen.queryByText('OBSERVE')).not.toBeInTheDocument();
+      expect(screen.queryByText('OPERATE')).not.toBeInTheDocument();
+      expect(screen.queryByText('SETTINGS')).not.toBeInTheDocument();
     });
   });
 
@@ -103,45 +83,16 @@ describe('Navigation Integration', () => {
   // 2. Sidebar nav links have correct hrefs
   // -------------------------------------------------------------------------
   describe('Sidebar nav links have correct hrefs', () => {
-    it('renders Projects with href="/projects", Activity with href="/tasks", Blueprints with href="/stacks"', async () => {
-      act(() => {
-        useAuthStore.getState().login('mock-jwt-token', mockUser);
-      });
+    it('renders Clusters with href="/kubernetes" and BNK Health with href="/bnk"', async () => {
 
       render(<Sidebar />);
 
       await waitFor(() => {
-        expect(screen.getByText('Projects')).toBeInTheDocument();
+        expect(screen.getByText('Clusters')).toBeInTheDocument();
       });
 
-      // NavLink renders an <a> tag — find the link by its text content
-      const projectsLink = screen.getByText('Projects').closest('a');
-      expect(projectsLink).toHaveAttribute('href', '/projects');
-
-      const opsLogLink = screen.getByText('Operations Log').closest('a');
-      expect(opsLogLink).toHaveAttribute('href', '/tasks');
-
-      const blueprintsLink = screen.getByText('Blueprints').closest('a');
-      expect(blueprintsLink).toHaveAttribute('href', '/stacks');
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // 3. Header renders breadcrumbs for route
-  // -------------------------------------------------------------------------
-  describe('Header renders breadcrumbs for route', () => {
-    it('shows "Build" breadcrumb and "Projects" page title when at /projects', async () => {
-      act(() => {
-        useAuthStore.getState().login('mock-jwt-token', mockUser);
-      });
-
-      render(<Header />, { initialRoute: '/projects' });
-
-      await waitFor(() => {
-        expect(screen.getByText('Build')).toBeInTheDocument();
-      });
-
-      expect(screen.getByText('Projects')).toBeInTheDocument();
+      expect(screen.getByText('Clusters').closest('a')).toHaveAttribute('href', '/kubernetes');
+      expect(screen.getByText('BNK Health').closest('a')).toHaveAttribute('href', '/bnk');
     });
   });
 
@@ -150,9 +101,6 @@ describe('Navigation Integration', () => {
   // -------------------------------------------------------------------------
   describe('Header search button renders with keyboard shortcut', () => {
     it('displays "Search..." text and ⌘K shortcut badge', async () => {
-      act(() => {
-        useAuthStore.getState().login('mock-jwt-token', mockUser);
-      });
 
       render(<Header />, { initialRoute: '/' });
 
@@ -169,9 +117,6 @@ describe('Navigation Integration', () => {
   // -------------------------------------------------------------------------
   describe('Header notification bell renders', () => {
     it('renders a notification bell button with aria-label="Notifications"', async () => {
-      act(() => {
-        useAuthStore.getState().login('mock-jwt-token', mockUser);
-      });
 
       render(<Header />, { initialRoute: '/' });
 

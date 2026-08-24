@@ -77,12 +77,20 @@ class ForbiddenError(AppError):
 class ConflictError(AppError):
     """Resource conflict (409)"""
 
-    def __init__(self, resource: str, message: str):
+    def __init__(self, resource: str, message: str, details: dict | None = None):
+        # `details` is optional and merged over the resource key, so a caller can
+        # return the specific conflicting objects (e.g. which modules are still
+        # undestroyed) rather than only a message the client has to parse.
+        #
+        # Merge order: `details` wins. Passing details={"resource": ...} therefore
+        # overrides the value derived from the `resource` argument -- deliberate,
+        # so a caller can name the conflicting resource more precisely, but worth
+        # knowing before you pass that key by accident.
         super().__init__(
             code=f"{resource.upper()}_CONFLICT",
             message=message,
             status_code=409,
-            details={"resource": resource},
+            details={"resource": resource, **(details or {})},
         )
 
 
@@ -265,9 +273,8 @@ class BackupErrorCode(StrEnum):
     INVALID_ARCHIVE = "invalid_archive"
     RESTORE_IN_PROGRESS = "restore_in_progress"
     BACKUP_IN_PROGRESS = "backup_in_progress"
-    DUMP_FAILED = "dump_failed"
+    BACKUP_FAILED = "backup_failed"
     RESTORE_FAILED = "restore_failed"
-    MIGRATION_FAILED = "migration_failed"
 
 
 class BackupError(AppError):
@@ -281,10 +288,9 @@ class BackupError(AppError):
             BackupErrorCode.INVALID_ARCHIVE: 400,
             BackupErrorCode.RESTORE_IN_PROGRESS: 409,
             BackupErrorCode.BACKUP_IN_PROGRESS: 409,
-            BackupErrorCode.DUMP_FAILED: 500,
+            BackupErrorCode.BACKUP_FAILED: 500,
             BackupErrorCode.RESTORE_FAILED: 500,
-            BackupErrorCode.MIGRATION_FAILED: 500,
-        }
+                    }
         super().__init__(
             message=message,
             status_code=status_map.get(code, 500),
@@ -612,7 +618,7 @@ def classify_aws_credential_error(e: Exception) -> "AuthenticationError | None":
         target_id=0,
         target_name="AWS",
         suggested_action=(
-            "Refresh your AWS credentials in Project Settings → Credential Templates, then retry."
+            "Refresh your AWS credentials on the host (for example `aws sso login`), then restart bnkscope."
         ),
         details={"aws_error_code": code, "aws_error_message": message},
     )
@@ -627,7 +633,7 @@ def classify_aws_subprocess_stderr(stderr: str, operation: str) -> "Authenticati
                 target_id=0,
                 target_name="AWS",
                 suggested_action=(
-                    "Refresh your AWS credentials in Project Settings → Credential Templates, then retry."
+                    "Refresh your AWS credentials on the host (for example `aws sso login`), then restart bnkscope."
                 ),
                 details={"aws_error": f"AWS CLI credential error during {operation}", "stderr_hint": marker},
             )
@@ -695,7 +701,7 @@ def handle_exception(e: Exception, operation: str) -> NoReturn:
             target_id=0,
             target_name="AWS",
             suggested_action=(
-                "Refresh your AWS credentials in Project Settings → Credential Templates, then retry."
+                "Refresh your AWS credentials on the host (for example `aws sso login`), then restart bnkscope."
             ),
             details={"aws_error": str(e)},
         )

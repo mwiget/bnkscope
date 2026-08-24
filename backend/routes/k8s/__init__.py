@@ -6,7 +6,6 @@ Each module owns a focused domain:
   resources.py  — Generic K8s resource CRUD, pod/node ops, metrics, rollouts
   f5bnk.py      — F5 BNK data (gateways, firewall, egress, topology, health)
   dpf.py        — NVIDIA DPF data (DPU devices, clusters, services, health)
-  tunnels.py    — SSH tunnel management
   tmm_debug.py  — TMM debug sidecar diagnostics (tmctl, configview, bdt_cli)
   recovery.py   — Post-reboot recovery (CWC cert re-sync, platform restart)
 
@@ -22,7 +21,6 @@ from routes.k8s.recovery import router as recovery_router
 from routes.k8s.resources import router as resources_router
 from routes.k8s.tmm_debug import router as tmm_debug_router
 from routes.k8s.topology import router as topology_router
-from routes.k8s.tunnels import router as tunnels_router
 
 __all__ = [
     "clusters_router",
@@ -32,7 +30,6 @@ __all__ = [
     "llm_observability_router",
     "dpf_router",
     "tmm_debug_router",
-    "tunnels_router",
     "recovery_router",
     "topology_router",
 ]

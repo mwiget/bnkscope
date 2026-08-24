@@ -1,60 +1,60 @@
 # Docker Image Architecture
 
-> Multi-target Dockerfile producing role-specific images for each backend container.
+> Three images, one of them optional. `./bnkscope up` builds what it needs —
+> this is for when you want to know what is in them.
 
 ## Image Hierarchy
 
 ```
 python:3.11-slim (Debian bookworm-slim, ~150MB)
 │
-├── base (+ system deps, Python packages, app code)
-│   │
-│   ├── api     → bnk-forge-api    (~300-400MB)  Uvicorn HTTP server
-│   ├── beat    → bnk-forge-beat   (~300-400MB)  Celery beat scheduler
-│   │
-│   └── tooling (+ Docker CLI, AWS CLI, OpenTofu, Helm, kubectl, git)
-│       │
-│       └── worker → bnk-forge-worker (~700-900MB)  Celery workers
+├── base          system deps + Python packages
+│   └── app-base  + application code
+│       └── api        → bnkscope-api:latest        Uvicorn HTTP server
+│   └── test           (pytest + fixtures; not shipped)
 │
-├── frontend   → nginx:alpine multi-stage   (~30MB)
-└── proxy      → nginx:alpine               (~20MB)
+node:20-alpine
+└── build         Vite production build
+    └──           → bnkscope-frontend:latest        nginx-unprivileged
+
+└──                → bnkscope-mcp:latest            read-only MCP tools (optional)
 ```
+
+**No CLI tools in any of them.** Everything bnkscope does against a cluster goes
+through the Python Kubernetes client, so `tofu`, `helm`, `kubectl`, `aws-cli`
+and `oras` — the slowest and most network-flaky layer of the old image — went
+with the pipeline in Phase 1 and the tooling stage in Phase 4. Cloud tokens are
+minted in Python (boto3 SigV4 for EKS, google-auth for GKE).
+
+That is also why an AKS `kubelogin` kubeconfig cannot be adopted: there is no
+Python equivalent, and adding a CLI back would undo this.
 
 ## Build Targets
 
 ```bash
-# Individual targets
-docker build --target api    -t bnk-forge-api    backend/
-docker build --target worker -t bnk-forge-worker backend/
-docker build --target beat   -t bnk-forge-beat   backend/
+./bnkscope up                 # the normal path — builds and starts
 
-# All at once via compose
-docker compose build
-
-# Dev mode (includes pytest, factory-boy, etc.)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+docker build --target api -t bnkscope-api backend/
+docker compose build          # api + frontend
+docker compose --profile mcp build
 ```
 
 ## What Each Image Contains
 
-| Image | Python + App | CLI Tools | Use Case |
-|-------|-------------|-----------|----------|
-| **api** | Yes | Helm, kubectl | FastAPI + Uvicorn HTTP server (Helm/K8s routes need CLI tools) |
-| **worker** | Yes | OpenTofu, Helm, kubectl, AWS CLI, Docker CLI, git | Celery workers executing infrastructure operations |
-| **beat** | Yes | No | Celery beat scheduler (fires cron tasks into Redis) |
+| Image | Contents | Runs as | Binds |
+|---|---|---|---|
+| **api** | Python 3.11 + FastAPI app + SQLite | `bnkforge` (non-root) | `127.0.0.1:8000` — the bind address is the access control |
+| **frontend** | Vite build served by nginx-unprivileged | non-root | `${BNKSCOPE_UI_BIND}:${BNKSCOPE_UI_PORT}`, default `127.0.0.1:8080` |
+| **mcp** | Read-only MCP tool server | non-root | only under `--profile mcp` |
 
 ## Build Args
 
 | Arg | Default | Description |
 |-----|---------|-------------|
-| `BUILD_DEV` | `false` | Include pytest/factory-boy/coverage (for dev compose) |
-| `INSTALL_INFRACOST` | `false` | Include Infracost binary (deprecated in v2, opt-in) |
+| `BUILD_DEV` | `false` | Include pytest/factory-boy/coverage (dev compose) |
+| `DOCKERHUB_PREFIX` | *(empty)* | Pull-through registry mirror prefix. Official images need the `library/` segment through a mirror — `<mirror>/library/node:20-alpine`, not `<mirror>/node:20-alpine`. `./bnkscope up` detects a running cache and sets this. |
 | `TARGETARCH` | `amd64` | Target architecture (auto-set by BuildKit) |
-
-```bash
-# Example: build worker with Infracost
-docker build --target worker --build-arg INSTALL_INFRACOST=true -t bnk-forge-worker backend/
-```
+| `UID` / `GID` | `1000` | Ownership of the app user inside the image |
 
 ## Keyless Image Signing, SBOM, and Provenance
 
@@ -89,7 +89,7 @@ Rekor transparency log entry), and `<digest>` with the image digest.
 ```bash
 # Verify the signature
 cosign verify \
-  ghcr.io/jlcode-tech/bnk-forge-api@<digest> \
+  ghcr.io/jlcode-tech/bnkscope-api@<digest> \
   --certificate-identity <signer-email> \
   --certificate-oidc-issuer https://github.com/login/oauth
 
@@ -98,7 +98,7 @@ cosign verify-attestation \
   --type cyclonedx \
   --certificate-identity <signer-email> \
   --certificate-oidc-issuer https://github.com/login/oauth \
-  ghcr.io/jlcode-tech/bnk-forge-api@<digest> \
+  ghcr.io/jlcode-tech/bnkscope-api@<digest> \
   | jq -r '.payload' | base64 -d | jq .
 
 # Verify + extract the SLSA provenance attestation
@@ -106,13 +106,12 @@ cosign verify-attestation \
   --type slsaprovenance \
   --certificate-identity <signer-email> \
   --certificate-oidc-issuer https://github.com/login/oauth \
-  ghcr.io/jlcode-tech/bnk-forge-api@<digest> \
+  ghcr.io/jlcode-tech/bnkscope-api@<digest> \
   | jq -r '.payload' | base64 -d | jq .
 ```
 
-Apply the same commands to the other image names:
-`bnk-forge-worker`, `bnk-forge-beat`, `bnk-forge-frontend`, `bnk-forge-proxy`,
-`bnk-forge-mcp`.
+Apply the same commands to the other image names: `bnkscope-frontend` and
+`bnkscope-mcp`.
 
 ### OCI Labels
 
@@ -128,7 +127,7 @@ All images carry standard OCI labels injected at build time via `docker-bake.hcl
 Inject `GIT_REVISION` when calling bake:
 
 ```bash
-GIT_REVISION=$(git rev-parse HEAD) REGISTRY=ghcr.io/your-org VERSION=3.1.6 \
+GIT_REVISION=$(git rev-parse HEAD) REGISTRY=ghcr.io/your-org VERSION=0.1.0 \
   docker buildx bake --push
 ```
 
@@ -138,25 +137,22 @@ GIT_REVISION=$(git rev-parse HEAD) REGISTRY=ghcr.io/your-org VERSION=3.1.6 \
 
 ## Supply Chain Security
 
-All CLI tool downloads are pinned by version **and** verified by SHA256 checksum:
+Base images are pinned **by digest**, not by tag — `python:3.11-slim`,
+`node:20-alpine` and `nginxinc/nginx-unprivileged:1.27-alpine` all carry an
+`@sha256:` in the `FROM` line, so a moved tag cannot change what gets built.
 
-| Tool | Version | Checksum Source |
-|------|---------|-----------------|
-| OpenTofu | 1.11.5 | `tofu_1.11.5_SHA256SUMS` from GitHub releases |
-| Helm | 3.20.0 | `.sha256sum` files from `get.helm.sh` |
-| kubectl | 1.32.12 | `.sha256` files from `dl.k8s.io` |
-| Infracost | 0.10.43 | `.sha256` files from GitHub releases |
+There are **no CLI tool downloads left to verify.** The old images fetched
+OpenTofu, Helm, kubectl, the AWS CLI and Infracost during the build, each pinned
+and checksummed; all of it went with the pipeline (Phase 1) and the tooling
+stage (Phase 4). Python packages come from `requirements.txt`, npm from a
+committed `package-lock.json`.
 
-If a download is tampered with, the build fails immediately with a checksum mismatch.
-
-### Updating Tool Versions
-
-When bumping a tool version:
-
-1. Update the `ENV *_VERSION=` line
-2. Download the new checksums from the official release page
-3. Update the `ENV *_SHA256_amd64=` and `ENV *_SHA256_arm64=` lines
-4. Build and test
+That also removes the failure mode [D-035](adr/D-035-docker-netskope-tls-interception.md)
+documents: a TLS-intercepting corporate proxy broke `RUN curl https://github.com/...`
+inside the build, because build containers do not inherit the host trust store.
+With no `curl` of a release binary anywhere in either Dockerfile, the remaining
+exposure is registry and package-index traffic. Keep the ADR: the constraint
+still applies to anything you add back.
 
 ## CI Image Size Gates
 
@@ -164,25 +160,22 @@ CI enforces maximum image sizes to prevent bloat regression:
 
 | Image | Threshold |
 |-------|-----------|
-| api / beat | 600MB |
-| worker | 1200MB |
-| frontend | 100MB |
+| `bnkscope-api:latest` | 700MB |
+| `bnkscope-frontend:latest` | 150MB |
 
-These are checked in the `P4 · Docker Build` CI job. If any image exceeds its threshold, CI fails.
+Checked in the CI Docker build job (`check_size`). If an image exceeds its
+threshold, CI fails.
 
 ## Docker Compose Services
 
 ```yaml
-backend:        build target=api     → bnk-forge-api
-celery-worker:  build target=worker  → bnk-forge-worker
-celery-worker-2:  (reuses bnk-forge-worker image)
-celery-beat:    build target=beat    → bnk-forge-beat
-frontend:       multi-stage nginx build
-proxy:          nginx:alpine (config only)
-postgres:       postgres:16-alpine
-redis:          redis:7-alpine
-postgres-backup: postgres:16-alpine
+backend:   build target=api  → bnkscope-api:latest
+frontend:  multi-stage nginx → bnkscope-frontend:latest
+mcp:       profile: mcp      → bnkscope-mcp:latest      # optional
 ```
+
+Three services, one optional — no database server, message broker, worker pool
+or reverse proxy. Bake targets match: `api`, `frontend`, `mcp`.
 
 ## Networking Modes
 
@@ -194,62 +187,61 @@ Uses `network_mode: host` — all containers share the host's network stack dire
 
 Compose files: `docker-compose.yml`
 
-### Local Mode (macOS / Windows — `make local-deploy`)
+### Local Mode (macOS / Windows — automatic)
 
-Uses Docker's **bridge networking** with explicit port mappings. Containers communicate using Docker DNS service names (`backend`, `redis`, `postgres`) instead of `localhost`. This is required for Docker Desktop because it runs containers inside a Linux VM — `network_mode: host` would bind to the VM's network, not your laptop's.
+Uses Docker's **bridge networking** with explicit port mappings, because
+`network_mode: host` binds inside Docker Desktop's Linux VM rather than on your
+laptop. `./bnkscope up` detects Darwin and WSL2 and layers the overlay for you.
 
-Compose files: `docker-compose.yml` + `docker-compose.local.yml` (overlay)
+Compose files: `docker-compose.yml` + `docker-compose.local.yml`
 
 The local overlay:
-- Removes `network_mode: host` from all services
-- Adds `ports:` mappings (443, 80, 8080, 8000, 5432, 6379)
-- Overrides `DATABASE_URL` / `REDIS_URL` to use Docker DNS names
-- Mounts local nginx configs (`proxy/nginx.local.conf`, `frontend-v2/nginx.local.conf`) that use Docker DNS names instead of `localhost`
+- removes `network_mode: host`
+- publishes to **`127.0.0.1` only** — a bare `8000:8000` would put an
+  unauthenticated API on every interface
+- points nginx at Docker DNS names instead of `localhost`
 
 ### Nginx Config Variants
 
-Each nginx config has a server and local variant:
+| File | Networking | `proxy_pass` target |
+|---|---|---|
+| `frontend-v2/nginx.conf.template` | Host | `localhost:8000` |
 
-| File | Networking | `proxy_pass` targets |
-|------|-----------|---------------------|
-| `proxy/nginx.conf` | Host | `localhost:8000`, `localhost:8080` |
-| `proxy/nginx.local.conf` | Bridge | `backend:8000`, `frontend:8080` |
-| `frontend-v2/nginx.conf` | Host | `localhost:8000` |
-| `frontend-v2/nginx.local.conf` | Bridge | `backend:8000` |
+The template is rendered at container start so `BNKSCOPE_UI_BIND` and
+`BNKSCOPE_UI_PORT` reach the `listen` directive — that is what `--listen`
+actually sets.
 
 ## Dev Workflow
 
-The dev compose overlay (`docker-compose.dev.yml`) adds:
-
-- `BUILD_DEV=true` → installs pytest, factory-boy, coverage, etc.
-- Volume mounts for live code reload
-- Correct targets for each service
+There is no dev compose overlay. Run the suites on the host or in a throwaway
+container:
 
 ```bash
-# Start with dev deps
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-
-# Run tests inside container
-docker exec bnk-forge-backend python -m pytest -q
+make test               # everything
+make test-docker        # the same, in containers — no local venv or Node needed
+make quick-check        # lint + types + openapi/API-doc freshness (~15s)
 ```
 
 ## Layer Caching
 
 ### Local (Colima/Docker Desktop)
 
-Docker caches layers automatically. The tooling stage (~500MB of downloads) only rebuilds when:
-- `Dockerfile` changes above the tooling stage
-- Tool version ENVs change
-- `requirements.txt` changes (invalidates dependencies stage → propagates)
-
-Code-only changes rebuild only the `app-base` stage (fast, <30s).
+Docker caches layers automatically. The `dependencies` stage rebuilds only when
+`requirements.txt` changes; code-only changes rebuild `app-base` alone, which is
+fast. With the CLI-tool downloads gone there is no longer a large, network-flaky
+layer to protect.
 
 ### CI (GitHub Actions)
 
-Uses BuildKit with `type=gha` cache backend. The tooling layer is cached between CI runs, so subsequent builds skip the 500MB tool download entirely.
+Uses BuildKit with the `type=gha` cache backend, so dependency layers are shared
+between runs.
 
 ## Architecture Decisions
 
-- **Why not Alpine?** `psycopg2-binary` has no musl wheel. Building from source requires `gcc + postgresql-dev` (~140MB build deps), negating the ~100MB savings from Alpine's smaller base. The worker image can't use Alpine at all (AWS CLI, Docker CLI require glibc).
-- **Why split at all?** The original monolith image was ~1.2-1.5GB. API and beat containers carried 500MB of CLI tools they never used. Splitting saves ~800MB per API/beat container and reduces attack surface.
+- **Why not Alpine?** Several Python wheels the backend depends on have no musl
+  build, so Alpine would mean compiling from source — more build deps than the
+  smaller base saves.
+- **Why one backend image now?** bnk-forge split api/worker/beat because the
+  worker carried ~500MB of CLI tools the API never used. With no CLI tools and
+  no worker, there is nothing left to split.
 - **Why not lazy-load kubernetes/boto3?** `boto3` is lazy-loaded (only imported when AWS SSO features are used). The `kubernetes` package can't be easily deferred because FastAPI eagerly imports all route modules at startup, and the K8s service class hierarchy requires base classes at definition time.

@@ -18,7 +18,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { alertChannelSchema, type AlertChannelFormData } from '@/schemas';
+import { alertChannelSchema, type AlertChannelFormData } from '@/schemas/alertChannel';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { parseApiError } from '@/lib/error-handler';
@@ -74,10 +74,6 @@ const CHANNEL_TYPES: { value: AlertChannelType; label: string; icon: typeof Webh
 
 const EVENT_TYPES: { value: AlertEventType; label: string; color: string }[] = [
   { value: 'health_change', label: 'Health Change', color: 'text-destructive' },
-  { value: 'drift_detected', label: 'Drift Detected', color: 'text-warning' },
-  { value: 'deploy_success', label: 'Deploy Success', color: 'text-success' },
-  { value: 'deploy_failed', label: 'Deploy Failed', color: 'text-destructive' },
-  { value: 'deploy_started', label: 'Deploy Started', color: 'text-info' },
 ];
 
 const EMPTY_FORM: AlertChannelCreate = {

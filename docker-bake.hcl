@@ -17,11 +17,11 @@ variable "GIT_REVISION" {
   default = "unknown"
 }
 variable "SOURCE_URL" {
-  default = "https://github.com/f5devcentral/bnk-forge"
+  default = "https://github.com/mwiget/bnkscope"
 }
 
 group "default" {
-  targets = ["api", "worker", "beat", "frontend", "proxy", "mcp"]
+  targets = ["api", "frontend", "mcp"]
 }
 
 target "_common" {
@@ -35,34 +35,19 @@ target "_common" {
 }
 
 target "_backend" {
-  inherits = ["_common"]
-  context  = "./backend"
+  inherits   = ["_common"]
+  // Repo root, not ./backend — the VERSION file lives above backend/ and the
+  // image needs it (see backend/Dockerfile). Matches the frontend target.
+  context    = "."
+  dockerfile = "backend/Dockerfile"
 }
 
 target "api" {
   inherits = ["_backend"]
   target   = "api"
   tags = concat(
-    ["${REGISTRY}/bnk-forge-api:${VERSION}"],
-    ROLLING_TAG != "" ? ["${REGISTRY}/bnk-forge-api:${ROLLING_TAG}"] : [],
-  )
-}
-
-target "worker" {
-  inherits = ["_backend"]
-  target   = "worker"
-  tags = concat(
-    ["${REGISTRY}/bnk-forge-worker:${VERSION}"],
-    ROLLING_TAG != "" ? ["${REGISTRY}/bnk-forge-worker:${ROLLING_TAG}"] : [],
-  )
-}
-
-target "beat" {
-  inherits = ["_backend"]
-  target   = "beat"
-  tags = concat(
-    ["${REGISTRY}/bnk-forge-beat:${VERSION}"],
-    ROLLING_TAG != "" ? ["${REGISTRY}/bnk-forge-beat:${ROLLING_TAG}"] : [],
+    ["${REGISTRY}/bnkscope-api:${VERSION}"],
+    ROLLING_TAG != "" ? ["${REGISTRY}/bnkscope-api:${ROLLING_TAG}"] : [],
   )
 }
 
@@ -71,17 +56,8 @@ target "frontend" {
   context    = "."
   dockerfile = "frontend-v2/Dockerfile"
   tags = concat(
-    ["${REGISTRY}/bnk-forge-frontend:${VERSION}"],
-    ROLLING_TAG != "" ? ["${REGISTRY}/bnk-forge-frontend:${ROLLING_TAG}"] : [],
-  )
-}
-
-target "proxy" {
-  inherits = ["_common"]
-  context  = "./proxy"
-  tags = concat(
-    ["${REGISTRY}/bnk-forge-proxy:${VERSION}"],
-    ROLLING_TAG != "" ? ["${REGISTRY}/bnk-forge-proxy:${ROLLING_TAG}"] : [],
+    ["${REGISTRY}/bnkscope-frontend:${VERSION}"],
+    ROLLING_TAG != "" ? ["${REGISTRY}/bnkscope-frontend:${ROLLING_TAG}"] : [],
   )
 }
 
@@ -89,7 +65,8 @@ target "mcp" {
   inherits = ["_common"]
   context  = "./mcp-server"
   tags = concat(
-    ["${REGISTRY}/bnk-forge-mcp:${VERSION}"],
-    ROLLING_TAG != "" ? ["${REGISTRY}/bnk-forge-mcp:${ROLLING_TAG}"] : [],
+    ["${REGISTRY}/bnkscope-mcp:${VERSION}"],
+    ROLLING_TAG != "" ? ["${REGISTRY}/bnkscope-mcp:${ROLLING_TAG}"] : [],
   )
 }
+

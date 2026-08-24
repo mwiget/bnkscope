@@ -3,7 +3,6 @@ OBS-001: Request and Job Correlation Strategy
 
 Provides request-scoped correlation IDs that propagate across:
 - API request → response (X-Request-ID header)
-- API request → Celery tasks (via task headers)
 - API request → audit logs (correlation_id field)
 - API request → structured log lines (request_id in JSON)
 
@@ -96,15 +95,3 @@ class CorrelationLogFilter(logging.Filter):
         return True
 
 
-def get_celery_correlation_headers() -> dict[str, str]:
-    """
-    Get correlation headers to propagate to Celery tasks.
-
-    Usage in task dispatch:
-        from core.correlation import get_celery_correlation_headers
-        task.apply_async(args=[...], headers=get_celery_correlation_headers())
-    """
-    request_id = get_request_id()
-    if request_id:
-        return {"request_id": request_id}
-    return {}

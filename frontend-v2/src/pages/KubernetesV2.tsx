@@ -2,20 +2,17 @@
  * KubernetesV2 — Kubernetes Resource Explorer page
  *
  * FE-002: Decomposed from 1,069-line god-component into thin orchestrator.
- * K8S-UX-004: Helm releases and chart browser integrated into K8s page.
  *
  * Sub-components live in ./kubernetes/:
  *   - K8sSidebar            — category navigation + cluster scan / export buttons
  *   - K8sResourceTable      — table with status logic & per-row action menus
  *   - K8sDetailPanel        — right-side resource detail (metadata, labels, Gateway/HTTPRoute)
  *   - K8sDialogs            — all Suspense-wrapped dialogs + API callbacks
- *   - K8sHelmReleasesTable  — Helm release list for selected cluster
- *   - K8sHelmChartBrowser   — Chart browsing from configured repositories
  *   - k8s-status            — resource status determination logic
  *   - k8s-constants         — resource tree, calculateAge, getStatusColor (pre-existing)
  */
 
-import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,44 +26,41 @@ import {
 import { ResourcePageHeader } from '@/components/layout/ResourcePageHeader';
 import { ResourceExplorerLayout } from '@/components/layout/ResourceExplorerLayout';
 import { ResourceViewTabs } from '@/components/layout/ResourceViewTabs';
+import { ResourceCategorySidebarTrigger } from '@/components/layout/ResourceCategorySidebar';
 import {
   Container,
   Database,
   Server,
   Columns,
   Plus,
-  Package,
-  Library,
   RefreshCw,
+  Cpu,
   LayoutDashboard,
   Wrench,
   ScanSearch,
-  Download,
   SlidersHorizontal,
   MoreVertical,
-  ArrowRightLeft,
 } from 'lucide-react';
-import { useProjectClusters, useClusterNamespaces, useClusterResources, useClusterResourceSummary } from '@/hooks/useK8s';
+import { useClusterNamespaces, useClusterResources, useClusterResourceSummary } from '@/hooks/useK8s';
 import { useAllClusters } from '@/hooks/useK8sClusters';
-import { MigrationPanel } from '@/components/k8s/migration';
-import { useHelmReleases, useUninstallHelmRelease } from '@/hooks/useHelm';
-import { useProjects } from '@/hooks/useProjects';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import { notify, notifyError } from '@/lib/notify';
+import { notify } from '@/lib/notify';
 import type { K8sCluster } from '@/types';
 import { parseApiError } from '@/lib/error-handler';
 import { getPlatformProfileLabel } from '@/lib/platform-context';
 import { SkeletonTable } from '@/components/ui/skeleton-table';
+import { AddClusterDialog } from '@/components/k8s/AddClusterDialog';
+import { ClusterDiscoveryPanel } from '@/components/k8s/ClusterDiscoveryPanel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { useDebounce } from '@/hooks/useDebounce';
-import { useAutoSelectProjectCluster } from '@/hooks/useAutoSelectProjectCluster';
 import { STORAGE_KEYS } from '@/lib/storage-keys';
+import { useSelectedCluster } from '@/hooks/useSelectedCluster';
 import { ConnectivityGate } from '@/components/ConnectivityGate';
 import { DEBOUNCE_MS } from '@/lib/constants';
-import type { K8sResource, HelmRelease } from '@/types';
+import type { K8sResource } from '@/types';
 
 import {
   K8sSidebar,
@@ -74,42 +68,13 @@ import {
   K8sDetailPanel,
   K8sDialogs,
   K8sClusterScanView,
-  K8sHelmReleasesTable,
-  K8sHelmChartBrowser,
-  isHelmResourceType,
+  K8sDpfInfraView,
   isResourceUnhealthy,
   useK8sDialogs,
 } from './kubernetes';
-import type { ResourceAction, HelmAction } from './kubernetes';
+import type { ResourceAction } from './kubernetes';
 
-// Lazy-load Helm dialogs to keep initial bundle small
-const InstallChartDialog = lazy(() =>
-  import('@/components/helm/InstallChartDialog').then((m) => ({ default: m.InstallChartDialog }))
-);
-const UpgradeReleaseDialog = lazy(() =>
-  import('@/components/helm/UpgradeReleaseDialog').then((m) => ({ default: m.UpgradeReleaseDialog }))
-);
-const RollbackReleaseDialog = lazy(() =>
-  import('@/components/helm/RollbackReleaseDialog').then((m) => ({ default: m.RollbackReleaseDialog }))
-);
-const ReleaseDetailPanel = lazy(() =>
-  import('@/components/helm/ReleaseDetailPanel').then((m) => ({ default: m.ReleaseDetailPanel }))
-);
-const RepositoryManagementDialog = lazy(() =>
-  import('@/components/helm/RepositoryManagementDialog').then((m) => ({ default: m.RepositoryManagementDialog }))
-);
 
-// Alert dialog for uninstall confirmation
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 
 // ---------------------------------------------------------------------------
 // Main Component
@@ -118,23 +83,10 @@ import {
 export default function KubernetesV2() {
   const borderDefault = 'border-border';
   const bgCard = 'bg-card';
-  const { data: projects } = useProjects();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // ── Selection State (persisted to localStorage) ────────────────────────
-  // ?project=<id> in the URL wins over localStorage so deep links from other
-  // pages (e.g. project detail's "Go to Kubernetes Page") set the right scope.
-  const [selectedProject, setSelectedProject] = useState<number | null>(() => {
-    const fromUrl = searchParams.get('project');
-    if (fromUrl) {
-      const parsed = parseInt(fromUrl);
-      if (!Number.isNaN(parsed)) return parsed;
-    }
-    const stored = localStorage.getItem(STORAGE_KEYS.K8S_PROJECT);
-    return stored ? parseInt(stored) : null;
-  });
-
   // Strip ?project= once it's been consumed so refresh/back doesn't keep
   // re-asserting the param after the user picks a different project.
   useEffect(() => {
@@ -145,10 +97,7 @@ export default function KubernetesV2() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
-    const stored = localStorage.getItem(STORAGE_KEYS.K8S_CLUSTER);
-    return stored ? parseInt(stored) : null;
-  });
+  const [selectedCluster, setSelectedCluster] = useSelectedCluster();
   const [selectedResourceType, setSelectedResourceType] = useState<string>(() => {
     return localStorage.getItem(STORAGE_KEYS.K8S_RESOURCE_TYPE) || 'pod';
   });
@@ -177,9 +126,9 @@ export default function KubernetesV2() {
   // View mode — "dashboard" shows the BNK-deployment-focused scan view as the
   // default landing. "advanced" shows the generic resource browser (sidebar
   // tree + table). "migration" shows the proxy/CIS migration surface.
-  const [viewMode, setViewMode] = useState<'dashboard' | 'advanced' | 'migration'>(() => {
+  const [viewMode, setViewMode] = useState<'dashboard' | 'advanced' | 'dpf'>(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.K8S_VIEW_MODE);
-    if (stored === 'advanced' || stored === 'migration') return stored;
+    if (stored === 'advanced') return stored;
     return 'dashboard';
   });
 
@@ -187,38 +136,17 @@ export default function KubernetesV2() {
   const [expandedCategories, setExpandedCategories] = useState(['Workloads', 'Networking']);
   const [detailedView, setDetailedView] = useState(true);
   const [showClusterScan, setShowClusterScan] = useState(false);
+  const [showAddCluster, setShowAddCluster] = useState(false);
+  // Below `lg` the category tree is a drawer rather than a column.
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
   // DPF Infrastructure removed from K8s page — lives in Fleet only
 
-  // ── Helm State (K8S-UX-004) ────────────────────────────────────────────
-  const [selectedHelmRelease, setSelectedHelmRelease] = useState<HelmRelease | null>(null);
-  const [showHelmInstall, setShowHelmInstall] = useState(false);
-  const [showHelmUpgrade, setShowHelmUpgrade] = useState(false);
-  const [showHelmRollback, setShowHelmRollback] = useState(false);
-  const [showHelmUninstall, setShowHelmUninstall] = useState(false);
-  const [showRepoDialog, setShowRepoDialog] = useState(false);
-  const [preselectedChart, setPreselectedChart] = useState<{ name: string; version: string } | null>(null);
 
-  const isHelmView = isHelmResourceType(selectedResourceType);
 
   // ── Dialog State (managed by useK8sDialogs hook) ───────────────────────
   const { state: dialogState, handleAction: handleDialogAction, openCreateDialog, setDialogOpen } = useK8sDialogs();
 
   // ── Persist selections to localStorage ─────────────────────────────────
-  useEffect(() => {
-    if (selectedProject !== null) {
-      localStorage.setItem(STORAGE_KEYS.K8S_PROJECT, selectedProject.toString());
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.K8S_PROJECT);
-    }
-  }, [selectedProject]);
-
-  useEffect(() => {
-    if (selectedCluster !== null) {
-      localStorage.setItem(STORAGE_KEYS.K8S_CLUSTER, selectedCluster.toString());
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.K8S_CLUSTER);
-    }
-  }, [selectedCluster]);
 
   // Persist the selected resource type (same across clusters — Pods is Pods).
   useEffect(() => {
@@ -234,6 +162,7 @@ export default function KubernetesV2() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.K8S_VIEW_MODE, viewMode);
   }, [viewMode]);
+
 
   // Persist namespace per cluster. "default on cluster A, kube-system on B"
   // survives cluster switching without leaking a nonexistent namespace.
@@ -261,54 +190,45 @@ export default function KubernetesV2() {
   }, [selectedCluster]);
 
   // ── Data Fetching ──────────────────────────────────────────────────────
-  const { data: clusters, isError: clustersError, error: clustersErrorData, refetch: refetchClusters } = useProjectClusters(selectedProject ?? 0, {
-    pollingEnabled: false,
-  });
-  const { data: allClustersResponse } = useAllClusters();
-  const allClusters = useMemo(() => allClustersResponse?.clusters ?? [], [allClustersResponse?.clusters]);
+  // Clusters are a flat list now (bnkscope Phase 1) — no project scoping.
+  const {
+    data: allClustersResponse,
+    isError: clustersError,
+    error: clustersErrorData,
+    isLoading: isClustersLoading,
+    refetch: refetchClusters,
+  } = useAllClusters();
+  const clusters = useMemo(() => allClustersResponse?.clusters ?? [], [allClustersResponse?.clusters]);
+  const visibleClusters = clusters;
 
-  // Auto-resolve project from cluster (e.g. navigating from Fleet with only cluster ID)
-  useEffect(() => {
-    if (selectedCluster && !selectedProject && allClusters.length > 0) {
-      const match = allClusters.find((c: K8sCluster) => c.id === selectedCluster);
-      if (match?.project_id) {
-        setSelectedProject(match.project_id);
-      }
-    }
-  }, [selectedCluster, selectedProject, allClusters]);
+  // Recorded by discovery when it finds the DPF operator on this cluster.
+  const selectedClusterHasDpf = Boolean(
+    clusters.find((c) => c.id === selectedCluster)?.meta_data?.has_dpf,
+  );
 
-  // Auto-select a cluster when a project is in scope and either no cluster
-  // is selected yet, or the previously stored selection isn't in this
-  // project's cluster list. If the project has exactly one cluster, pick
-  // it; otherwise pick the first one. The user can still change it via the
-  // dropdown — this just removes the dead state where a project page
-  // lands with a cluster dropdown that needs manual selection.
+  // The right landing view depends on which cluster you picked. DPF runs on
+  // the infrastructure cluster; BNK runs on the Kamaji tenant. Landing a DPF
+  // cluster on the BNK readiness Dashboard shows a scan for a deployment that
+  // is not going to happen there, and the Dashboard tab is hidden on those
+  // clusters for the same reason — so leaving viewMode on 'dashboard' would
+  // also strand you on a tab that is no longer offered.
+  //
+  // 'advanced' is left alone in both directions: it is the one view that means
+  // the same thing everywhere, and picking it is an explicit choice.
   useEffect(() => {
-    if (!selectedProject) return;
-    const projectClusters = clusters ?? [];
-    if (projectClusters.length === 0) return;
+    if (viewMode === 'advanced') return;
+    if (selectedClusterHasDpf && viewMode !== 'dpf') setViewMode('dpf');
+    if (!selectedClusterHasDpf && viewMode === 'dpf') setViewMode('dashboard');
+  }, [selectedCluster, selectedClusterHasDpf, viewMode]);
+
+  // Select the first cluster when nothing valid is selected yet.
+  useEffect(() => {
+    if (clusters.length === 0) return;
     const stillValid = selectedCluster
-      ? projectClusters.some((c: K8sCluster) => c.id === selectedCluster)
+      ? clusters.some((c: K8sCluster) => c.id === selectedCluster)
       : false;
-    if (!stillValid) {
-      setSelectedCluster(projectClusters[0].id);
-    }
-  }, [selectedProject, clusters, selectedCluster]);
-  const visibleClusters = useMemo(() => {
-    if (!selectedProject) return clusters ?? [];
-    if ((clusters ?? []).length > 0) return clusters ?? [];
-    return allClusters.filter((cluster: K8sCluster) => cluster.project_id === selectedProject);
-  }, [selectedProject, clusters, allClusters]);
-
-  useAutoSelectProjectCluster({
-    projects,
-    allClusters,
-    visibleClusters,
-    selectedProject,
-    selectedCluster,
-    setSelectedProject,
-    setSelectedCluster,
-  });
+    if (!stillValid) setSelectedCluster(clusters[0].id);
+  }, [clusters, selectedCluster, setSelectedCluster]);
 
   const { data: namespacesResponse, isLoading: isNamespacesLoading, error: namespacesError } = useClusterNamespaces(selectedCluster ?? 0, {
     enabled: !!selectedCluster,
@@ -330,13 +250,13 @@ export default function KubernetesV2() {
     }
   }, [namespaces, selectedNamespace]);
 
-  // K8s resource fetching (disabled for Helm views)
+  // K8s resource fetching
   const { data: resourcesData, isFetching: isRefreshing, isLoading: isResourcesLoading, fetchStatus: resourcesFetchStatus } = useClusterResources(
     selectedCluster ?? 0,
     selectedResourceType,
     { namespace: selectedNamespace === 'all' ? undefined : selectedNamespace },
     {
-      enabled: !!selectedCluster && !!selectedResourceType && !isHelmView,
+      enabled: !!selectedCluster && !!selectedResourceType,
       pollingEnabled: false,
     }
   );
@@ -348,28 +268,10 @@ export default function KubernetesV2() {
   const { data: resourceSummaryData, isLoading: isResourceSummaryLoading } = useClusterResourceSummary(
     selectedCluster ?? 0,
     selectedNamespace === 'all' ? undefined : selectedNamespace,
-    { enabled: !!selectedCluster && !isHelmView }
+    { enabled: !!selectedCluster }
   );
   const resourceSummary = resourceSummaryData?.summary;
 
-  // Helm release fetching (only when helmrelease selected)
-  const {
-    data: helmReleasesData,
-    isLoading: isLoadingHelmReleases,
-    fetchStatus: helmFetchStatus,
-    isError: isHelmError,
-    error: helmError,
-    refetch: refetchHelm,
-  } = useHelmReleases(
-    selectedCluster,
-    undefined, // all namespaces
-    true,
-    { enabled: !!selectedCluster && selectedResourceType === 'helmrelease' }
-  );
-  const helmReleases = useMemo(() => helmReleasesData?.releases || [], [helmReleasesData?.releases]);
-
-  // Helm uninstall mutation
-  const uninstallMutation = useUninstallHelmRelease();
 
   const { data: nodeCount = 0 } = useQuery({
     queryKey: ['k8s', 'clusters', selectedCluster, 'node-count'],
@@ -399,17 +301,6 @@ export default function KubernetesV2() {
     [resources, debouncedSearchQuery, showOnlyUnhealthy, selectedResourceType]
   );
 
-  // Filter helm releases by search query
-  const filteredHelmReleases = useMemo(
-    () =>
-      helmReleases.filter((r) =>
-        !debouncedSearchQuery ||
-        r.name?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-        r.chart?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-        r.namespace?.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
-      ),
-    [helmReleases, debouncedSearchQuery]
-  );
 
   const selectedClusterData = useMemo(
     () => visibleClusters.find((c: K8sCluster) => c.id === selectedCluster) ?? null,
@@ -488,41 +379,12 @@ export default function KubernetesV2() {
     if (!selectedCluster) return;
     // The toolbar shows the refetch via isRefreshing (isFetching) — no toast needed.
     await queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] });
-    if (isHelmView) {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.helm.releases.byCluster(selectedCluster) });
-    }
   };
 
-  const handleExportConfig = async () => {
-    if (!selectedCluster) return;
-    try {
-      const blob = await api.exportClusterConfig(selectedCluster);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const clusterName =
-        visibleClusters.find((c: K8sCluster) => c.id === selectedCluster)?.name || `cluster-${selectedCluster}`;
-      a.download = `bnk-config-${clusterName}-${new Date().toISOString().slice(0, 10)}.yaml`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch {
-      notify.error('Failed to export Kubernetes config', undefined, { category: 'cluster' });
-    }
-  };
 
   const handleSelectResourceType = (type: string) => {
     setSelectedResourceType(type);
     setShowClusterScan(false);
-    // Clear K8s resource selection when switching to Helm
-    if (isHelmResourceType(type)) {
-      setSelectedResource(null);
-    }
-    // Clear Helm selection when switching to K8s
-    if (!isHelmResourceType(type)) {
-      setSelectedHelmRelease(null);
-    }
   };
 
   /** Unified action handler for K8s resources — delegates restart inline, everything else to dialogs */
@@ -566,51 +428,9 @@ export default function KubernetesV2() {
     [selectedCluster, queryClient, handleDialogAction, nodeOperationsDisabledReason, ingressMutationBoundaryNotice]
   );
 
-  /** Helm action handler */
-  const handleHelmAction = useCallback((action: HelmAction) => {
-    setSelectedHelmRelease(action.release);
-    switch (action.type) {
-      case 'view':
-        // Just select it — detail panel opens automatically
-        break;
-      case 'upgrade':
-        setShowHelmUpgrade(true);
-        break;
-      case 'rollback':
-        setShowHelmRollback(true);
-        break;
-      case 'uninstall':
-        setShowHelmUninstall(true);
-        break;
-    }
-  }, []);
-
-  const handleHelmInstallChart = useCallback((chart: { name: string; version: string }) => {
-    setPreselectedChart(chart);
-    setShowHelmInstall(true);
-  }, []);
-
-  const confirmHelmUninstall = async () => {
-    if (!selectedHelmRelease || !selectedCluster) return;
-    try {
-      await uninstallMutation.mutateAsync({
-        clusterId: selectedCluster,
-        releaseName: selectedHelmRelease.name,
-        namespace: selectedHelmRelease.namespace,
-      });
-      notify.success(`Uninstall of "${selectedHelmRelease.name}" queued — refresh the Releases tab in ~30s to confirm`, undefined, { category: 'cluster' });
-      setShowHelmUninstall(false);
-      setSelectedHelmRelease(null);
-    } catch (error) {
-      const errMsg = parseApiError(error);
-      notify.error('Failed to uninstall release', errMsg.message, { category: 'cluster' });
-    }
-  };
 
   // ── Content count for header ───────────────────────────────────────────
-  const contentCount = isHelmView
-    ? (selectedResourceType === 'helmrelease' ? filteredHelmReleases.length : 0)
-    : filteredResources.length;
+  const contentCount = filteredResources.length;
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -619,12 +439,6 @@ export default function KubernetesV2() {
       <ResourcePageHeader
         title="Kubernetes"
         subtitle="Browse, inspect, and manage resources across your clusters"
-        projects={projects}
-        selectedProjectId={selectedProject}
-        onProjectChange={(id) => {
-          setSelectedProject(id);
-          setSelectedCluster(null);
-        }}
         clusters={visibleClusters}
         selectedClusterId={selectedCluster}
         onClusterChange={setSelectedCluster}
@@ -634,7 +448,15 @@ export default function KubernetesV2() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onRefresh={handleRefresh}
-        isRefreshing={isRefreshing || isLoadingHelmReleases}
+        isRefreshing={isRefreshing}
+        leading={
+          viewMode === 'advanced' ? (
+            <ResourceCategorySidebarTrigger
+              label="Resources"
+              onClick={() => setCategoriesOpen(true)}
+            />
+          ) : undefined
+        }
       >
         <div className="flex items-center gap-4 px-4 py-1.5 rounded-lg text-xs hidden md:flex bg-muted/50">
           <div className="flex items-center gap-1.5">
@@ -646,7 +468,7 @@ export default function KubernetesV2() {
           <div className="flex items-center gap-1.5">
             <Container className="h-3.5 w-3.5 text-primary" />
             <span className="text-muted-foreground">
-              {contentCount} {isHelmView ? 'releases' : 'resources'}
+              {contentCount} resources
             </span>
           </div>
         </div>
@@ -693,7 +515,7 @@ export default function KubernetesV2() {
           </DropdownMenu>
         )}
 
-        {/* Overflow actions — Cluster Scan + Export Config (D-020 relocation). */}
+        {/* Overflow actions — Cluster Scan (D-020 relocation). */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -716,26 +538,38 @@ export default function KubernetesV2() {
                 Cluster Scan
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onClick={handleExportConfig} disabled={!selectedCluster}>
-              <Download className="mr-2 h-4 w-4" />
-              Export Config
+            {/* Reachable whether or not clusters exist. The discovery panel is
+                the empty-state landing, but adding a *second* cluster needs a
+                way in too — and this is also the only route to the manual
+                kubeconfig form for a cluster that is not in ~/.kube/config. */}
+            <DropdownMenuItem onClick={() => setShowAddCluster(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add cluster
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </ResourcePageHeader>
 
-      {/* View-mode tab strip — Dashboard (BNK readiness) | Advanced (raw
-          browser) | Migration (proxy/CIS migration). Shared ResourceViewTabs
-          idiom, identical to F5 BNK/CNF. */}
+      <AddClusterDialog open={showAddCluster} onOpenChange={setShowAddCluster} />
+
+      {/* View-mode tab strip. DPF only appears on a cluster that actually runs
+          the DPF operator — that is the *infra* cluster, a different one from
+          the Kamaji tenant BNK lives on, so offering the tab everywhere would
+          be an empty panel on most clusters. */}
       {selectedCluster && (
         <ResourceViewTabs
           aria-label="Kubernetes view mode"
           active={viewMode}
-          onChange={(key) => setViewMode(key as 'dashboard' | 'advanced' | 'migration')}
+          onChange={(key) => setViewMode(key as 'dashboard' | 'advanced' | 'dpf')}
           tabs={[
-            { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, title: 'BNK-focused deployment dashboard' },
+            // Dashboard is BNK readiness, which a DPF infrastructure cluster
+            // is not a candidate for — so it gives way to DPF there rather
+            // than sitting alongside it reporting on a deployment that
+            // belongs on the tenant cluster.
+            ...(selectedClusterHasDpf
+              ? [{ key: 'dpf', label: 'DPF', icon: Cpu, title: 'NVIDIA DPF infrastructure — DPUs, BFB images, DPUSets' }]
+              : [{ key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, title: 'BNK readiness and health' }]),
             { key: 'advanced', label: 'Advanced', icon: Wrench, title: 'Generic Kubernetes resource browser for troubleshooting' },
-            { key: 'migration', label: 'Migration', icon: ArrowRightLeft, title: 'Migrate existing proxies / classic BIG-IP (CIS) to BNK' },
           ]}
         />
       )}
@@ -746,6 +580,8 @@ export default function KubernetesV2() {
             readiness view spans full width (no category tree needed). */}
         {viewMode === 'advanced' && (
           <K8sSidebar
+            open={categoriesOpen}
+            onOpenChange={setCategoriesOpen}
             clusterId={selectedCluster}
             selectedResourceType={selectedResourceType}
             onSelectResourceType={handleSelectResourceType}
@@ -759,47 +595,39 @@ export default function KubernetesV2() {
           />
         )}
 
-        {/* Middle: Resource Table / Helm Releases / Chart Browser / Empty/Scan View */}
+        {/* Middle: Resource Table / Empty / Scan View */}
         <ResourceExplorerLayout.Content
           className="flex flex-col bg-muted/30"
         >
           {clustersError ? (
             <ErrorState error={clustersErrorData} onRetry={refetchClusters} />
+          ) : !isClustersLoading && clusters.length === 0 ? (
+            /* Nothing registered yet. Showing the discovery panel rather than
+               an empty state is the point of Phase 5: on a machine that talks
+               to these clusters, "no clusters" is almost always "not adopted
+               yet", and the fix is one click away rather than a form.
+               Gated on isLoading: the list is empty for a moment on every
+               mount, and flashing a kubeconfig sweep during that moment both
+               looks broken and costs a real probe of every context. */
+            <div className="overflow-y-auto p-6">
+              <ClusterDiscoveryPanel />
+            </div>
           ) : !selectedCluster ? (
             <EmptyState
               icon={Server}
               title="No cluster selected"
               description="Select a cluster from the dropdown above to view and manage Kubernetes resources"
-              action={{
-                label: 'Auto-detect Kubernetes Clusters',
-                onClick: async () => {
-                  if (!selectedProject) return;
-                  try {
-                    const data = await api.detectEKSClusters(selectedProject);
-                    queryClient.invalidateQueries({
-                      queryKey: queryKeys.k8s.clusters.byProject(selectedProject),
-                    });
-                    notify.success(
-                      data.registered?.length
-                        ? `Found ${data.registered.length} cluster(s)`
-                        : 'No new clusters found',
-                      undefined,
-                      { category: 'system' },
-                    );
-                  } catch (error) {
-                    notifyError(error, 'detecting clusters');
-                  }
-                },
-              }}
             />
-          ) : viewMode === 'migration' ? (
-            /* Migration mode: proxy/CIS migration surface (D-022 P6 Slice A).
-               Canonical single location for migration — removed from Fleet page
-               and from scan-results page. clusterId is non-null here because
-               the !selectedCluster branch above renders EmptyState first. */
-            <div className="p-6 space-y-6">
-              <MigrationPanel clusterId={selectedCluster} />
-            </div>
+          ) : viewMode === 'dpf' ? (
+            <ConnectivityGate
+              target={{
+                type: 'cluster',
+                id: selectedCluster,
+                displayName: clusters?.find((c) => c.id === selectedCluster)?.name,
+              }}
+            >
+              <K8sDpfInfraView clusterId={selectedCluster} />
+            </ConnectivityGate>
           ) : viewMode === 'dashboard' || showClusterScan ? (
             /* Dashboard mode: BNK-deployment-focused scan view. Always the
                default landing when a cluster is selected, unless the user
@@ -815,94 +643,6 @@ export default function KubernetesV2() {
                 clusterId={selectedCluster}
                 clusterName={clusters?.find((c) => c.id === selectedCluster)?.name}
               />
-            </ConnectivityGate>
-          ) : selectedResourceType === 'helmcharts' ? (
-            /* ── Chart Browser View ─────────────────────────────────── */
-            <K8sHelmChartBrowser
-              onInstallChart={handleHelmInstallChart}
-              onManageRepos={() => setShowRepoDialog(true)}
-            />
-          ) : selectedResourceType === 'helmrelease' ? (
-            /* ── Helm Releases View ─────────────────────────────────── */
-            <ConnectivityGate
-              target={{
-                type: 'cluster',
-                id: selectedCluster,
-                displayName: clusters?.find((c) => c.id === selectedCluster)?.name,
-              }}
-            >
-              {/* Toolbar */}
-              <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-semibold">
-                    Helm Releases{' '}
-                    <span className="text-muted-foreground">
-                      ({filteredHelmReleases.length})
-                    </span>
-                  </h2>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={() => setShowRepoDialog(true)}
-                  >
-                    <Library className="h-3.5 w-3.5 mr-1.5" />
-                    Repos
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="h-8"
-                    onClick={() => {
-                      setPreselectedChart(null);
-                      setShowHelmInstall(true);
-                    }}
-                    disabled={!selectedCluster}
-                  >
-                    <Plus className="h-3.5 w-3.5 mr-1.5" />
-                    Install Chart
-                  </Button>
-                </div>
-              </div>
-
-              {/* Content Area */}
-              {isLoadingHelmReleases && helmFetchStatus === 'fetching' ? (
-                <div className="flex-1 overflow-auto p-4 space-y-4">
-                  <div className="flex items-center gap-3 rounded-md border border-info/20 bg-info/5 px-4 py-3">
-                    <RefreshCw className="h-4 w-4 text-info animate-spin shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium text-info">Fetching Helm releases...</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">Querying Helm release data from cluster</p>
-                    </div>
-                  </div>
-                  <SkeletonTable rows={6} columns={7} />
-                </div>
-              ) : isHelmError ? (
-                <ErrorState error={helmError} onRetry={refetchHelm} />
-              ) : filteredHelmReleases.length === 0 ? (
-                <EmptyState
-                  icon={Package}
-                  title={searchQuery ? 'No matching releases' : 'No Helm releases'}
-                  description={
-                    searchQuery
-                      ? `No releases match "${searchQuery}"`
-                      : 'Install your first Helm chart to get started'
-                  }
-                  action={
-                    searchQuery
-                      ? { label: 'Clear Search', onClick: () => setSearchQuery(''), variant: 'outline' as const }
-                      : { label: 'Install Chart', onClick: () => { setPreselectedChart(null); setShowHelmInstall(true); } }
-                  }
-                />
-              ) : (
-                <K8sHelmReleasesTable
-                  releases={filteredHelmReleases}
-                  selectedRelease={selectedHelmRelease}
-                  onAction={handleHelmAction}
-                  borderDefault={borderDefault}
-                />
-              )}
             </ConnectivityGate>
           ) : (
             /* ── Standard K8s Resource View ──────────────────────────── */
@@ -1075,23 +815,13 @@ export default function KubernetesV2() {
           )}
         </ResourceExplorerLayout.Content>
 
-        {/* Right Panel: Resource Details OR Helm Release Details */}
-        {selectedResourceType === 'helmrelease' && selectedHelmRelease ? (
-          <ResourceExplorerLayout.DetailPanel open={true} className={bgCard}>
-            <Suspense fallback={null}>
-              <ReleaseDetailPanel
-                clusterId={selectedCluster!}
-                releaseName={selectedHelmRelease.name}
-                releaseNamespace={selectedHelmRelease.namespace}
-                onClose={() => setSelectedHelmRelease(null)}
-                onUpgrade={() => setShowHelmUpgrade(true)}
-                onRollback={() => setShowHelmRollback(true)}
-                onUninstall={() => setShowHelmUninstall(true)}
-              />
-            </Suspense>
-          </ResourceExplorerLayout.DetailPanel>
-        ) : (
-          <ResourceExplorerLayout.DetailPanel open={!!selectedResource} className={bgCard}>
+        {/* Right Panel: Resource Details */}
+          <ResourceExplorerLayout.DetailPanel
+            open={!!selectedResource}
+            onOpenChange={(next) => !next && setSelectedResource(null)}
+            label="Resource details"
+            className={bgCard}
+          >
             {selectedResource && (
                 <K8sDetailPanel
                   resource={selectedResource}
@@ -1103,7 +833,6 @@ export default function KubernetesV2() {
                 />
             )}
           </ResourceExplorerLayout.DetailPanel>
-        )}
       </ResourceExplorerLayout.Body>
 
       {/* K8s Dialogs */}
@@ -1121,71 +850,6 @@ export default function KubernetesV2() {
         onResourceDeleted={() => setSelectedResource(null)}
       />
 
-      {/* Helm Dialogs (K8S-UX-004) */}
-      <Suspense fallback={null}>
-        {selectedCluster && (
-          <InstallChartDialog
-            open={showHelmInstall}
-            onOpenChange={(open) => {
-              setShowHelmInstall(open);
-              if (!open) setPreselectedChart(null);
-            }}
-            clusterId={selectedCluster}
-            selectedChart={preselectedChart ?? undefined}
-          />
-        )}
-
-        {selectedCluster && selectedHelmRelease && (
-          <>
-            <UpgradeReleaseDialog
-              open={showHelmUpgrade}
-              onOpenChange={setShowHelmUpgrade}
-              clusterId={selectedCluster}
-              releaseName={selectedHelmRelease.name}
-              releaseNamespace={selectedHelmRelease.namespace}
-              currentChart={selectedHelmRelease.chart}
-              currentVersion={selectedHelmRelease.revision?.toString()}
-            />
-            <RollbackReleaseDialog
-              open={showHelmRollback}
-              onOpenChange={setShowHelmRollback}
-              clusterId={selectedCluster}
-              releaseName={selectedHelmRelease.name}
-              releaseNamespace={selectedHelmRelease.namespace}
-              currentRevision={parseInt(selectedHelmRelease.revision?.toString() || '1')}
-            />
-          </>
-        )}
-
-        <RepositoryManagementDialog
-          open={showRepoDialog}
-          onOpenChange={setShowRepoDialog}
-        />
-      </Suspense>
-
-      {/* Helm Uninstall Confirmation */}
-      <AlertDialog open={showHelmUninstall} onOpenChange={setShowHelmUninstall}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Uninstall Helm Release?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to uninstall{' '}
-              <code className="font-mono font-semibold">{selectedHelmRelease?.name}</code>?
-              This will delete all resources associated with this release. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={uninstallMutation.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmHelmUninstall}
-              disabled={uninstallMutation.isPending}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {uninstallMutation.isPending ? 'Uninstalling...' : 'Uninstall'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </ResourceExplorerLayout>
   );
 }

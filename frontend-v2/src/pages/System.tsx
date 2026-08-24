@@ -6,14 +6,12 @@
  * two state pills (Light / Dark).
  */
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import PerformanceMonitor from '@/components/settings/PerformanceMonitor';
 import DatabaseManagement from '@/components/settings/DatabaseManagement';
-import ContainerManagement from '@/components/settings/ContainerManagement';
 import SystemDefaults from '@/components/settings/SystemDefaults';
 import SystemUpgrade from '@/components/settings/SystemUpgrade';
-import AuditLog from '@/components/settings/AuditLog';
 import { AlertChannels } from '@/components/settings/AlertChannels';
 import { BackupPanel } from '@/components/settings/BackupPanel';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
@@ -30,7 +28,6 @@ import {
   Sun,
   Monitor,
   Settings2,
-  ScrollText,
   Bell,
   HardDrive,
 } from 'lucide-react';
@@ -38,15 +35,8 @@ import { useUIStore } from '@/stores/uiStore';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { usePageRefresh } from '@/hooks/usePageRefresh';
 
-// Old /system?tab=... URLs that now live under /catalog.
-const URL_TAB_REDIRECTS: Record<string, string> = {
-  'bluefield-images': '/catalog?tab=bfb-images',
-  'bf-conf-templates': '/catalog?tab=bf-conf-templates',
-  'module-library': '/catalog?tab=module-library',
-  'helm-repos': '/catalog?tab=helm-repos',
-};
 
-const VALID_TABS = ['monitor', 'audit', 'alerts', 'defaults', 'appearance', 'backup'] as const;
+const VALID_TABS = ['monitor', 'alerts', 'defaults', 'appearance', 'backup'] as const;
 
 export default function System() {
   const { theme, setTheme } = useUIStore();
@@ -56,11 +46,6 @@ export default function System() {
   const initialTab = urlTab && (VALID_TABS as readonly string[]).includes(urlTab) ? urlTab : 'monitor';
   const [activeTab, setActiveTab] = useState(initialTab);
 
-  useEffect(() => {
-    if (urlTab && URL_TAB_REDIRECTS[urlTab]) {
-      window.location.replace(URL_TAB_REDIRECTS[urlTab]);
-    }
-  }, [urlTab]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
@@ -77,7 +62,7 @@ export default function System() {
       {/* Header */}
       <PageHeader
         title="System Administration"
-        subtitle="Monitor system health, audit activity, and configure application settings."
+        subtitle="Monitor system health and configure application settings."
         onRefresh={refresh}
         isRefreshing={isRefreshing}
       />
@@ -90,7 +75,6 @@ export default function System() {
           onChange={handleTabChange}
           tabs={[
             { key: 'monitor', label: 'System Monitor', icon: Monitor },
-            { key: 'audit', label: 'Audit Log', icon: ScrollText },
             { key: 'alerts', label: 'Alerts', icon: Bell },
             { key: 'defaults', label: 'Defaults', icon: Settings2 },
             { key: 'appearance', label: 'Appearance', icon: Palette },
@@ -102,11 +86,6 @@ export default function System() {
           <SystemUpgrade />
           <PerformanceMonitor />
           <DatabaseManagement />
-          <ContainerManagement />
-        </TabsContent>
-
-        <TabsContent value="audit" className="mt-6">
-          <AuditLog />
         </TabsContent>
 
         <TabsContent value="alerts" className="mt-6">

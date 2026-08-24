@@ -8,8 +8,10 @@ import { render, screen } from '@/test/test-utils';
 import { YamlEditor } from '../YamlEditor';
 
 // Mock Monaco editor
-vi.mock('@monaco-editor/react', () => ({
-  Editor: ({ value, onChange }: { value: string; onChange?: (v: string) => void }) => (
+// Monaco itself is behind a dynamic import now (Phase 6 took it out of the
+// initial payload), so the seam to stub is the wrapper, not the library.
+vi.mock('../MonacoEditor', () => ({
+  MonacoEditor: ({ value, onChange }: { value: string; onChange?: (v: string) => void }) => (
     <textarea
       data-testid="mock-editor"
       value={value}

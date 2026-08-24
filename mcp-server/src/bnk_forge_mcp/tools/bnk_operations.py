@@ -15,7 +15,6 @@ from mcp.server.fastmcp import FastMCP
 
 from ..client import BNKForgeClient
 
-
 def register(mcp: FastMCP, client: BNKForgeClient) -> None:
     """Register F5 BNK operations tools with the MCP server."""
 
@@ -120,30 +119,6 @@ def register(mcp: FastMCP, client: BNKForgeClient) -> None:
         return json.dumps(result, indent=2)
 
     @mcp.tool()
-    async def tmm_exec_command(
-        cluster_id: int,
-        pod_name: str,
-        command: str,
-        namespace: str = "",
-    ) -> str:
-        """Execute a debug command in a TMM pod's debug sidecar.
-
-        Supported commands include tmctl, configview, bdt_cli, and raw shell commands.
-        Executes in the debug container, not the main TMM container.
-
-        Args:
-            cluster_id: The cluster ID
-            pod_name: TMM pod name
-            command: Command to execute (e.g. "tmctl -a virtual_server_stat", "configview list")
-            namespace: Pod namespace (auto-detected if empty)
-        """
-        body: dict[str, Any] = {"pod_name": pod_name, "command": command}
-        if namespace:
-            body["namespace"] = namespace
-        result = await client.post(f"/api/k8s/clusters/{cluster_id}/tmm-debug/exec", json=body)
-        return json.dumps(result, indent=2)
-
-    @mcp.tool()
     async def tmm_configview(
         cluster_id: int,
         pod_name: str,
@@ -167,154 +142,6 @@ def register(mcp: FastMCP, client: BNKForgeClient) -> None:
     # ------------------------------------------------------------------
     # BNK Upgrades
     # ------------------------------------------------------------------
-
-    @mcp.tool()
-    async def bnk_current_version(cluster_id: int) -> str:
-        """Get the currently installed BNK version on a cluster.
-
-        Args:
-            cluster_id: The cluster ID
-        """
-        result = await client.get(f"/api/k8s/clusters/{cluster_id}/bnk/upgrade/current")
-        return json.dumps(result, indent=2)
-
-    @mcp.tool()
-    async def bnk_available_versions(cluster_id: int) -> str:
-        """List available BNK upgrade versions for a cluster.
-
-        Args:
-            cluster_id: The cluster ID
-        """
-        result = await client.get(f"/api/k8s/clusters/{cluster_id}/bnk/upgrade/versions")
-        return json.dumps(result, indent=2)
-
-    @mcp.tool()
-    async def bnk_upgrade_plan(cluster_id: int, target_version: str) -> str:
-        """Create an upgrade plan for a BNK cluster.
-
-        Analyzes the current state and produces a step-by-step plan with
-        pre-checks, upgrade steps, and rollback instructions.
-
-        Args:
-            cluster_id: The cluster ID
-            target_version: The target BNK version to upgrade to
-        """
-        result = await client.post(
-            f"/api/k8s/clusters/{cluster_id}/bnk/upgrade/plan",
-            json={"target_version": target_version},
-        )
-        return json.dumps(result, indent=2)
-
-    @mcp.tool()
-    async def bnk_upgrade_execute(cluster_id: int, upgrade_id: int) -> str:
-        """Execute a BNK upgrade on a cluster.
-
-        This is an async operation — use system_health or task status to monitor progress.
-        Always create and review an upgrade plan first (bnk_upgrade_plan returns the upgrade_id).
-
-        Args:
-            cluster_id: The cluster ID
-            upgrade_id: The upgrade plan ID (from bnk_upgrade_plan)
-        """
-        result = await client.post(
-            f"/api/k8s/clusters/{cluster_id}/bnk/upgrade/{upgrade_id}/execute",
-        )
-        return json.dumps(result, indent=2)
-
-    @mcp.tool()
-    async def bnk_upgrade_history(cluster_id: int) -> str:
-        """Get upgrade history for a BNK cluster.
-
-        Args:
-            cluster_id: The cluster ID
-        """
-        result = await client.get(f"/api/k8s/clusters/{cluster_id}/bnk/upgrade/history")
-        return json.dumps(result, indent=2)
-
-    # ------------------------------------------------------------------
-    # Licensing
-    # ------------------------------------------------------------------
-
-    @mcp.tool()
-    async def bnk_license_status(cluster_id: int) -> str:
-        """Get BNK license status for a cluster.
-
-        Shows license type, expiration, features, and CWC connectivity status.
-
-        Args:
-            cluster_id: The cluster ID
-        """
-        result = await client.get(f"/api/licensing/{cluster_id}/status")
-        return json.dumps(result, indent=2)
-
-    @mcp.tool()
-    async def bnk_telemetry_report(cluster_id: int) -> str:
-        """Get the BNK telemetry report for licensing compliance.
-
-        Args:
-            cluster_id: The cluster ID
-        """
-        result = await client.get(f"/api/licensing/{cluster_id}/report")
-        return json.dumps(result, indent=2)
-
-    @mcp.tool()
-    async def bnk_license_renew(cluster_id: int, jwt: str) -> str:
-        """Renew an expired or expiring BNK license.
-
-        Full renewal cycle: deletes CPCL state secrets, restarts CWC pod,
-        then activates the new license with the provided JWT.
-
-        Use this for license renewals (eval or paid). For first-time
-        activation use the Activate License function in the UI.
-
-        WARNING: This restarts the CWC pod. Licensing/telemetry will be
-        briefly unavailable (~2 minutes). Traffic processing is unaffected.
-
-        Args:
-            cluster_id: The cluster ID
-            jwt: Raw JWT string from MyF5 for the new/renewed license
-        """
-        result = await client.post(
-            f"/api/licensing/{cluster_id}/renew",
-            json={"jwt": jwt},
-        )
-        return json.dumps(result, indent=2)
-
-    # ------------------------------------------------------------------
-    # Recovery
-    # ------------------------------------------------------------------
-
-    @mcp.tool()
-    async def bnk_recovery_cert_sync(cluster_id: int) -> str:
-        """Resync CWC certificates after a cluster reboot.
-
-        Recreates cert-manager certificates for CWC communication.
-        Required when CWC TLS certs have expired or been lost.
-
-        Args:
-            cluster_id: The cluster ID
-        """
-        result = await client.post(f"/api/k8s/clusters/{cluster_id}/recovery/cwc-certs")
-        return json.dumps(result, indent=2)
-
-    @mcp.tool()
-    async def bnk_platform_restart(cluster_id: int) -> str:
-        """Restart BNK platform components (controller, FLO, TMM).
-
-        Use as a recovery measure when BNK components are in a bad state.
-
-        Args:
-            cluster_id: The cluster ID
-        """
-        result = await client.post(
-            f"/api/k8s/clusters/{cluster_id}/recovery/platform-restart",
-            json={
-                "restart_controller": True,
-                "restart_flo": False,
-                "restart_tmm": False,
-            },
-        )
-        return json.dumps(result, indent=2)
 
     @mcp.tool()
     async def bnk_recovery_status(cluster_id: int) -> str:

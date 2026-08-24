@@ -1,103 +1,78 @@
-"""Unit tests for maintenance mode."""
-import json
-from unittest.mock import MagicMock, patch
+"""Maintenance mode — in-process flag with a TTL safety net.
+
+This used to be a Redis key with an EXPIRE. Phase 4 moved it in-process; the
+TTL survived because the failure it guards against (a restore that dies without
+clearing the flag, leaving the API permanently refusing requests) did not.
+"""
+
+import time
 
 import pytest
 
-from core.maintenance import (
-    MAINTENANCE_KEY,
-    MAINTENANCE_TTL_SECONDS,
-    clear_maintenance_mode,
-    get_maintenance_status,
-    is_maintenance_mode,
-    set_maintenance_mode,
-)
+from core import maintenance
 
 
-class TestMaintenanceMode:
-    """Tests for maintenance mode functions."""
+@pytest.fixture(autouse=True)
+def _clean_flag():
+    maintenance.clear_maintenance_mode()
+    yield
+    maintenance.clear_maintenance_mode()
 
-    @pytest.fixture
-    def mock_redis(self):
-        """Mock Redis connection."""
-        with patch("core.maintenance._get_redis") as mock:
-            redis_mock = MagicMock()
-            mock.return_value = redis_mock
-            yield redis_mock
 
-    @pytest.mark.unit
-    def test_set_maintenance_mode(self, mock_redis):
-        """set_maintenance_mode stores data in Redis with TTL."""
-        set_maintenance_mode("Test maintenance")
+class TestMaintenanceFlag:
+    def test_starts_clear(self):
+        assert maintenance.is_maintenance_mode() is False
+        assert maintenance.get_maintenance_status() is None
 
-        mock_redis.setex.assert_called_once()
-        args = mock_redis.setex.call_args
-        assert args[0][0] == MAINTENANCE_KEY
-        assert args[0][1] == MAINTENANCE_TTL_SECONDS
-        # Third arg is JSON string
-        data = json.loads(args[0][2])
-        assert data["message"] == "Test maintenance"
-        assert "started_at" in data
+    def test_set_then_clear(self):
+        maintenance.set_maintenance_mode("Restoring from backup")
+        assert maintenance.is_maintenance_mode() is True
 
-    @pytest.mark.unit
-    def test_set_maintenance_mode_default_message(self, mock_redis):
-        """set_maintenance_mode uses default message when none provided."""
-        set_maintenance_mode()
-
-        mock_redis.setex.assert_called_once()
-        args = mock_redis.setex.call_args
-        data = json.loads(args[0][2])
-        assert data["message"] == "System maintenance in progress"
-
-    @pytest.mark.unit
-    def test_clear_maintenance_mode(self, mock_redis):
-        """clear_maintenance_mode deletes the Redis key."""
-        clear_maintenance_mode()
-        mock_redis.delete.assert_called_once_with(MAINTENANCE_KEY)
-
-    @pytest.mark.unit
-    def test_get_maintenance_status_when_active(self, mock_redis):
-        """get_maintenance_status returns dict when maintenance is active."""
-        mock_redis.get.return_value = json.dumps({
-            "message": "Restoring backup",
-            "started_at": "2026-04-13T10:00:00Z",
-        })
-
-        status = get_maintenance_status()
-
+        status = maintenance.get_maintenance_status()
         assert status is not None
-        assert status["message"] == "Restoring backup"
-        assert status["started_at"] == "2026-04-13T10:00:00Z"
+        assert status["message"] == "Restoring from backup"
+        assert status["started_at"]
 
-    @pytest.mark.unit
-    def test_get_maintenance_status_when_inactive(self, mock_redis):
-        """get_maintenance_status returns None when not in maintenance."""
-        mock_redis.get.return_value = None
+        maintenance.clear_maintenance_mode()
+        assert maintenance.is_maintenance_mode() is False
 
-        status = get_maintenance_status()
+    def test_default_message(self):
+        maintenance.set_maintenance_mode()
+        status = maintenance.get_maintenance_status()
+        assert status is not None
+        assert "maintenance" in status["message"].lower()
 
-        assert status is None
+    def test_status_is_a_copy(self):
+        """Callers must not be able to mutate the stored flag."""
+        maintenance.set_maintenance_mode("original")
+        status = maintenance.get_maintenance_status()
+        assert status is not None
+        status["message"] = "tampered"
 
-    @pytest.mark.unit
-    def test_is_maintenance_mode_true(self, mock_redis):
-        """is_maintenance_mode returns True when flag is set."""
-        mock_redis.get.return_value = json.dumps({"message": "test", "started_at": "2026-04-13T10:00:00Z"})
+        again = maintenance.get_maintenance_status()
+        assert again is not None
+        assert again["message"] == "original"
 
-        assert is_maintenance_mode() is True
 
-    @pytest.mark.unit
-    def test_is_maintenance_mode_false(self, mock_redis):
-        """is_maintenance_mode returns False when flag is not set."""
-        mock_redis.get.return_value = None
+class TestTTLSafetyNet:
+    def test_expires_without_an_explicit_clear(self, monkeypatch):
+        """A restore that dies mid-flight must not wedge the API forever."""
+        monkeypatch.setattr(maintenance, "MAINTENANCE_TTL_SECONDS", 0.05)
+        maintenance.set_maintenance_mode("crashed restore")
+        assert maintenance.is_maintenance_mode() is True
 
-        assert is_maintenance_mode() is False
+        time.sleep(0.1)
+        assert maintenance.is_maintenance_mode() is False
+        assert maintenance.get_maintenance_status() is None
 
-    @pytest.mark.unit
-    def test_get_redis_raises_when_no_redis_url(self):
-        """_get_redis raises RuntimeError when REDIS_URL is not configured."""
-        from core.maintenance import _get_redis
+    def test_expiry_frees_the_slot_for_a_new_operation(self, monkeypatch):
+        monkeypatch.setattr(maintenance, "MAINTENANCE_TTL_SECONDS", 0.05)
+        maintenance.set_maintenance_mode("first")
+        time.sleep(0.1)
+        assert maintenance.is_maintenance_mode() is False
 
-        with patch("core.maintenance.settings") as mock_settings:
-            mock_settings.REDIS_URL = None
-            with pytest.raises(RuntimeError, match="REDIS_URL not configured"):
-                _get_redis()
+        monkeypatch.setattr(maintenance, "MAINTENANCE_TTL_SECONDS", 600)
+        maintenance.set_maintenance_mode("second")
+        status = maintenance.get_maintenance_status()
+        assert status is not None
+        assert status["message"] == "second"

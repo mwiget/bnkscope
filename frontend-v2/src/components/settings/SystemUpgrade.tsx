@@ -521,7 +521,7 @@ export default function SystemUpgrade() {
     <>
       <SectionCard title="System upgrade">
         <p className="text-sm text-muted-foreground -mt-1 mb-4">
-          Check for and install BNK-Forge updates
+          Check for and install bnkscope updates
         </p>
         <div className="space-y-4">
           {/* Version Info */}
@@ -604,7 +604,7 @@ export default function SystemUpgrade() {
                   ) : !versionInfo?.upgrade_readiness?.host_repo_path_set && (
                     <p>
                       <code className="px-1 py-0.5 rounded bg-muted text-xs">HOST_REPO_PATH</code> is not set.
-                      Add it to <code className="px-1 py-0.5 rounded bg-muted text-xs">docker-compose.yml</code> under backend environment (e.g., <code className="text-xs">HOST_REPO_PATH=/home/user/bnk-forge-v2</code>).
+                      Add it to <code className="px-1 py-0.5 rounded bg-muted text-xs">docker-compose.yml</code> under backend environment (e.g., <code className="text-xs">HOST_REPO_PATH=/home/you/git/bnkscope</code>).
                     </p>
                   )}
                   {deploymentMode !== 'local' && !versionInfo?.upgrade_readiness?.docker_socket_available && (
@@ -612,7 +612,7 @@ export default function SystemUpgrade() {
                   )}
                   {deploymentMode !== 'local' && (
                     <p className="text-xs mt-1 text-warning/80">
-                      You can still upgrade via SSH: <code>cd ~/bnk-forge-v2 && {recommendedCommand || './upgrade.sh'}</code>
+                      You can still upgrade from a shell: <code>cd ~/git/bnkscope && git pull && ./bnkscope up</code>
                     </p>
                   )}
                 </div>
@@ -630,7 +630,7 @@ export default function SystemUpgrade() {
               <AlertDescription className="text-warning/80">
                 <div className="mt-2 space-y-2">
                   <p>
-                    A new version of BNK-Forge is available.
+                    A new version of bnkscope is available.
                     {versionInfo.commits_behind > 0 && (
                       <span className="ml-1">
                         ({versionInfo.commits_behind} patch version{versionInfo.commits_behind > 1 ? 's' : ''} behind)
@@ -797,7 +797,7 @@ export default function SystemUpgrade() {
 
                   <p className="text-sm">
                     Check the upgrade output below for details. You can also upgrade via SSH:
-                    {' '}<code className="px-1 py-0.5 rounded bg-muted text-xs">cd ~/bnk-forge-v2 && ./upgrade.sh</code>
+                    {' '}<code className="px-1 py-0.5 rounded bg-muted text-xs">cd ~/git/bnkscope && git pull && ./bnkscope up</code>
                   </p>
                 </div>
               </AlertDescription>
@@ -896,7 +896,7 @@ export default function SystemUpgrade() {
       <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Upgrade BNK-Forge?</AlertDialogTitle>
+            <AlertDialogTitle>Upgrade bnkscope?</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
                 {/* Version change */}

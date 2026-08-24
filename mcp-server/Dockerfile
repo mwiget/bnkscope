@@ -6,7 +6,14 @@
 # Run:   docker run -p 8081:8081 -e BNK_FORGE_API_URL=http://backend:8000 bnk-forge-mcp
 
 # python:3.11-slim — digest-pinned (Slice B / #300); re-pin when bumping the tag.
-FROM python:3.11-slim@sha256:f9fa7f851e38bfb19c9de3afbc4b86ae7176ea7aaf94535c31df5458d5849457 AS base
+# Pull-through cache prefix for the base image. Empty by default, so a plain
+# `docker build` behaves exactly as before. `bnkscope up` sets it to the local
+# regcachectl docker.io cache when that fleet is running, which stops a
+# rebuilt-from-scratch stack re-pulling the same base layers from Docker Hub.
+# The digest pin below is what makes this safe: the cache can serve a different
+# *path*, never different bytes.
+ARG DOCKERHUB_PREFIX=
+FROM ${DOCKERHUB_PREFIX}library/python:3.11-slim@sha256:f9fa7f851e38bfb19c9de3afbc4b86ae7176ea7aaf94535c31df5458d5849457 AS base
 
 LABEL maintainer="BNK-Forge Team"
 LABEL description="MCP Server for BNK-Forge — AI-accessible tools for F5 BIG-IP Next for Kubernetes"
@@ -25,7 +32,7 @@ COPY pyproject.toml README.md ./
 # Keep in sync with [project.dependencies] in pyproject.toml.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
-    pip install "mcp>=1.26.0" "httpx>=0.27.0" hatchling
+    pip install "mcp>=1.26.0,<2" "httpx>=0.27.0" hatchling
 
 # Copy full source code (only this layer rebuilds on code changes)
 COPY src/ ./src/

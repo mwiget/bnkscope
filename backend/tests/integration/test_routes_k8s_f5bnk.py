@@ -156,10 +156,10 @@ class TestGetBnkData:
     @patch("routes.k8s.f5bnk.KubernetesService")
     def test_returns_complete_response(
         self, mock_k8s_svc_cls, mock_fetch,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Unified endpoint returns health, topology, backends, palette, policy."""
-        cluster = make_k8s_cluster(project=sample_project, name="bnk-data-cluster")
+        cluster = make_k8s_cluster(name="bnk-data-cluster")
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/data",
@@ -211,10 +211,10 @@ class TestGetBnkData:
     @patch("routes.k8s.f5bnk.KubernetesService")
     def test_passes_namespace_filter(
         self, mock_k8s_svc_cls, mock_fetch,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Namespace query param is forwarded to fetch_all_bnk_data."""
-        cluster = make_k8s_cluster(project=sample_project, name="ns-filter-cluster")
+        cluster = make_k8s_cluster(name="ns-filter-cluster")
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/data?namespace=f5-bnk",
@@ -233,10 +233,10 @@ class TestGetBnkHealth:
     @patch("routes.k8s.f5bnk.KubernetesService")
     def test_returns_health_analysis(
         self, mock_k8s_svc_cls, mock_fetch,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Health endpoint runs real analysis and returns structured result."""
-        cluster = make_k8s_cluster(project=sample_project, name="bnk-health-cluster")
+        cluster = make_k8s_cluster(name="bnk-health-cluster")
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/health",
@@ -278,10 +278,10 @@ class TestGetGatewayTopology:
     @patch("routes.k8s.f5bnk.KubernetesService")
     def test_returns_topology_tree(
         self, mock_k8s_svc_cls, mock_fetch,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Topology endpoint builds real gateway→listener→route tree."""
-        cluster = make_k8s_cluster(project=sample_project, name="topo-cluster")
+        cluster = make_k8s_cluster(name="topo-cluster")
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/gateway-topology",
@@ -330,10 +330,10 @@ class TestGetPolicyAssociations:
     @patch("routes.k8s.f5bnk.KubernetesService")
     def test_returns_policy_associations(
         self, mock_k8s_svc_cls, mock_fetch,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Policy associations endpoint returns real analysis result."""
-        cluster = make_k8s_cluster(project=sample_project, name="policy-cluster")
+        cluster = make_k8s_cluster(name="policy-cluster")
 
         response = client.get(
             f"/api/k8s/clusters/{cluster.id}/f5bnk/policy-gateway-associations",
@@ -353,15 +353,3 @@ class TestGetPolicyAssociations:
 class TestBnkUnauthenticated:
     """Unauthenticated access to BNK endpoints returns 401."""
 
-    def test_all_endpoints_require_auth(self, client, sample_project, make_k8s_cluster):
-        """All BNK endpoints reject unauthenticated requests."""
-        cluster = make_k8s_cluster(project=sample_project, name="noauth-cluster")
-        endpoints = [
-            f"/api/k8s/clusters/{cluster.id}/f5bnk/data",
-            f"/api/k8s/clusters/{cluster.id}/f5bnk/health",
-            f"/api/k8s/clusters/{cluster.id}/f5bnk/gateway-topology",
-            f"/api/k8s/clusters/{cluster.id}/f5bnk/policy-gateway-associations",
-        ]
-        for endpoint in endpoints:
-            response = client.get(endpoint)
-            assert response.status_code == 401, f"{endpoint} should require auth"

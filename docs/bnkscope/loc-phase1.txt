@@ -1,0 +1,23 @@
+bucket               baseline        now      delta
+KEEP bnk-tmm            15880      15109       -771
+KEEP k8s-core           18738      17529      -1209
+KEEP observ              5537       5537         +0
+KEEP system              7294       6997       -297
+OTHER                  187405     135679     -51726
+RM auth/users           22995      19725      -3270
+RM benchmarks           21580      21451       -129
+RM cloud/ssh             8733       4233      -4500
+RM discovery            19610      19015       -595
+RM dpu/bm               46091      37562      -8529
+RM drift                 5607        300      -5307
+RM fleet/oper           25884      24826      -1058
+RM modules             103132      17878     -85254
+RM projects             29059       1089     -27970
+RM proxy-mig            15302        246     -15056
+RM snapshots            10850       2557      -8293
+RM tasks/queue          10659       5361      -5298
+RM tofu/exec            31708        217     -31491
+RM upgrade/lic           8931       3951      -4980
+TOTAL                  594995     339262    -255733
+
+  removed 255733 LOC (43.0% of baseline)

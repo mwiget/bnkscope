@@ -47,10 +47,10 @@ class TestRegisteredKindUnchanged:
     """Registered kinds use the static registry; _resolve_via_discovery is never entered."""
 
     def test_registered_kind_returns_200(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """'pod' is in the registry → 200."""
-        cluster = make_k8s_cluster(project=sample_project, name="reg-cluster")
+        cluster = make_k8s_cluster(name="reg-cluster")
 
         with patch("routes.k8s.resources.KubernetesService") as MockSvc:
             MockSvc.return_value.get_resources.return_value = [
@@ -67,10 +67,10 @@ class TestRegisteredKindUnchanged:
         assert body["count"] == 1
 
     def test_registry_first_discovery_not_called(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """Registry hit → _resolve_via_discovery is never called (registry-first invariant)."""
-        cluster = make_k8s_cluster(project=sample_project, name="reg-inv-cluster")
+        cluster = make_k8s_cluster(name="reg-inv-cluster")
 
         with patch("routes.k8s.resources.KubernetesService") as MockSvc, \
              patch("services.kubernetes._resources._resolve_via_discovery") as mock_discover:
@@ -84,10 +84,10 @@ class TestRegisteredKindUnchanged:
         mock_discover.assert_not_called()
 
     def test_group_param_forwarded_to_service(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """group= query param is forwarded to get_resources."""
-        cluster = make_k8s_cluster(project=sample_project, name="reg-group-cluster")
+        cluster = make_k8s_cluster(name="reg-group-cluster")
 
         with patch("routes.k8s.resources.KubernetesService") as MockSvc:
             MockSvc.return_value.get_resources.return_value = []
@@ -109,10 +109,10 @@ class TestUnregisteredInstalledCrd:
     """Unregistered CRD installed in cluster → discovery path → 200."""
 
     def test_unregistered_installed_crd_returns_200(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """analyzers (unregistered) installed in cluster → 200, not 400."""
-        cluster = make_k8s_cluster(project=sample_project, name="discovery-cluster")
+        cluster = make_k8s_cluster(name="discovery-cluster")
 
         with patch("routes.k8s.resources.KubernetesService") as MockSvc:
             MockSvc.return_value.get_resources.return_value = [
@@ -129,10 +129,10 @@ class TestUnregisteredInstalledCrd:
         assert body["count"] == 1
 
     def test_fq_name_unregistered_installed_returns_200(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """analyzers.k8s.f5.com (FQ name) → 200."""
-        cluster = make_k8s_cluster(project=sample_project, name="fq-cluster")
+        cluster = make_k8s_cluster(name="fq-cluster")
 
         with patch("routes.k8s.resources.KubernetesService") as MockSvc:
             MockSvc.return_value.get_resources.return_value = []
@@ -154,10 +154,10 @@ class TestScopeFromDiscovery:
     """Confirm _resolve_via_discovery result flows into _fetch_from_k8s namespaced flag."""
 
     def test_namespaced_flag_propagates_to_fetch(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """namespaced=True in discovered CRD → K8sResourceType.namespaced=True passed to _fetch."""
-        cluster = make_k8s_cluster(project=sample_project, name="ns-flag-cluster")
+        cluster = make_k8s_cluster(name="ns-flag-cluster")
 
         namespaced_rt = _k8s_rt("somethings", "example.io", "Something", namespaced=True)
         captured: dict = {}
@@ -180,10 +180,10 @@ class TestScopeFromDiscovery:
         assert captured.get("namespaced") is True
 
     def test_cluster_scoped_flag_propagates(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """namespaced=False in discovered CRD → K8sResourceType.namespaced=False."""
-        cluster = make_k8s_cluster(project=sample_project, name="cs-flag-cluster")
+        cluster = make_k8s_cluster(name="cs-flag-cluster")
 
         cluster_rt = _k8s_rt("clusterthings", "example.io", "ClusterThing", namespaced=False)
         captured: dict = {}
@@ -212,10 +212,10 @@ class TestScopeFromDiscovery:
 
 class TestAmbiguousBarePlural:
     def test_ambiguous_plural_returns_400_with_candidates(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """Two groups share 'foos' plural, no ?group= → 400 listing candidates."""
-        cluster = make_k8s_cluster(project=sample_project, name="ambig-cluster")
+        cluster = make_k8s_cluster(name="ambig-cluster")
 
         with patch("routes.k8s.resources.KubernetesService") as MockSvc:
             MockSvc.return_value.get_resources.side_effect = BadRequestError(
@@ -235,10 +235,10 @@ class TestAmbiguousBarePlural:
         assert "foos.group-b.io" in body["error"]["details"]["candidates"]
 
     def test_ambiguous_resolution_layer(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """_resolve_via_discovery raises BadRequestError → propagates as 400."""
-        cluster = make_k8s_cluster(project=sample_project, name="ambig2-cluster")
+        cluster = make_k8s_cluster(name="ambig2-cluster")
 
         with patch("services.kubernetes._resources.get_resource_type", side_effect=ValueError("not in registry")), \
              patch("services.kubernetes._resources._resolve_via_discovery") as mock_discover, \
@@ -264,9 +264,9 @@ class TestAmbiguousBarePlural:
 
 class TestFQNameDisambiguates:
     def test_fq_name_resolves_200(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
-        cluster = make_k8s_cluster(project=sample_project, name="fq-disambig-cluster")
+        cluster = make_k8s_cluster(name="fq-disambig-cluster")
 
         with patch("routes.k8s.resources.KubernetesService") as MockSvc:
             MockSvc.return_value.get_resources.return_value = []
@@ -278,10 +278,10 @@ class TestFQNameDisambiguates:
         assert resp.status_code == 200, resp.text
 
     def test_group_query_param_forwarded_to_resolve(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """?group= forwarded through to _resolve_via_discovery."""
-        cluster = make_k8s_cluster(project=sample_project, name="group-param-cluster")
+        cluster = make_k8s_cluster(name="group-param-cluster")
         foo_a_rt = _k8s_rt("foos", "group-a.io", "FooA")
 
         with patch("services.kubernetes._resources.get_resource_type", side_effect=ValueError("not in registry")), \
@@ -307,14 +307,14 @@ class TestFQNameDisambiguates:
 
 class TestNotInstalledReturns404:
     def test_not_installed_returns_404_not_400(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """Not in registry + not in cluster → 404 structured error, NOT 400.
 
         This is the key regression guard: a bare ValueError becoming 400 would
         be a regression (the gate we're removing). NotFoundError must be 404.
         """
-        cluster = make_k8s_cluster(project=sample_project, name="absent-cluster")
+        cluster = make_k8s_cluster(name="absent-cluster")
 
         with patch("services.kubernetes._resources.get_resource_type", side_effect=ValueError("not in registry")), \
              patch("services.kubernetes._resources._resolve_via_discovery") as mock_discover, \
@@ -334,9 +334,9 @@ class TestNotInstalledReturns404:
         assert resp.status_code != 400, "REGRESSION: ValueError leaked as 400"
 
     def test_fq_name_not_installed_returns_404(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
-        cluster = make_k8s_cluster(project=sample_project, name="absent-fq-cluster")
+        cluster = make_k8s_cluster(name="absent-fq-cluster")
 
         with patch("routes.k8s.resources.KubernetesService") as MockSvc:
             MockSvc.return_value.get_resources.side_effect = NotFoundError(
@@ -356,10 +356,10 @@ class TestNotInstalledReturns404:
 
 class TestUnreachableClusterReturns503:
     def test_unreachable_cluster_returns_503(
-        self, client, admin_headers, sample_user, make_k8s_cluster, sample_project
+        self, client, admin_headers, sample_user, make_k8s_cluster
     ):
         """NetworkUnreachableError → 503 NETWORK_UNREACHABLE."""
-        cluster = make_k8s_cluster(project=sample_project, name="dead-res-cluster")
+        cluster = make_k8s_cluster(name="dead-res-cluster")
 
         with patch("routes.k8s.resources.KubernetesService") as MockSvc:
             MockSvc.return_value.get_resources.side_effect = NetworkUnreachableError(

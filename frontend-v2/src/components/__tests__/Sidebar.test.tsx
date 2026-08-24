@@ -1,246 +1,137 @@
 /**
- * Tests for Sidebar component
+ * The bnkscope sidebar.
  *
- * Covers: renders navigation sections, nav items, role-based filtering,
- * collapse/expand, project count badges, logo, user footer, version display.
+ * Phase 6 cut it from 16 entries across five collapsible sections to four
+ * lenses plus two utility links, so most of what these tests assert is what is
+ * *not* there any more — a nav that quietly regrows sections is the failure
+ * mode worth catching.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { act } from '@testing-library/react';
 import { render } from '@/test/test-utils';
 import { Sidebar } from '@/components/layout/Sidebar';
-import { useAuthStore } from '@/stores/authStore';
-import type { User } from '@/types';
-
-const mockAdmin: User = {
-  id: 1,
-  username: 'admin',
-  email: 'admin@example.com',
-  role: 'admin',
-  is_active: true,
-  must_change_password: false,
-  last_login_at: null,
-  created_at: '2026-01-01T00:00:00Z',
-};
-
-const mockViewer: User = {
-  id: 3,
-  username: 'viewer',
-  email: 'viewer@example.com',
-  role: 'viewer',
-  is_active: true,
-  must_change_password: false,
-  last_login_at: null,
-  created_at: '2026-01-01T00:00:00Z',
-};
 
 describe('Sidebar', () => {
   beforeEach(() => {
-    useAuthStore.getState().logout();
     localStorage.clear();
   });
 
-  it('renders the BNK Forge logo text', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
+  describe('branding', () => {
+    it('renders the bnkscope wordmark', () => {
+      render(<Sidebar />);
+      // Scoped to the span: the inlined mark carries its own <title>bnkscope</title>,
+      // which is the SVG's accessible name, not the visible wordmark.
+      expect(screen.getByText('bnkscope', { selector: 'span' })).toBeInTheDocument();
     });
-    render(<Sidebar />);
 
-    expect(screen.getByText('BNK Forge')).toBeInTheDocument();
+    it('renders the mark as a labelled image', () => {
+      render(<Sidebar />);
+      expect(screen.getAllByRole('img', { name: 'bnkscope' }).length).toBeGreaterThan(0);
+    });
+
+    it('carries no bnk-forge branding', () => {
+      render(<Sidebar />);
+      expect(screen.queryByText('BNK Forge')).not.toBeInTheDocument();
+      expect(screen.queryByText('Infrastructure')).not.toBeInTheDocument();
+    });
   });
 
-  it('renders the Infrastructure subtitle', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
+  describe('navigation', () => {
+    it('renders the four lenses', () => {
+      render(<Sidebar />);
+      for (const name of ['Clusters', 'BNK Health', 'CNF Resources', 'AI Gateway']) {
+        expect(screen.getByText(name)).toBeInTheDocument();
+      }
     });
-    render(<Sidebar />);
 
-    expect(screen.getAllByText('Infrastructure').length).toBeGreaterThanOrEqual(1);
+    it('points each lens at its route', () => {
+      render(<Sidebar />);
+      expect(screen.getByText('Clusters').closest('a')).toHaveAttribute('href', '/kubernetes');
+      expect(screen.getByText('BNK Health').closest('a')).toHaveAttribute('href', '/bnk');
+      expect(screen.getByText('CNF Resources').closest('a')).toHaveAttribute('href', '/cnf');
+      expect(screen.getByText('AI Gateway').closest('a')).toHaveAttribute(
+        'href',
+        '/observability/ai-gateway',
+      );
+    });
+
+    it('keeps System and MCP reachable but out of the main list', () => {
+      render(<Sidebar />);
+      // Backup/restore lives behind System, so it must not become unreachable.
+      expect(screen.getByText('System').closest('a')).toHaveAttribute('href', '/system');
+      expect(screen.getByText('MCP').closest('a')).toHaveAttribute('href', '/mcp-server');
+    });
+
+    it('has no section headings left', () => {
+      render(<Sidebar />);
+      for (const heading of ['OBSERVE', 'OPERATE', 'SETTINGS', 'BUILD', 'CATALOG']) {
+        expect(screen.queryByText(heading)).not.toBeInTheDocument();
+      }
+    });
+
+    it('no longer links to anything the pipeline owned', () => {
+      render(<Sidebar />);
+      for (const gone of [
+        'Command Center',
+        'Projects',
+        'Fleet',
+        'Catalog',
+        'Blueprints',
+        'Access Methods',
+        'Users',
+        'Operations Log',
+        'Benchmarks',
+      ]) {
+        expect(screen.queryByText(gone)).not.toBeInTheDocument();
+      }
+    });
+
+    it('the wordmark links home', () => {
+      render(<Sidebar />);
+      expect(screen.getByLabelText('bnkscope home')).toHaveAttribute('href', '/');
+    });
   });
 
-  it('renders OBSERVE section with Command Center', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
+  describe('collapse', () => {
+    it('hides labels but keeps the links when collapsed', async () => {
+      const user = userEvent.setup();
+      render(<Sidebar />);
 
-    expect(screen.getByText('OBSERVE')).toBeInTheDocument();
-    expect(screen.getByText('Command Center')).toBeInTheDocument();
+      await user.click(screen.getByLabelText('Collapse sidebar'));
+
+      expect(screen.getByLabelText('Expand sidebar')).toBeInTheDocument();
+      expect(screen.queryByText('bnkscope', { selector: 'span' })).not.toBeInTheDocument();
+      // The link itself survives — the label is sr-only, not removed.
+      expect(screen.getByText('Clusters').closest('a')).toHaveAttribute('href', '/kubernetes');
+    });
+
+    it('expands again', async () => {
+      const user = userEvent.setup();
+      render(<Sidebar />);
+
+      await user.click(screen.getByLabelText('Collapse sidebar'));
+      await user.click(screen.getByLabelText('Expand sidebar'));
+
+      expect(screen.getByText('bnkscope', { selector: 'span' })).toBeInTheDocument();
+    });
   });
 
-  it('renders BUILD section with navigation items', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
+  describe('accessibility', () => {
+    it('is an aside with a label', () => {
+      render(<Sidebar />);
+      expect(screen.getByLabelText('Application sidebar')).toBeInTheDocument();
     });
-    render(<Sidebar />);
 
-    expect(screen.getByText('BUILD')).toBeInTheDocument();
-    expect(screen.getByText('Access Methods')).toBeInTheDocument();
-    expect(screen.getByText('Blueprints')).toBeInTheDocument();
-    expect(screen.getByText('Projects')).toBeInTheDocument();
-    expect(screen.getByText('Operations Log')).toBeInTheDocument();
-    // Catalog lives at the bottom of BUILD, after Operations Log. Helm
-    // Packages is gone (now part of the Kubernetes page).
-    expect(screen.getByText('Catalog')).toBeInTheDocument();
+    it('labels the nav', () => {
+      render(<Sidebar />);
+      expect(screen.getByLabelText('Main navigation')).toBeInTheDocument();
+    });
   });
 
-  it('renders OPERATE section with navigation items', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
+  it('shows the app version', () => {
     render(<Sidebar />);
-
-    expect(screen.getByText('OPERATE')).toBeInTheDocument();
-    expect(screen.getByText('Fleet')).toBeInTheDocument();
-    expect(screen.getByText('Kubernetes')).toBeInTheDocument();
-    expect(screen.getByText('F5 BNK')).toBeInTheDocument();
-    // K8S-UX-005: Operators merged into Fleet page — no longer a separate sidebar entry
-  });
-
-  it('renders SETTINGS section for admin', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    expect(screen.getByText('SETTINGS')).toBeInTheDocument();
-    expect(screen.getByText('System')).toBeInTheDocument();
-  });
-
-  it('hides SETTINGS section for viewer', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockViewer);
-    });
-    render(<Sidebar />);
-
-    expect(screen.queryByText('SETTINGS')).not.toBeInTheDocument();
-  });
-
-  it('hides System link for non-admin users', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockViewer);
-    });
-    render(<Sidebar />);
-
-    expect(screen.queryByText('System')).not.toBeInTheDocument();
-  });
-
-  it('renders system operational status', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    expect(screen.getByText('All systems operational')).toBeInTheDocument();
-  });
-
-  it('renders version number', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    // __APP_VERSION__ is defined as '2.10.10-test' in vitest.config.ts
-    expect(screen.getByText(/version/i)).toBeInTheDocument();
-  });
-
-  it('renders collapse button', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    expect(screen.getByLabelText('Collapse sidebar')).toBeInTheDocument();
-  });
-
-  it('collapses sidebar when collapse button is clicked', async () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    const user = userEvent.setup();
-    render(<Sidebar />);
-
-    await user.click(screen.getByLabelText('Collapse sidebar'));
-
-    // After collapse, the expand button should be visible
-    expect(screen.getByLabelText('Expand sidebar')).toBeInTheDocument();
-    // Logo text should be hidden
-    expect(screen.queryByText('BNK Forge')).not.toBeInTheDocument();
-  });
-
-  it('renders user info in footer when logged in', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    // Username appears in sidebar footer — may have multiple matches (mock data)
-    const elements = screen.getAllByText('admin');
-    expect(elements.length).toBeGreaterThan(0);
-  });
-
-  it('renders logout button', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    expect(screen.getByLabelText('Logout')).toBeInTheDocument();
-  });
-
-  it('renders sidebar as aside with aria-label', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    expect(screen.getByLabelText('Application sidebar')).toBeInTheDocument();
-  });
-
-  it('renders main navigation with aria-label', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    expect(screen.getByLabelText('Main navigation')).toBeInTheDocument();
-  });
-
-  it('renders updated workflow ordering for sidebar links', () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    const catalog = screen.getByText('Catalog');
-    const blueprints = screen.getByText('Blueprints');
-    const accessTemplates = screen.getByText('Access Methods');
-    const projects = screen.getByText('Projects');
-    const operationsLog = screen.getByText('Operations Log');
-    const fleet = screen.getByText('Fleet');
-    const kubernetes = screen.getByText('Kubernetes');
-
-    // BUILD: Catalog → Blueprints → Access Methods → Projects → Operations Log
-    expect(catalog.compareDocumentPosition(blueprints) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(blueprints.compareDocumentPosition(accessTemplates) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(accessTemplates.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(projects.compareDocumentPosition(operationsLog) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // BUILD → OPERATE
-    expect(operationsLog.compareDocumentPosition(fleet) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(fleet.compareDocumentPosition(kubernetes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it('shows project count badge after data loads', async () => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
-    render(<Sidebar />);
-
-    // Projects should show a count badge from mock data (2 projects)
-    await waitFor(() => {
-      const badges = screen.getAllByText('2');
-      expect(badges.length).toBeGreaterThan(0);
-    }, { timeout: 3000 });
+    // __APP_VERSION__ is defined in vitest.config.ts
+    expect(screen.getByText(/^v\d/)).toBeInTheDocument();
   });
 });

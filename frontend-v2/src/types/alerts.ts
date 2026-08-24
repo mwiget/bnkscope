@@ -1,7 +1,15 @@
 // Alert Channel types
 
 export type AlertChannelType = 'webhook' | 'slack' | 'msteams' | 'email';
-export type AlertEventType = 'health_change' | 'drift_detected' | 'deploy_success' | 'deploy_failed' | 'deploy_started';
+/**
+ * Alert events bnkscope can actually raise.
+ *
+ * Was five: the deploy_* trio and drift_detected came from the provisioning
+ * pipeline, and nothing has fired them since it was removed -- but the settings
+ * UI still offered all five as filters, so a channel subscribed to 'Deploy
+ * Failed' would sit silent forever and look broken.
+ */
+export type AlertEventType = 'health_change';
 
 export interface AlertChannel {
   id: number;

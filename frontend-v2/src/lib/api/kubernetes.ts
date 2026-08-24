@@ -3,6 +3,7 @@
  */
 import { apiClient } from './client';
 import type {
+  DiscoveryResponse,
   K8sCluster,
   K8sClusterCreateRequest,
   K8sClusterUpdateRequest,
@@ -19,38 +20,12 @@ import type {
   K8sRolloutHistoryEntry,
   K8sRolloutStatus,
   K8sCondition,
-  K8sTunnelStatusResponse,
-  K8sListAllTunnelsResponse,
-  K8sOpenTunnelResponse,
-  K8sCloseTunnelResponse,
-  K8sCloseAllTunnelsResponse,
   ClusterScanResponse,
-  AdaptiveModulePlanResponse,
-  ClusterConnectivityResult,
-  BatchConnectivityResponse,
-  F5PolicyGatewayAssociationsResponse,
   BnkDataResponse,
-  GatewayTopologyResponse,
-  BnkHealthEndpointResponse,
-  BnkUpgradeVersionsResponse,
-  BnkCurrentVersion,
-  BnkReleaseRegistryResponse,
-  BnkUpgrade,
-  BnkUpgradeExecuteResponse,
-  BnkUpgradeRollbackResponse,
-  BnkUpgradeHistoryResponse,
-  ConfigExport,
-  ConfigImportResult,
-  ConfigDiffResult,
-  JsonValue,
-  DpfDetectResponse,
   DpfDataResponse,
-  DpfHealthEndpointResponse,
   A2AAgentsResponse,
   HugePagesDeployRequest,
   HugePagesDeployResponse,
-  NodeReadinessProbeRequest,
-  NodeReadinessProbeResponse,
 } from '@/types';
 import type {
   ApiClusterCreateRequest,
@@ -61,9 +36,6 @@ import type { components } from '@/types/api-generated';
 
 type CrdListEnvelope = components['schemas']['CrdListEnvelope'];
 type TopologyGraphResponse = components['schemas']['TopologyGraphResponse'];
-type ProxyTranslateRequest = components['schemas']['ProxyTranslateRequest'];
-type ProxyTranslateResponse = components['schemas']['ProxyTranslateResponse'];
-type CisTranslateRequest = components['schemas']['CisTranslateRequest'];
 
 // ── Compile-time contract checks ────────────────────────────────────────────
 const _checkClusterCreate: AssertKeysMatch<K8sClusterCreateRequest, ApiClusterCreateRequest> = true;
@@ -72,18 +44,24 @@ const _checkClusterUpdate: AssertKeysMatch<K8sClusterUpdateRequest, ApiClusterUp
 void _checkClusterCreate, _checkClusterUpdate;
 
 export const kubernetesApi = {
+  // Local kubeconfig discovery
+  getDiscovery: () =>
+    apiClient.get<DiscoveryResponse>('/api/k8s/discovery').then((res) => res.data),
+
+  // Only the context NAME travels — the kubeconfig is re-read from the host,
+  // so this endpoint cannot be used to inject credentials.
+  adoptContext: (context: string) =>
+    apiClient.post<DiscoveryResponse>('/api/k8s/discovery/adopt', { context }).then((res) => res.data),
+
   // Kubernetes Monitoring
   getAllClusters: () =>
     apiClient.get<{ clusters: K8sCluster[]; count: number }>('/api/k8s/clusters').then((res) => res.data),
 
-  getProjectClusters: (projectId: number) =>
-    apiClient.get<{ clusters: K8sCluster[]; count: number }>(`/api/projects/${projectId}/k8s/clusters`).then((res) => res.data.clusters),
-
   getCluster: (clusterId: number) =>
     apiClient.get<K8sCluster>(`/api/k8s/clusters/${clusterId}`).then((res) => res.data),
 
-  createCluster: (projectId: number, data: K8sClusterCreateRequest) =>
-    apiClient.post<K8sCluster>(`/api/projects/${projectId}/k8s/clusters`, data).then((res) => res.data),
+  createCluster: (data: K8sClusterCreateRequest) =>
+    apiClient.post<K8sCluster>('/api/k8s/clusters', data).then((res) => res.data),
 
   updateCluster: (clusterId: number, data: K8sClusterUpdateRequest) =>
     apiClient.put<K8sCluster>(`/api/k8s/clusters/${clusterId}`, data).then((res) => res.data),
@@ -93,24 +71,6 @@ export const kubernetesApi = {
 
   testClusterConnection: (clusterId: number) =>
     apiClient.post<K8sClusterTestResult>(`/api/k8s/clusters/${clusterId}/test`).then((res) => res.data),
-
-  detectEKSClusters: (projectId: number) =>
-    apiClient.post<{
-      success: boolean;
-      message: string;
-      registered: Array<{ id: number; name: string; module_id: number; status: string }>;
-      skipped: Array<{ module_id: number; reason: string }>;
-      errors: Array<{ module_id: number; error: string }>;
-    }>(`/api/projects/${projectId}/k8s/clusters/detect-eks`).then((res) => res.data),
-
-  detectManagedClusters: (projectId: number) =>
-    apiClient.post<{
-      success: boolean;
-      message: string;
-      registered: Array<{ id: number; name: string; module_id: number; status: string }>;
-      skipped: Array<{ module_id: number; reason: string }>;
-      errors: Array<{ module_id: number; error: string }>;
-    }>(`/api/projects/${projectId}/k8s/clusters/detect-eks`).then((res) => res.data),
 
   getClusterResources: (clusterId: number, resourceType: string, params?: { namespace?: string; label_selector?: string }) =>
     apiClient.get<K8sResourceListResponse>(`/api/k8s/clusters/${clusterId}/resources/${resourceType}`, { params }).then((res) => res.data),
@@ -161,16 +121,6 @@ export const kubernetesApi = {
   getBnkData: (clusterId: number, params?: { namespace?: string }) =>
     apiClient.get<BnkDataResponse>(`/api/k8s/clusters/${clusterId}/f5bnk/data`, { params }).then((res) => res.data),
 
-  // Legacy individual endpoints (kept for backward compat, all delegate to shared fetch on backend)
-  getF5PolicyGatewayAssociations: (clusterId: number, params?: { namespace?: string }) =>
-    apiClient.get<F5PolicyGatewayAssociationsResponse>(`/api/k8s/clusters/${clusterId}/f5bnk/policy-gateway-associations`, { params }).then((res) => res.data),
-
-  getF5GatewayTopology: (clusterId: number, params?: { namespace?: string }) =>
-    apiClient.get<GatewayTopologyResponse>(`/api/k8s/clusters/${clusterId}/f5bnk/gateway-topology`, { params }).then((res) => res.data),
-
-  getF5BNKHealth: (clusterId: number, params?: { namespace?: string }) =>
-    apiClient.get<BnkHealthEndpointResponse>(`/api/k8s/clusters/${clusterId}/f5bnk/health`, { params }).then((res) => res.data),
-
   getA2AAgents: (clusterId: number, params?: { namespace?: string; probe?: boolean }) =>
     apiClient.get<A2AAgentsResponse>(`/api/k8s/clusters/${clusterId}/f5bnk/a2a/agents`, { params }).then((res) => res.data),
 
@@ -182,56 +132,6 @@ export const kubernetesApi = {
       )
       .then((res) => res.data),
 
-  // SSH Tunnel Management
-  getTunnelStatus: (clusterId: number) =>
-    apiClient.get<K8sTunnelStatusResponse>(`/api/k8s/clusters/${clusterId}/tunnel`).then((res) => res.data),
-
-  listAllTunnels: () =>
-    apiClient.get<K8sListAllTunnelsResponse>(`/api/k8s/tunnels`).then((res) => res.data),
-
-  openTunnel: (clusterId: number) =>
-    apiClient.post<K8sOpenTunnelResponse>(`/api/k8s/clusters/${clusterId}/tunnel/open`).then((res) => res.data),
-
-  closeTunnel: (clusterId: number) =>
-    apiClient.post<K8sCloseTunnelResponse>(`/api/k8s/clusters/${clusterId}/tunnel/close`).then((res) => res.data),
-
-  closeAllTunnels: () =>
-    apiClient.post<K8sCloseAllTunnelsResponse>(`/api/k8s/tunnels/close-all`).then((res) => res.data),
-
-  // Cluster Connectivity Probes
-  getClusterConnectivity: (clusterId: number) =>
-    apiClient.get<ClusterConnectivityResult>(`/api/k8s/clusters/${clusterId}/connectivity`).then((res) => res.data),
-
-  getBatchConnectivity: () =>
-    apiClient.get<BatchConnectivityResponse>('/api/k8s/clusters/connectivity').then((res) => res.data),
-
-  // Adaptive Module Selection
-  getAdaptiveModulePlan: (clusterId: number, templateSlug?: string, modulePaths?: string[], sizingProfile?: string) =>
-    apiClient.post<AdaptiveModulePlanResponse>(`/api/k8s/clusters/${clusterId}/adaptive-modules`, {
-      template_slug: templateSlug || null,
-      module_paths: modulePaths || null,
-      sizing_profile: sizingProfile || null,
-    }).then((res) => res.data),
-
-  // Proxy Translation (D-021 P2)
-  translateProxy: (clusterId: number, payload: ProxyTranslateRequest) =>
-    apiClient
-      .post<ProxyTranslateResponse>(
-        `/api/k8s/clusters/${clusterId}/proxies/translate`,
-        payload,
-      )
-      .then((res) => res.data),
-
-  // CIS Translation (D-023 P3)
-  translateCis: (clusterId: number, payload: CisTranslateRequest) =>
-    apiClient
-      .post<ProxyTranslateResponse>(
-        `/api/k8s/clusters/${clusterId}/proxies/cis/translate`,
-        payload,
-      )
-      .then((res) => res.data),
-
-  // Recommendation Actions -- HugePages Deploy
   deployHugePages: (clusterId: number, payload: HugePagesDeployRequest) =>
     apiClient
       .post<HugePagesDeployResponse>(
@@ -240,16 +140,6 @@ export const kubernetesApi = {
       )
       .then((res) => res.data),
 
-  // Node Readiness Probe (issue #387 part A — detection only)
-  probeNodeReadiness: (clusterId: number, payload: NodeReadinessProbeRequest = {}) =>
-    apiClient
-      .post<NodeReadinessProbeResponse>(
-        `/api/k8s/clusters/${clusterId}/node-readiness/probe`,
-        payload,
-      )
-      .then((res) => res.data),
-
-  // Kubernetes Resource Management (Phase 5)
   createK8sResource: (clusterId: number, resourceType: string, data: { resource_yaml: string; namespace?: string; dry_run?: boolean }) =>
     apiClient.post<{ success: boolean; message: string; resource: K8sResource }>(`/api/k8s/clusters/${clusterId}/resources/${resourceType}`, data).then((res) => res.data),
 
@@ -319,74 +209,6 @@ export const kubernetesApi = {
   drainNode: (clusterId: number, nodeName: string, options?: { ignore_daemonsets?: boolean; delete_emptydir_data?: boolean; force?: boolean; grace_period?: number }) =>
     apiClient.post<{ success: boolean; message: string; evicted_pods: Array<{ name: string; namespace: string }>; failed_pods: Array<{ name: string; namespace: string; error: string }> }>(`/api/k8s/clusters/${clusterId}/nodes/${nodeName}/drain`, null, { params: options }).then((res) => res.data),
 
-  // Kubernetes Patch, Label, Annotate Operations (Phase 6)
-  patchK8sResource: (clusterId: number, resourceType: string, resourceName: string, data: { patch_data: Record<string, JsonValue>; namespace?: string; patch_type?: 'strategic' | 'merge' | 'json' }) =>
-    apiClient.patch<{ success: boolean; message: string; resource: K8sResource }>(`/api/k8s/clusters/${clusterId}/resources/${resourceType}/${resourceName}`, data).then((res) => res.data),
-
-  labelK8sResource: (clusterId: number, resourceType: string, resourceName: string, data: { labels: Record<string, string>; namespace?: string; overwrite?: boolean }) =>
-    apiClient.post<{ success: boolean; message: string; resource: K8sResource }>(`/api/k8s/clusters/${clusterId}/resources/${resourceType}/${resourceName}/label`, data).then((res) => res.data),
-
-  annotateK8sResource: (clusterId: number, resourceType: string, resourceName: string, data: { annotations: Record<string, string>; namespace?: string; overwrite?: boolean }) =>
-    apiClient.post<{ success: boolean; message: string; resource: K8sResource }>(`/api/k8s/clusters/${clusterId}/resources/${resourceType}/${resourceName}/annotate`, data).then((res) => res.data),
-
-  // Kubernetes Cluster Management
-  refreshClusterKubeconfig: (clusterId: number) =>
-    apiClient.post<{ success: boolean; message: string; refresh_method?: string }>(`/api/k8s/clusters/${clusterId}/refresh-kubeconfig`).then((res) => res.data),
-
-  // Config Export/Import/Diff
-  exportClusterConfig: (clusterId: number) =>
-    apiClient.get(`/api/clusters/${clusterId}/bnk/export`, { responseType: 'blob' }).then((res) => res.data),
-
-  exportClusterConfigJson: (clusterId: number) =>
-    apiClient.get<ConfigExport>(`/api/clusters/${clusterId}/bnk/export/json`).then((res) => res.data),
-
-  importClusterConfig: (clusterId: number, config: Record<string, unknown>) =>
-    apiClient.post<ConfigImportResult>(`/api/clusters/${clusterId}/bnk/import`, { config }).then((res) => res.data),
-
-  diffClusterConfigs: (clusterAId: number, clusterBId: number) =>
-    apiClient.post<ConfigDiffResult>('/api/clusters/bnk/diff', { cluster_a_id: clusterAId, cluster_b_id: clusterBId }).then((res) => res.data),
-
-  // BNK Upgrade Workflow
-  getBnkUpgradeVersions: (clusterId: number) =>
-    apiClient.get<BnkUpgradeVersionsResponse>(`/api/k8s/clusters/${clusterId}/bnk/upgrade/versions`).then((res) => res.data),
-
-  getBnkCurrentVersion: (clusterId: number) =>
-    apiClient.get<BnkCurrentVersion>(`/api/k8s/clusters/${clusterId}/bnk/upgrade/current`).then((res) => res.data),
-
-  createBnkUpgradePlan: (clusterId: number, targetVersion: string) =>
-    apiClient.post<BnkUpgrade>(`/api/k8s/clusters/${clusterId}/bnk/upgrade/plan`, { target_version: targetVersion }).then((res) => res.data),
-
-  executeBnkUpgrade: (clusterId: number, upgradeId: number) =>
-    apiClient.post<BnkUpgradeExecuteResponse>(`/api/k8s/clusters/${clusterId}/bnk/upgrade/${upgradeId}/execute`).then((res) => res.data),
-
-  rollbackBnkUpgrade: (clusterId: number, upgradeId: number) =>
-    apiClient.post<BnkUpgradeRollbackResponse>(`/api/k8s/clusters/${clusterId}/bnk/upgrade/${upgradeId}/rollback`).then((res) => res.data),
-
-  cancelBnkUpgrade: (clusterId: number, upgradeId: number) =>
-    apiClient.post<BnkUpgrade>(`/api/k8s/clusters/${clusterId}/bnk/upgrade/${upgradeId}/cancel`).then((res) => res.data),
-
-  getBnkUpgradeHistory: (clusterId: number, limit: number = 20) =>
-    apiClient.get<BnkUpgradeHistoryResponse>(`/api/k8s/clusters/${clusterId}/bnk/upgrade/history`, { params: { limit } }).then((res) => res.data),
-
-  getBnkUpgradeDetail: (clusterId: number, upgradeId: number) =>
-    apiClient.get<BnkUpgrade>(`/api/k8s/clusters/${clusterId}/bnk/upgrade/${upgradeId}`).then((res) => res.data),
-
-  // BNK Release Registry (issue #217)
-  getBnkReleases: (activeOnly = true) =>
-    apiClient.get<BnkReleaseRegistryResponse>('/api/bnk/releases', { params: { active_only: activeOnly } }).then((res) => res.data),
-
-  syncBnkReleasesFromOci: (clusterId: number) =>
-    apiClient.post<{ tags_fetched: number; matched: number; unmatched: number; upserted: number }>(
-      `/api/k8s/clusters/${clusterId}/bnk/releases/sync`,
-    ).then((res) => res.data),
-
-  // DPF (NVIDIA DPU Infrastructure)
-  getDpfDetect: (clusterId: number) =>
-    apiClient.get<DpfDetectResponse>(`/api/k8s/clusters/${clusterId}/dpf/detect`).then((res) => res.data),
-
   getDpfData: (clusterId: number) =>
     apiClient.get<DpfDataResponse>(`/api/k8s/clusters/${clusterId}/dpf/data`).then((res) => res.data),
-
-  getDpfHealth: (clusterId: number) =>
-    apiClient.get<DpfHealthEndpointResponse>(`/api/k8s/clusters/${clusterId}/dpf/health`).then((res) => res.data),
 };

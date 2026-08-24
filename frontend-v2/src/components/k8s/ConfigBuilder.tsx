@@ -8,6 +8,13 @@
  * 4. Review — YAML preview, dry-run, apply all
  *
  * Part of TOPO-003b.
+ *
+ * **This is not deployment.** bnkscope removed everything that installs BNK
+ * onto a cluster (the pipeline, the deployment plan, the node-readiness
+ * probe). Configuring what an already-running TMM serves — gateways, routes,
+ * backends — is day-2 operation of a live cluster, which is exactly what this
+ * tool is for. The line is: bnkscope does not put BNK there; once it is there,
+ * telling it what to do is fair game.
  */
 
 import { useState, useMemo, useCallback } from 'react';
@@ -171,7 +178,7 @@ function GatewayStep({
 }) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div>
           <label className="text-xs font-medium opacity-70">Gateway Name</label>
           <Input

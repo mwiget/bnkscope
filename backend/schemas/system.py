@@ -7,7 +7,6 @@ Covers:
   - System health, queue metrics, performance
 """
 
-from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -25,12 +24,6 @@ class SettingsBatchUpdate(BaseModel):
     )
 
 
-class SettingsBatchResponse(BaseModel):
-    """Response for batch settings update."""
-    success: bool = True
-    message: str
-    updated: list[str] = Field(default_factory=list)
-    errors: list[dict[str, str]] = Field(default_factory=list)
 
 
 class SettingEntry(BaseModel):
@@ -59,65 +52,7 @@ class VersionResponse(BaseModel):
     error: str | None = None
 
 
-class UpgradeReadinessResponse(BaseModel):
-    """GUI upgrade readiness + deployment-mode hints."""
 
-    host_repo_path_set: bool
-    docker_socket_available: bool
-    upgrade_ready: bool
-    upgrade_in_progress: bool
-    deployment_mode: str = "server"
-    recommended_command: str | None = None
-    recommended_label: str | None = None
-    gui_upgrade_supported: bool = True
-
-
-# =============================================================================
-# AWS Auth Method
-# =============================================================================
-
-class AWSAuthMethodEnum(StrEnum):
-    profile = "profile"
-    access_keys = "access_keys"
-
-
-class AWSCredentials(BaseModel):
-    """Nested credentials object within AWSAuthMethod request."""
-    profile: str | None = Field(default=None, description="AWS CLI profile name (for profile auth)")
-    access_key_id: str | None = Field(default=None, description="AWS access key ID (for access_keys auth)")
-    secret_access_key: str | None = Field(
-        default=None, description="AWS secret access key (for access_keys auth)"
-    )
-    session_token: str | None = Field(
-        default=None, description="AWS session token for temporary credentials"
-    )
-
-
-class AWSAuthMethodRequest(BaseModel):
-    """Request body for POST /api/aws/auth-method."""
-    auth_method: AWSAuthMethodEnum = Field(
-        ..., description="Authentication method: 'profile' or 'access_keys'"
-    )
-    credentials: AWSCredentials = Field(
-        default_factory=AWSCredentials,
-        description="Credentials payload — fields depend on auth_method",
-    )
-    region: str | None = Field(default=None, description="AWS region to set as default")
-
-
-class KubeconfigRefreshResult(BaseModel):
-    """Sub-object in AWSAuthMethod response."""
-    refreshed: list[str] = Field(default_factory=list)
-    failed: list[str] = Field(default_factory=list)
-
-
-class AWSAuthMethodResponse(BaseModel):
-    """Response for POST /api/aws/auth-method."""
-    success: bool = True
-    auth_method: str
-    updated_keys: list[str]
-    message: str
-    kubeconfig_refresh: KubeconfigRefreshResult
 
 
 # =============================================================================
@@ -125,11 +60,13 @@ class AWSAuthMethodResponse(BaseModel):
 # =============================================================================
 
 class ServiceHealth(BaseModel):
-    """Health status of an individual service."""
+    """Health status of an individual service.
+
+    The ``workers`` / ``active_tasks`` fields went with Celery (Phase 4) — they
+    were only ever populated for the queue.
+    """
     status: str
     response_time_ms: float | None = None
-    workers: int | None = None
-    active_tasks: int | None = None
     error: str | None = None
 
 

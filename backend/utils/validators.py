@@ -175,31 +175,3 @@ VALID_IBM_REGIONS = {
 }
 
 
-def validate_ibm_region(value: str | None, field_name: str = "region") -> None:
-    """Validate that *value* is a known IBM Cloud region code.
-
-    Only validates when the value looks like an IBM region (matches one of the
-    short ``xx-yyy`` / ``xx-yyyy`` shapes). Free-form location labels are
-    allowed through. The IBM region naming pattern is distinguishable from
-    the AWS ``xx-yyyy-N`` pattern by the absence of a trailing digit segment.
-
-    Raises:
-        ValueError: If *value* looks like an IBM region but isn't recognized.
-    """
-    if not value:
-        return
-
-    # IBM regions are short two-segment codes without a trailing number:
-    # us-east, eu-de, jp-tok, br-sao, etc. AWS regions always have a trailing
-    # numeric segment (us-east-1). Reject only IBM-shaped values that aren't
-    # in the known set.
-    ibm_region_pattern = re.compile(r"^[a-z]{2,3}-[a-z]{2,5}$")
-    if not ibm_region_pattern.match(value):
-        return
-
-    if value not in VALID_IBM_REGIONS:
-        raise ValueError(
-            f"Invalid IBM Cloud region for '{field_name}': '{value}'. "
-            f"Must be a valid IBM Cloud MZR code (e.g. 'us-south', 'eu-de', 'jp-tok'). "
-            f"See https://cloud.ibm.com/docs/overview?topic=overview-locations"
-        )

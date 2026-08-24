@@ -15,7 +15,7 @@ describe('DatabaseManagement', () => {
     render(<DatabaseManagement />);
     expect(screen.getByText('Database management')).toBeInTheDocument();
     expect(
-      screen.getByText('Monitor database size, cleanup old records, and optimize performance')
+      screen.getByText('Monitor database size and reclaim unused space')
     ).toBeInTheDocument();
   });
 
@@ -31,16 +31,19 @@ describe('DatabaseManagement', () => {
     });
   });
 
-  it('shows cleanup tools when expanded', async () => {
+  it('offers vacuum, and no record deletion', async () => {
+    // The Delete Old Records control posted to /api/system/database/cleanup,
+    // which the backend has never served, and its three record types all named
+    // tables from the removed pipeline. Vacuum is the one the backend has.
     const user = userEvent.setup();
     render(<DatabaseManagement />);
 
     await user.click(screen.getByText('Database management'));
 
     await waitFor(() => {
-      expect(screen.getByText('Cleanup Tools')).toBeInTheDocument();
-      expect(screen.getByText('Delete Old Records')).toBeInTheDocument();
+      expect(screen.getByText('Maintenance')).toBeInTheDocument();
       expect(screen.getByText('Vacuum & Optimize')).toBeInTheDocument();
     });
+    expect(screen.queryByText('Delete Old Records')).not.toBeInTheDocument();
   });
 });

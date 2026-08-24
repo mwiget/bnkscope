@@ -7,7 +7,7 @@ import {
 } from '@/components/ui/popover';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Bell, ChevronRight, CheckCircle2, XCircle, Search, AlertTriangle, Info, Loader2, ShieldAlert, X } from 'lucide-react';
+import { Bell, CheckCircle2, XCircle, Search, AlertTriangle, Info, Loader2, Menu, ShieldAlert, X } from 'lucide-react';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
 import {
   useUnreadCount,
@@ -19,9 +19,9 @@ import {
 } from '@/hooks/useNotifications';
 import type { NotificationData } from '@/lib/api/notifications';
 import { useUpgradeStatus } from '@/hooks/useSystem';
-import { ProcessMetricsBar } from './ProcessMetricsBar';
 import { useMaintenanceStatus } from '@/hooks/useBackup';
 import { formatTimeAgo } from '@/lib/time-utils';
+import { useIsHandheld } from '@/hooks/useMediaQuery';
 
 function MaintenanceBanner() {
   const { data: maintenance, isLoading } = useMaintenanceStatus();
@@ -40,41 +40,19 @@ function MaintenanceBanner() {
   );
 }
 
-// Page metadata for dynamic context
-const pageMetadata: Record<string, { title: string; breadcrumbs: { label: string; href?: string }[] }> = {
-  '/': {
-    title: 'Command Center',
-    breadcrumbs: [{ label: 'Observe' }],
-  },
-  '/projects': {
-    title: 'Projects',
-    breadcrumbs: [{ label: 'Build' }],
-  },
-  '/modules': {
-    title: 'Module Catalog',
-    breadcrumbs: [{ label: 'Build' }],
-  },
-  '/tasks': {
-    // K8S-UX-006: Renamed from "Activity" to "Operations Log"
-    title: 'Operations Log',
-    breadcrumbs: [{ label: 'Operate' }],
-  },
-  '/kubernetes': {
-    title: 'Kubernetes',
-    breadcrumbs: [{ label: 'Operate' }],
-  },
-  '/f5bnk': {
-    title: 'F5 BNK',
-    breadcrumbs: [{ label: 'Operate' }],
-  },
-  '/system': {
-    title: 'System',
-    breadcrumbs: [{ label: 'Operate' }],
-  },
-  '/settings': {
-    title: 'Settings',
-    breadcrumbs: [{ label: 'Configure' }],
-  },
+// Page titles. The breadcrumb trail that used to sit above them named the
+// bnk-forge section a page belonged to (Build / Operate / Configure); with four
+// flat lenses there is no hierarchy left to describe, so the title stands alone.
+const pageMetadata: Record<string, { title: string }> = {
+  '/': { title: 'Overview' },
+  '/kubernetes': { title: 'Clusters' },
+  '/bnk': { title: 'BNK Health' },
+  '/cnf': { title: 'CNF Resources' },
+  '/tmm-live': { title: 'TMM Live' },
+  '/observability/ai-gateway': { title: 'AI Gateway' },
+  '/observability/ai-gateway/logs': { title: 'AI Gateway Logs' },
+  '/system': { title: 'System' },
+  '/mcp-server': { title: 'MCP Server' },
 };
 
 // ─── Severity icon + colour ────────────────────────────────────────────────
@@ -351,14 +329,17 @@ function NotificationBell() {
 
 // ─── Main Header component ─────────────────────────────────────────────────
 
-export function Header() {
+interface HeaderProps {
+  /** Opens the nav drawer. Only rendered below `md`, where the nav is one. */
+  onOpenNav?: () => void;
+}
+
+export function Header({ onOpenNav }: HeaderProps = {}) {
   const location = useLocation();
+  const handheld = useIsHandheld();
   const { isUpgrading, upgradePhaseLabel } = useUpgradeStatus();
 
-  const currentPage = pageMetadata[location.pathname] || {
-    title: 'Infrastructure Management',
-    breadcrumbs: [{ label: 'Home' }],
-  };
+  const currentPage = pageMetadata[location.pathname] ?? { title: 'bnkscope' };
 
   return (
     <header className="border-b bg-card">
@@ -376,9 +357,9 @@ export function Header() {
             <ShieldAlert className="h-3 w-3 mr-1" />
             Deployments locked
           </Badge>
-          {location.pathname !== '/settings' && (
+          {location.pathname !== '/system' && (
             <Link
-              to="/settings"
+              to="/system"
               className="ml-2 text-xs underline underline-offset-2 opacity-80 hover:opacity-100"
             >
               View progress
@@ -386,33 +367,25 @@ export function Header() {
           )}
         </div>
       )}
-      <div className="flex items-center justify-between px-6 py-4">
-        {/* Left side: Page context and breadcrumbs */}
-        <div className="flex items-center gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
-              {currentPage.breadcrumbs.map((crumb, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  {index > 0 && <ChevronRight className="h-3 w-3" />}
-                  {crumb.href ? (
-                    <Link to={crumb.href} className="hover:text-foreground transition-colors">
-                      {crumb.label}
-                    </Link>
-                  ) : (
-                    <span>{crumb.label}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-            <h2 className="text-lg font-semibold">{currentPage.title}</h2>
-          </div>
+      <div className="flex items-center justify-between gap-2 px-4 py-3 md:px-6 md:py-4">
+        {/* Left side: nav trigger (handheld only) + page title */}
+        <div className="flex min-w-0 items-center gap-2">
+          {handheld && onOpenNav && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 flex-none"
+              onClick={onOpenNav}
+              aria-label="Open navigation"
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+          )}
+          <h2 className="truncate text-lg font-semibold">{currentPage.title}</h2>
         </div>
 
         {/* Right side: Actions */}
         <div className="flex items-center gap-2">
-          {/* Backend process metrics strip */}
-          <ProcessMetricsBar />
-
           {/* Global Search / Command Palette Trigger */}
           <Button
             variant="outline"

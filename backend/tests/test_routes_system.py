@@ -17,38 +17,22 @@ class TestSystemRoutes:
     """Route-level integration tests for /api/system."""
 
     def test_health_no_auth(self, client, db):
-        """GET /api/system/health works without authentication (public endpoint)."""
-        # Mock the SystemService.get_health to avoid Redis/Celery dependencies
-        mock_health = {
-            "services": {
-                "backend": {"status": "healthy", "response_time_ms": 1.0},
-                "database": {"status": "healthy", "response_time_ms": 2.0},
-            },
-            "timestamp": "2026-02-18T00:00:00",
-        }
-        with patch("routes.system.SystemService") as MockService:
-            MockService.return_value.get_health.return_value = mock_health
-            response = client.get("/api/system/health")
+        """GET /api/system/health works without authentication (public endpoint).
+
+        Deliberately NOT mocking SystemService. It used to be mocked "to avoid
+        Redis/Celery dependencies", which meant the route's response_model was
+        never validated against what the service actually returns — and a
+        service returning the wrong dict is a 500 the mock cannot see. The
+        dependencies are gone (Phase 4), so run the real thing.
+        """
+        response = client.get("/api/system/health")
 
         assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
 
         data = response.json()
-        assert "services" in data
         assert data["services"]["backend"]["status"] == "healthy"
-
-    def test_system_version_requires_auth(self, client):
-        """GET /api/system/version requires admin auth — returns 401 without token."""
-        response = client.get("/api/system/version")
-        assert response.status_code == 401
-
-        data = response.json()
-        assert data["error"]["code"] == "UNAUTHORIZED"
-
-
-# ---------------------------------------------------------------------------
-# MCP status tests — mock httpx so the route never dials out
-# ---------------------------------------------------------------------------
-
+        assert data["services"]["database"]["status"] == "healthy"
+        assert data["timestamp"]
 
 def _make_httpx_post_mock(tools: list[dict], *, ping_status: int = 200) -> MagicMock:
     """Return a side_effect function for httpx.post that simulates the MCP handshake."""
@@ -82,7 +66,7 @@ class TestMCPStatus:
         tools = [
             {"name": "system_health", "description": "Health check", "_meta": {"module": "system"}},
             {"name": "list_clusters", "description": "List clusters", "_meta": {"module": "cluster_management"}},
-            {"name": "helm_install", "description": "Install chart", "_meta": {"module": "helm"}},
+            {"name": "bnk_health", "description": "BNK health", "_meta": {"module": "bnk_operations"}},
         ]
         mock_post = _make_httpx_post_mock(tools)
 
@@ -110,8 +94,8 @@ class TestMCPStatus:
         assert "Cluster Management" in catalog
         assert any(t["name"] == "list_clusters" for t in catalog["Cluster Management"]["tools"])
 
-        assert "Helm" in catalog
-        assert any(t["name"] == "helm_install" for t in catalog["Helm"]["tools"])
+        assert "F5 BNK Operations" in catalog
+        assert any(t["name"] == "bnk_health" for t in catalog["F5 BNK Operations"]["tools"])
 
         # No "Other" bucket when all tools have known modules
         assert "Other" not in catalog

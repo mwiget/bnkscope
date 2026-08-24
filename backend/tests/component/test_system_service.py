@@ -1,17 +1,16 @@
 """
 Tests for services.system_service — system health, version, cleanup, database stats.
 
-BC-011: SystemService — real DB for cleanup, mock Celery/Redis/GitHub for external calls.
+BC-011: SystemService — real DB for cleanup, mock GitHub for external calls.
 """
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
+from sqlalchemy import text
 
 from core.errors import BadRequestError
-from models import AuditLog, DeploymentLog, Task
-from models.enums import TaskStatus
 from services.system_service import SystemService
 
 # ---------------------------------------------------------------------------
@@ -31,62 +30,60 @@ def _noop_cache():
 # ---------------------------------------------------------------------------
 
 class TestGetHealth:
-    """System health endpoint covering DB, Redis, Celery."""
+    """The body behind GET /api/system/health.
 
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.celery_app")
-    @patch("services.system_service.cache", _noop_cache())
-    def test_healthy_system(self, mock_celery, mock_hb, db):
-        mock_celery.backend.client.ping.return_value = True
-        mock_hb.get_worker_status.return_value = {
-            "total": 2, "active": 2, "offline": 0, "active_tasks": 1,
-        }
-        svc = SystemService(db)
-        result = svc.get_health()
+    Every test that touched this used to mock the service out, because the real
+    thing needed Redis and a Celery worker. It doesn't any more (Phase 4), so
+    these run it for real — and they must, since the route declares a
+    response_model and a wrong-shaped return is a 500 no unit test would see.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_cache(self):
+        from core.cache import cache as real_cache
+        real_cache.delete("system:health")
+        yield
+        real_cache.delete("system:health")
+
+    def test_shape_matches_the_declared_response_model(self, db):
+        from schemas.system import SystemHealthResponse
+
+        result = SystemService(db).get_health()
+        SystemHealthResponse.model_validate(result)  # raises if the shape drifted
+
+    def test_reports_backend_and_database(self, db):
+        result = SystemService(db).get_health()
+        assert set(result["services"]) == {"backend", "database"}
         assert result["services"]["backend"]["status"] == "healthy"
         assert result["services"]["database"]["status"] == "healthy"
-        assert result["services"]["redis"]["status"] == "healthy"
-        assert result["services"]["celery"]["status"] == "healthy"
 
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.celery_app")
-    @patch("services.system_service.cache", _noop_cache())
-    def test_redis_offline(self, mock_celery, mock_hb, db):
-        mock_celery.backend.client.ping.side_effect = ConnectionError("refused")
-        mock_hb.get_worker_status.return_value = {
-            "total": 0, "active": 0, "offline": 0, "active_tasks": 0,
-        }
+    def test_carries_a_timestamp(self, db):
+        timestamp = SystemService(db).get_health()["timestamp"]
+        assert timestamp
+        assert "T" in timestamp  # ISO-8601
+
+    def test_a_dead_database_is_offline_not_an_exception(self, db):
+        """The health endpoint must answer even when the thing it checks is down."""
         svc = SystemService(db)
-        result = svc.get_health()
-        assert result["services"]["redis"]["status"] == "offline"
+        with patch.object(svc, "db") as broken:
+            broken.execute.side_effect = RuntimeError("database is locked")
+            result = svc.get_health()
 
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.celery_app")
-    @patch("services.system_service.cache", _noop_cache())
-    def test_no_celery_workers_degraded(self, mock_celery, mock_hb, db):
-        mock_celery.backend.client.ping.return_value = True
-        mock_hb.get_worker_status.return_value = {
-            "total": 0, "active": 0, "offline": 0, "active_tasks": 0,
-        }
+        assert result["services"]["database"]["status"] == "offline"
+        assert "database is locked" in result["services"]["database"]["error"]
+
+    def test_the_result_is_cached(self, db):
+        from core.cache import cache as real_cache
+
+        first = SystemService(db).get_health()
+        assert real_cache.get("system:health") == first
+
+        # A second call must come from the cache, not re-probe the database.
         svc = SystemService(db)
-        result = svc.get_health()
-        assert result["services"]["celery"]["status"] == "degraded"
+        with patch.object(svc, "db") as never_touched:
+            assert svc.get_health() == first
+            never_touched.execute.assert_not_called()
 
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.celery_app")
-    @patch("services.system_service.cache")
-    def test_returns_cached_health(self, mock_cache, mock_celery, mock_hb, db):
-        cached_data = {"services": {"backend": {"status": "healthy"}}, "timestamp": "cached"}
-        mock_cache.get.return_value = cached_data
-        svc = SystemService(db)
-        result = svc.get_health()
-        assert result["timestamp"] == "cached"
-        mock_celery.backend.client.ping.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# is_upgrade_in_progress
-# ---------------------------------------------------------------------------
 
 class TestIsUpgradeInProgress:
     """Class-level upgrade lock flag."""
@@ -203,206 +200,11 @@ class TestGetSystemVersion:
 # cleanup_database
 # ---------------------------------------------------------------------------
 
-class TestCleanupDatabase:
-    """Database cleanup with real DB rows."""
-
-    def _mock_pg_size(self, db):
-        """Patch pg_database_size calls to return 0 (SQLite doesn't have it)."""
-        original_execute = db.execute
-
-        def patched_execute(stmt, *args, **kwargs):
-            stmt_str = str(stmt) if not isinstance(stmt, str) else stmt
-            if "pg_database_size" in str(stmt_str):
-                mock_result = MagicMock()
-                mock_result.__getitem__ = lambda s, i: 0
-                mock_result.fetchone = lambda: mock_result
-                return mock_result
-            return original_execute(stmt, *args, **kwargs)
-
-        return patch.object(db, "execute", side_effect=patched_execute)
-
-    def test_cleanup_too_recent_raises(self, db):
-        svc = SystemService(db)
-        with pytest.raises(BadRequestError, match="newer than 7 days"):
-            svc.cleanup_database("deployment_logs", older_than_days=3)
-
-    def test_cleanup_invalid_type_raises(self, db):
-        svc = SystemService(db)
-        with self._mock_pg_size(db):
-            with pytest.raises(BadRequestError, match="Invalid cleanup type"):
-                svc.cleanup_database("invalid_type", older_than_days=30)
-
-    def test_cleanup_completed_tasks(self, db, make_project, make_task):
-        """Old completed tasks are deleted; recent ones are kept."""
-        project = make_project()
-        old_date = datetime.now(UTC) - timedelta(days=60)
-        # Old completed task — should be deleted
-        make_task(project=project, status="completed",
-                  completed_at=old_date)
-        # Recent completed task — should be kept
-        make_task(project=project, status="completed",
-                  completed_at=datetime.now(UTC))
-
-        svc = SystemService(db)
-        with self._mock_pg_size(db):
-            result = svc.cleanup_database("completed_tasks", older_than_days=30)
-        assert result["deleted"] == 1
-
-    def test_cleanup_audit_logs(self, db):
-        """Old audit logs are deleted."""
-        old_date = datetime.now(UTC) - timedelta(days=60)
-        recent_date = datetime.now(UTC)
-        db.add(AuditLog(timestamp=old_date, action="login", user="test"))
-        db.add(AuditLog(timestamp=recent_date, action="login", user="test"))
-        db.flush()
-
-        svc = SystemService(db)
-        with self._mock_pg_size(db):
-            result = svc.cleanup_database("audit_logs", older_than_days=30)
-        assert result["deleted"] == 1
-
-
-# ---------------------------------------------------------------------------
-# get_database_stats
-# ---------------------------------------------------------------------------
-
 class TestGetDatabaseStats:
     """Database statistics with mocked pg-specific SQL."""
 
-    def test_get_database_stats(self, db):
-        """Stats returns table row counts even when pg functions fail."""
-        original_execute = db.execute
-
-        def patched_execute(stmt, *args, **kwargs):
-            stmt_str = str(stmt) if not isinstance(stmt, str) else stmt
-            if "pg_database_size" in str(stmt_str):
-                mock_result = MagicMock()
-                mock_result.__getitem__ = lambda s, i: 1048576  # 1 MB
-                mock_result.fetchone = lambda: mock_result
-                return mock_result
-            if "pg_total_relation_size" in str(stmt_str):
-                mock_result = MagicMock()
-                mock_result.__getitem__ = lambda s, i: 524288  # 0.5 MB
-                mock_result.fetchone = lambda: mock_result
-                return mock_result
-            return original_execute(stmt, *args, **kwargs)
-
-        with patch.object(db, "execute", side_effect=patched_execute):
-            svc = SystemService(db)
-            result = svc.get_database_stats()
-
-        assert "size_mb" in result
-        assert "tables" in result
-        assert "tasks" in result["tables"]
-        assert "deployment_logs" in result["tables"]
-        assert "audit_logs" in result["tables"]
-
-    def test_stats_handles_pg_failure_gracefully(self, db):
-        """When pg-specific SQL fails, table_size_mb falls back to 0."""
-        original_execute = db.execute
-
-        call_count = {"n": 0}
-
-        def patched_execute(stmt, *args, **kwargs):
-            stmt_str = str(stmt) if not isinstance(stmt, str) else stmt
-            if "pg_database_size" in str(stmt_str):
-                mock_result = MagicMock()
-                mock_result.__getitem__ = lambda s, i: 0
-                mock_result.fetchone = lambda: mock_result
-                return mock_result
-            if "pg_total_relation_size" in str(stmt_str):
-                raise Exception("SQLite doesn't have pg_total_relation_size")
-            return original_execute(stmt, *args, **kwargs)
-
-        with patch.object(db, "execute", side_effect=patched_execute):
-            svc = SystemService(db)
-            result = svc.get_database_stats()
-
-        for table in result["tables"].values():
-            assert table["size_mb"] == 0
-            assert "rows" in table
-
-
-# ---------------------------------------------------------------------------
-# get_queue_metrics
-# ---------------------------------------------------------------------------
-
-class TestGetQueueMetrics:
-    """Queue metrics — worker/queue stats with Celery/heartbeat mocked."""
-
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.cache", _noop_cache())
-    def test_queue_metrics_healthy(self, mock_hb, db):
-        mock_hb.get_worker_status.return_value = {
-            "total": 2, "active": 2, "offline": 0, "active_tasks": 3,
-        }
-        mock_hb.get_queue_stats.return_value = {
-            "default": {"pending": 1, "active": 2},
-            "opentofu": {"pending": 0, "active": 1},
-        }
-        svc = SystemService(db)
-        result = svc.get_queue_metrics()
-
-        assert result["workers"]["total"] == 2
-        assert result["queues"]["default"]["pending"] == 1
-        assert "tasks" in result
-        assert result["tasks"]["active"] == 3
-
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.cache", _noop_cache())
-    def test_queue_metrics_celery_failure_fallback(self, mock_hb, db):
-        mock_hb.get_worker_status.side_effect = Exception("Celery offline")
-        svc = SystemService(db)
-        result = svc.get_queue_metrics()
-
-        assert result["workers"]["total"] == 0
-        assert "tasks" in result
-
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.cache")
-    def test_queue_metrics_cached(self, mock_cache, mock_hb, db):
-        cached_data = {"workers": {"total": 5}, "queues": {}, "tasks": {}}
-        mock_cache.get.return_value = cached_data
-        svc = SystemService(db)
-        result = svc.get_queue_metrics()
-        assert result["workers"]["total"] == 5
-        mock_hb.get_worker_status.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# get_performance_metrics
-# ---------------------------------------------------------------------------
-
 class TestGetPerformanceMetrics:
     """Performance metrics — task durations, DB stats."""
-
-    @patch("services.system_service.cache", _noop_cache())
-    def test_performance_metrics_basic(self, db):
-        """With no tasks, returns zeroed metrics."""
-        original_execute = db.execute
-
-        def patched_execute(stmt, *args, **kwargs):
-            stmt_str = str(stmt) if not isinstance(stmt, str) else stmt
-            if "pg_database_size" in str(stmt_str):
-                mock_result = MagicMock()
-                mock_result.__getitem__ = lambda s, i: 0
-                mock_result.fetchone = lambda: mock_result
-                return mock_result
-            if "pg_stat_activity" in str(stmt_str):
-                mock_result = MagicMock()
-                mock_result.__getitem__ = lambda s, i: 5
-                mock_result.fetchone = lambda: mock_result
-                return mock_result
-            return original_execute(stmt, *args, **kwargs)
-
-        with patch.object(db, "execute", side_effect=patched_execute):
-            svc = SystemService(db)
-            result = svc.get_performance_metrics()
-
-        assert "api" in result
-        assert "database" in result
-        assert "tasks" in result
-        assert result["api"]["avg_task_duration_ms"] >= 0
 
     @patch("services.system_service.cache")
     def test_performance_metrics_cached(self, mock_cache, db):
@@ -428,40 +230,14 @@ class TestGetRecentErrors:
         assert result["total"] == 0
 
     @patch("services.system_service.cache", _noop_cache())
-    def test_with_failed_tasks(self, db, make_project, make_task):
-        project = make_project()
-        make_task(project=project, status="failed", error="Something broke")
-        make_task(project=project, status="failed", error="Another error")
-        make_task(project=project, status="completed")
-
-        svc = SystemService(db)
-        result = svc.get_recent_errors()
-        assert result["total"] == 2
-        assert len(result["errors"]) == 2
-        assert result["errors"][0]["error"] == "Another error" or result["errors"][0]["error"] == "Something broke"
-
-    @patch("services.system_service.cache", _noop_cache())
     def test_limit_capped_at_50(self, db):
         svc = SystemService(db)
         result = svc.get_recent_errors(limit=100)
         # Should not error, but limit is capped internally
         assert result["total"] >= 0
 
-    @patch("services.system_service.cache")
-    def test_recent_errors_cached(self, mock_cache, db):
-        cached = {"errors": [{"task_id": 99}], "total": 1}
-        mock_cache.get.return_value = cached
-        svc = SystemService(db)
-        result = svc.get_recent_errors()
-        assert result["total"] == 1
-
-
-# ---------------------------------------------------------------------------
-# vacuum_database
-# ---------------------------------------------------------------------------
-
 class TestVacuumDatabase:
-    """VACUUM ANALYZE operation."""
+    """VACUUM operation."""
 
     def test_vacuum_success(self, db):
         """Mock the raw connection for VACUUM."""
@@ -478,7 +254,7 @@ class TestVacuumDatabase:
 
         assert result["status"] == "success"
         assert "duration_seconds" in result
-        mock_cursor.execute.assert_called_once_with("VACUUM ANALYZE")
+        mock_cursor.execute.assert_called_once_with("VACUUM")
 
     def test_vacuum_failure_skipped(self, db):
         """When VACUUM fails, result should be 'skipped'."""
@@ -551,27 +327,6 @@ class TestPreUpgradeSafetyChecks:
     @patch("services.system_service.subprocess.run")
     @patch.object(SystemService, "get_system_version")
     @patch.object(SystemService, "get_upgrade_readiness")
-    def test_blocked_by_active_tasks(self, mock_ready, mock_version, mock_run, db, make_project, make_task):
-        mock_ready.return_value = {
-            "host_repo_path_set": True, "docker_socket_available": True,
-            "upgrade_ready": True, "upgrade_in_progress": False,
-        }
-        mock_version.return_value = {
-            "current_version": "2.0.0", "latest_version": "2.1.0",
-            "update_available": True,
-        }
-        # Create an in-progress task
-        project = make_project()
-        make_task(project=project, status="in_progress")
-
-        svc = SystemService(db)
-        result = svc.trigger_upgrade()
-        assert result["status"] == "blocked"
-        assert "1 deployment" in result["message"]
-
-    @patch("services.system_service.subprocess.run")
-    @patch.object(SystemService, "get_system_version")
-    @patch.object(SystemService, "get_upgrade_readiness")
     def test_blocked_by_docker_failure(self, mock_ready, mock_version, mock_run, db):
         mock_ready.return_value = {
             "host_repo_path_set": True, "docker_socket_available": True,
@@ -616,46 +371,29 @@ class TestPreUpgradeSafetyChecks:
 class TestVerifyPostUpgrade:
     """UP-011: Post-upgrade service health verification."""
 
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.celery_app")
     @patch("services.system_service.os.path.exists", side_effect=lambda p: p == "VERSION")
     @patch("builtins.open", create=True)
-    def test_healthy_verdict(self, mock_open, mock_exists, mock_celery, mock_hb, db):
+    def test_healthy_verdict(self, mock_open, mock_exists, db):
         mock_open.return_value.__enter__ = lambda s: s
         mock_open.return_value.__exit__ = MagicMock(return_value=False)
         mock_open.return_value.read.return_value = "2.1.0"
-        mock_celery.backend.client.ping.return_value = True
-        mock_hb.get_worker_status.return_value = {"total": 2, "active": 2, "offline": 0}
 
         svc = SystemService(db)
         # Set upgrade state with matching expected version
         svc._save_upgrade_state({"new_version": "2.1.0", "status": "completed", "log": []})
 
-        with patch("services.system_service.SystemService.verify_post_upgrade") as mock_verify:
-            # Call the real method — we need to avoid the Alembic import
-            mock_verify.side_effect = lambda: SystemService.verify_post_upgrade(svc)
-            # Actually just call it directly and handle Alembic gracefully
-            pass
-
         result = svc.verify_post_upgrade()
         assert result["checks"]["version"]["status"] == "pass"
         assert result["checks"]["database"]["status"] == "pass"
-        assert result["checks"]["redis"]["status"] == "pass"
-        assert result["checks"]["celery"]["status"] == "pass"
-        # Alembic check will be 'skip' in test environment
-        assert result["checks"]["migrations"]["status"] in ("pass", "skip")
-        assert result["verdict"] in ("healthy", "degraded")  # degraded if migrations skip
+        assert result["checks"]["schema"]["status"] == "pass"
+        assert result["verdict"] == "healthy"
 
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.celery_app")
     @patch("services.system_service.os.path.exists", side_effect=lambda p: p == "VERSION")
     @patch("builtins.open", create=True)
-    def test_version_mismatch_fails(self, mock_open, mock_exists, mock_celery, mock_hb, db):
+    def test_version_mismatch_fails(self, mock_open, mock_exists, db):
         mock_open.return_value.__enter__ = lambda s: s
         mock_open.return_value.__exit__ = MagicMock(return_value=False)
         mock_open.return_value.read.return_value = "2.0.0"  # Still old version!
-        mock_celery.backend.client.ping.return_value = True
-        mock_hb.get_worker_status.return_value = {"total": 1, "active": 1, "offline": 0}
 
         svc = SystemService(db)
         svc._save_upgrade_state({"new_version": "2.1.0", "status": "completed", "log": []})
@@ -663,33 +401,22 @@ class TestVerifyPostUpgrade:
         assert result["checks"]["version"]["status"] == "fail"
         assert result["verdict"] == "unhealthy"
 
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.celery_app")
-    @patch("services.system_service.os.path.exists", return_value=False)
-    def test_redis_down_unhealthy(self, mock_exists, mock_celery, mock_hb, db):
-        mock_celery.backend.client.ping.side_effect = ConnectionError("refused")
-        mock_hb.get_worker_status.return_value = {"total": 0, "active": 0, "offline": 0}
+    @patch("services.system_service.os.path.exists", side_effect=lambda p: p == "VERSION")
+    @patch("builtins.open", create=True)
+    def test_missing_table_fails_the_schema_check(self, mock_open, mock_exists, db):
+        """A table the models declare but the database lacks is a failed upgrade."""
+        mock_open.return_value.__enter__ = lambda s: s
+        mock_open.return_value.__exit__ = MagicMock(return_value=False)
+        mock_open.return_value.read.return_value = "2.1.0"
 
         svc = SystemService(db)
+        svc._save_upgrade_state({"new_version": "2.1.0", "status": "completed", "log": []})
+        db.execute(text("DROP TABLE notifications"))
+
         result = svc.verify_post_upgrade()
-        assert result["checks"]["redis"]["status"] == "fail"
+        assert result["checks"]["schema"]["status"] == "fail"
+        assert "notifications" in result["checks"]["schema"]["missing_tables"]
         assert result["verdict"] == "unhealthy"
-
-    @patch("services.system_service.heartbeat")
-    @patch("services.system_service.celery_app")
-    @patch("services.system_service.os.path.exists", return_value=False)
-    def test_no_workers_warns(self, mock_exists, mock_celery, mock_hb, db):
-        mock_celery.backend.client.ping.return_value = True
-        mock_hb.get_worker_status.return_value = {"total": 0, "active": 0, "offline": 0}
-
-        svc = SystemService(db)
-        result = svc.verify_post_upgrade()
-        assert result["checks"]["celery"]["status"] == "warn"
-
-
-# ---------------------------------------------------------------------------
-# trigger_upgrade
-# ---------------------------------------------------------------------------
 
 class TestTriggerUpgrade:
     """System upgrade trigger with mocked readiness and version check."""

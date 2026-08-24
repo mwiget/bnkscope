@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   getPlatformProfileLabel,
-  getProjectClusterPlatformMismatch,
   shouldShowDetectManagedClustersFromContext,
   shouldShowDetectEksFromContext,
 } from '@/lib/platform-context';
@@ -12,23 +11,6 @@ describe('platform-context helpers', () => {
     expect(getPlatformProfileLabel('roks')).toBe('IBM ROKS');
     expect(getPlatformProfileLabel('generic_onprem')).toBe('Generic On-Prem');
     expect(getPlatformProfileLabel('unknown')).toBe('Unknown');
-  });
-
-  it('detects mismatch only when both sides are known and different', () => {
-    expect(getProjectClusterPlatformMismatch(
-      { target_platform_profile: 'eks' } as never,
-      { detected_platform_profile: 'ocp' } as never,
-    )).toBe(true);
-
-    expect(getProjectClusterPlatformMismatch(
-      { target_platform_profile: 'eks' } as never,
-      { detected_platform_profile: 'eks' } as never,
-    )).toBe(false);
-
-    expect(getProjectClusterPlatformMismatch(
-      { target_platform_profile: 'unknown' } as never,
-      { detected_platform_profile: 'ocp' } as never,
-    )).toBe(false);
   });
 
   it('gates EKS detection using target-platform metadata first', () => {

@@ -18,22 +18,22 @@ import { Badge } from '@/components/ui/badge';
 import { Activity, AlertTriangle, Globe, LayoutGrid, Network, Server } from 'lucide-react';
 import { ResourcePageHeader } from '@/components/layout/ResourcePageHeader';
 import { ResourceExplorerLayout } from '@/components/layout/ResourceExplorerLayout';
+import { ResourceCategorySidebarTrigger } from '@/components/layout/ResourceCategorySidebar';
 import { ResourceViewTabs } from '@/components/layout/ResourceViewTabs';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonTable } from '@/components/ui/skeleton-table';
 import { ConnectivityGate } from '@/components/ConnectivityGate';
 import { ResourceDescribeViewer } from '@/components/k8s/ResourceDescribeViewer';
 import { ResourceTopologyGraph } from '@/components/k8s/ResourceTopologyGraph';
-import { useProjects } from '@/hooks/useProjects';
+import { NeedsWiderScreen } from '@/components/ui/needs-wider-screen';
 import { useAllClusters } from '@/hooks/useK8sClusters';
-import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
-import { useAutoSelectProjectCluster } from '@/hooks/useAutoSelectProjectCluster';
+import { useClusterNamespaces } from '@/hooks/useK8s';
 import { useClusterReachable } from '@/hooks/useConnectivity';
 import { useClusterResources } from '@/hooks/useK8sResources';
 import { useCrds } from '@/hooks/useCrds';
 import { useTopology } from '@/hooks/useTopology';
 import { parseApiError } from '@/lib/error-handler';
-import { STORAGE_KEYS } from '@/lib/storage-keys';
+import { useSelectedCluster } from '@/hooks/useSelectedCluster';
 import type { K8sResource } from '@/types/kubernetes';
 
 import {
@@ -52,50 +52,24 @@ export default function CNF() {
   const queryClient = useQueryClient();
   const borderDefault = 'border-border';
 
-  // Project and cluster selection (persisted to localStorage)
-  const { data: projects } = useProjects();
+  // Cluster selection (persisted to localStorage). Clusters are a flat list
+  // now — project scoping went with the pipeline (bnkscope Phase 1).
   const { data: allClustersResponse } = useAllClusters();
-  const allClusters = allClustersResponse?.clusters ?? [];
+  const clusters = useMemo(() => allClustersResponse?.clusters ?? [], [allClustersResponse?.clusters]);
+  const visibleClusters = clusters;
 
-  const [selectedProject, setSelectedProject] = useState<number | null>(() => {
-    const stored = localStorage.getItem(STORAGE_KEYS.CNF_PROJECT);
-    return stored ? parseInt(stored) : null;
-  });
-  const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
-    const stored = localStorage.getItem(STORAGE_KEYS.CNF_CLUSTER);
-    return stored ? parseInt(stored) : null;
-  });
+  const [selectedCluster, setSelectedCluster] = useSelectedCluster();
 
-  const { data: clusters = [] } = useProjectClusters(selectedProject ?? 0, {
-    pollingEnabled: false,
-  });
-
-  // Auto-resolve project from cluster (e.g. deep-link with cluster ID)
   useEffect(() => {
-    if (selectedCluster && !selectedProject && allClusters.length > 0) {
-      const match = allClusters.find((c) => c.id === selectedCluster);
-      if (match?.project_id) setSelectedProject(match.project_id);
-    }
-  }, [selectedCluster, selectedProject, allClusters]);
-
-  const visibleClusters = useMemo(() => {
-    if (!selectedProject) return clusters ?? [];
-    if ((clusters ?? []).length > 0) return clusters ?? [];
-    return allClusters.filter((c) => c.project_id === selectedProject);
-  }, [selectedProject, clusters, allClusters]);
-
-  useAutoSelectProjectCluster({
-    projects,
-    allClusters,
-    visibleClusters,
-    selectedProject,
-    selectedCluster,
-    setSelectedProject,
-    setSelectedCluster,
-  });
+    if (clusters.length === 0) return;
+    const stillValid = selectedCluster ? clusters.some((c) => c.id === selectedCluster) : false;
+    if (!stillValid) setSelectedCluster(clusters[0].id);
+  }, [clusters, selectedCluster, setSelectedCluster]);
 
   // Namespace selector and search
   const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
+  // Below `lg` the category tree is a drawer rather than a column.
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // View toggle: resource browser vs topology graph
@@ -104,30 +78,6 @@ export default function CNF() {
   const clusterReachable = useClusterReachable(selectedCluster ?? undefined);
 
   // Persist selections
-  useEffect(() => {
-    if (selectedProject !== null) {
-      localStorage.setItem(STORAGE_KEYS.CNF_PROJECT, selectedProject.toString());
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.CNF_PROJECT);
-    }
-  }, [selectedProject]);
-
-  useEffect(() => {
-    if (selectedCluster !== null) {
-      localStorage.setItem(STORAGE_KEYS.CNF_CLUSTER, selectedCluster.toString());
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.CNF_CLUSTER);
-    }
-  }, [selectedCluster]);
-
-  // Clear cluster when project changes and cluster no longer belongs to it
-  useEffect(() => {
-    if (selectedProject && selectedCluster) {
-      const exists = visibleClusters.some((c) => c.id === selectedCluster);
-      if (!exists && visibleClusters.length > 0) setSelectedCluster(visibleClusters[0].id);
-      else if (!exists) setSelectedCluster(null);
-    }
-  }, [selectedProject, visibleClusters, selectedCluster]);
 
   // CRD discovery
   const { data: crdsData, isLoading: crdsLoading, error: crdsError } = useCrds(
@@ -365,13 +315,23 @@ export default function CNF() {
 
     return (
       <div className="flex-1 h-full overflow-hidden">
-        <ResourceTopologyGraph
-          key={`${topologyNamespace}-${selectedCluster}`}
-          nodes={topologyData.nodes}
-          edges={topologyData.edges}
-          info={topologyData.info}
-          onDescribeResource={handleDescribe}
-        />
+        <NeedsWiderScreen
+          id="cnf-topology"
+          title="The topology graph"
+          reason="Nodes and edges overlap below about 1024px — the graph draws, but you cannot read it."
+          threshold="compact"
+          instead={
+            <>Switch to <span className="font-medium text-foreground">Browser</span> to see the same resources as a list, with their conditions.</>
+          }
+        >
+          <ResourceTopologyGraph
+            key={`${topologyNamespace}-${selectedCluster}`}
+            nodes={topologyData.nodes}
+            edges={topologyData.edges}
+            info={topologyData.info}
+            onDescribeResource={handleDescribe}
+          />
+        </NeedsWiderScreen>
       </div>
     );
   };
@@ -421,9 +381,6 @@ export default function CNF() {
       <ResourcePageHeader
         title="Custom Resources"
         subtitle="Discovery-driven CRD browser — read-only metadata, conditions, and YAML"
-        projects={projects || []}
-        selectedProjectId={selectedProject}
-        onProjectChange={setSelectedProject}
         clusters={visibleClusters}
         selectedClusterId={selectedCluster}
         onClusterChange={setSelectedCluster}
@@ -434,6 +391,14 @@ export default function CNF() {
         onSearchChange={setSearchQuery}
         onRefresh={handleRefresh}
         isRefreshing={false}
+        leading={
+          view === 'browser' ? (
+            <ResourceCategorySidebarTrigger
+              label="Resources"
+              onClick={() => setCategoriesOpen(true)}
+            />
+          ) : undefined
+        }
       >
         {selectedCluster && crdsData && crdsData.crds.length > 0 && (
           <Badge variant="outline" className="text-xs h-7">
@@ -461,6 +426,8 @@ export default function CNF() {
         {/* Sidebar — CRD category navigation; only needed in browser view */}
         {selectedCluster && clusterReachable && categories.length > 0 && view === 'browser' && (
           <CNFSidebar
+            open={categoriesOpen}
+            onOpenChange={setCategoriesOpen}
             categories={categories}
             selectedCrdKey={selectedCrdKey}
             onSelectCrd={handleSelectCrd}
@@ -470,15 +437,7 @@ export default function CNF() {
         )}
 
         {/* Center content */}
-        {!selectedProject ? (
-          <ResourceExplorerLayout.Content className="flex items-center justify-center">
-            <EmptyState
-              icon={Server}
-              title="No project selected"
-              description="Select a project to view its clusters and Custom Resources."
-            />
-          </ResourceExplorerLayout.Content>
-        ) : !selectedCluster ? (
+        {!selectedCluster ? (
           <ResourceExplorerLayout.Content className="flex items-center justify-center">
             <EmptyState
               icon={Server}
@@ -493,7 +452,7 @@ export default function CNF() {
                 target={{
                   type: 'cluster',
                   id: selectedCluster,
-                  displayName: allClusters.find((c) => c.id === selectedCluster)?.name,
+                  displayName: clusters.find((c) => c.id === selectedCluster)?.name,
                 }}
               >
                 {renderToolbar()}
@@ -502,7 +461,11 @@ export default function CNF() {
             </ResourceExplorerLayout.Content>
 
             {/* Detail panel */}
-            <ResourceExplorerLayout.DetailPanel open={!!selectedResource}>
+            <ResourceExplorerLayout.DetailPanel
+              open={!!selectedResource}
+              onOpenChange={(next) => !next && setSelectedResource(null)}
+              label="Resource details"
+            >
               {selectedResource && (
                 <CNFDetailPanel
                   resource={selectedResource}

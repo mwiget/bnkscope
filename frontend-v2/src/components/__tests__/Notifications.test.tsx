@@ -6,7 +6,7 @@
  * and deploymentNotify persists deployment events to the bell.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { notify, notifyError, deploymentNotify } from '@/lib/notify';
+import { notify, notifyError } from '@/lib/notify';
 
 // Mock the notifications API module — this is what notificationsApi.createNotification calls
 vi.mock('@/lib/api/notifications', () => ({
@@ -168,45 +168,3 @@ describe('notifyError', () => {
   });
 });
 
-describe('deploymentNotify', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('started notification persists an info bell entry with module name', () => {
-    deploymentNotify.started('vpc', 'apply');
-
-    expect(notificationsApi.createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        severity: 'info',
-        category: 'deployment',
-        message: expect.stringContaining('vpc'),
-      })
-    );
-  });
-
-  it('success notification includes resource changes', () => {
-    deploymentNotify.success('vpc', 'apply', { add: 3, change: 1, destroy: 0 });
-
-    expect(notificationsApi.createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        severity: 'success',
-        category: 'deployment',
-        message: expect.stringContaining('+3 added'),
-      })
-    );
-  });
-
-  it('failed notification shows error message', () => {
-    deploymentNotify.failed('vpc', 'apply', 'Terraform plan failed');
-
-    expect(notificationsApi.createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        severity: 'error',
-        category: 'deployment',
-        title: expect.stringContaining('Failed'),
-        message: expect.stringContaining('vpc'),
-      })
-    );
-  });
-});

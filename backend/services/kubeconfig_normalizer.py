@@ -15,8 +15,20 @@ Specifically:
 Precedence rule: when both ``*-data`` and the path form are present, ``*-data`` wins
 and the path form is dropped silently. This is a normalization, not a rejection.
 
-SUPPORTED_EXEC_COMMANDS lists the exec plugins that Forge's worker containers ship.
-Any other command causes KubeconfigUnportableError regardless of source.
+SUPPORTED_EXEC_COMMANDS used to list the plugins the worker container shipped.
+There is no worker and no CLI tool in the image any more (Phase 4), so what the
+list means now is narrower and more honest: **the plugins whose token bnkscope
+can mint itself, in Python.** ``services/kubernetes/_base.py`` rewrites those
+users to a static bearer token before the kubernetes client ever sees the exec
+block, so the binary is never needed.
+
+  aws / aws-iam-authenticator  boto3 SigV4-presigned STS -> k8s-aws-v1 token
+  gke-gcloud-auth-plugin       google-auth OAuth2 access token
+
+``kubelogin`` (AKS) left the list in Phase 5: there is no Python equivalent, so
+accepting it meant accepting a kubeconfig that validates and then fails at
+connect time with a vague error. Rejecting it up front, with instructions, is
+the kinder failure.
 """
 import logging
 from enum import Enum
@@ -29,13 +41,13 @@ from core.errors import AppError
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXEC_COMMANDS: frozenset[str] = frozenset(
-    {"aws", "aws-iam-authenticator", "gke-gcloud-auth-plugin", "kubelogin"}
+    {"aws", "aws-iam-authenticator", "gke-gcloud-auth-plugin"}
 )
 
 
 class NormalizationSource(Enum):
     MANUAL_UPLOAD = "manual_upload"
-    SSH_DISCOVERY = "ssh_discovery"
+    LOCAL_DISCOVERY = "local_discovery"
     CLOUD_API_GENERATED = "cloud_api"
     MODULE_OUTPUT = "module_output"
     INTERNAL_REREAD = "internal_reread"
@@ -67,7 +79,8 @@ def normalize_kubeconfig(
     For MANUAL_UPLOAD: raises KubeconfigUnportableError on any file-path ref or
     unsupported exec — the caller's API route lets this propagate to a 422.
 
-    For SSH_DISCOVERY: same raise semantics; the caller wraps in a job error.
+    For LOCAL_DISCOVERY: same raise semantics; the caller turns it into a
+    "cannot adopt this context" blocker rather than an error.
 
     For CLOUD_API_GENERATED / MODULE_OUTPUT: same raise, but the caller logs
     ``kubeconfig_invariant_violation`` (grep tag) — this indicates our own pipeline
@@ -112,12 +125,10 @@ def _path_user_message(field: str, path: str, source: NormalizationSource) -> st
     if source == NormalizationSource.INTERNAL_REREAD:
         return _REREAD_RE_UPLOAD
     return (
-        f"Kubeconfig references a file path Forge cannot read (`{path}`). "
+        f"Kubeconfig references a file path bnkscope cannot read (`{path}`). "
         f"On the machine that has access to this file, run "
         f"`kubectl config view --flatten --minify --raw` (or "
-        f"`oc config view --flatten --minify --raw`) and upload the output. "
-        f"If Forge can reach the cluster via SSH, configure SSH auto-discovery "
-        f"and Forge will flatten the kubeconfig remotely."
+        f"`oc config view --flatten --minify --raw`) and upload the output."
     )
 
 
@@ -131,10 +142,12 @@ def _exec_user_message(command: str, source: NormalizationSource) -> str:
             "client certificate, or one of the supported exec plugins."
         )
     return (
-        f"Kubeconfig contains an `exec:` plugin (`{command}`) Forge does not "
-        f"support. Supported commands: {supported}. "
-        "To deploy with this cluster, replace the exec auth with a bearer "
-        "`token` or a `*-data`-inlined client cert/key, then re-upload."
+        f"Kubeconfig contains an `exec:` plugin (`{command}`) bnkscope cannot run: "
+        f"the image ships no CLI tools. Supported commands: {supported} — for "
+        "those the token is minted natively, with no binary. For anything else, "
+        "replace the exec auth with a bearer `token` "
+        "(`kubectl create token <serviceaccount>`) or a `*-data`-inlined client "
+        "cert/key, then re-upload."
     )
 
 

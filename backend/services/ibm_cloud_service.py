@@ -38,55 +38,8 @@ class IBMCloudService:
     def __init__(self, db: Session):
         self.db = db
 
-    def resolve_effective_template(self, template_id: int | None = None) -> CloudCredentialTemplate:
-        """Resolve the IBM credential template for region discovery.
 
-        Resolution order:
-        1. Explicit template_id if provided
-        2. Default IBM template
-        """
-        template: CloudCredentialTemplate | None = None
 
-        if template_id is not None:
-            template = self.db.query(CloudCredentialTemplate).filter(CloudCredentialTemplate.id == template_id).first()
-            if not template:
-                raise NotFoundError("credential template", template_id)
-            if template.provider != "ibm":
-                raise BadRequestError("Selected credential template is not an IBM Cloud template")
-        else:
-            template = self.db.query(CloudCredentialTemplate).filter(
-                CloudCredentialTemplate.provider == "ibm",
-                CloudCredentialTemplate.is_default.is_(True),
-            ).first()
-            if not template:
-                raise BadRequestError(
-                    "No default IBM credential template configured. Mark an IBM credential template as default first."
-                )
-
-        if not template.ibmcloud_api_key_encrypted:
-            raise BadRequestError("IBM credential template does not contain an API key")
-
-        return template
-
-    def list_regions_from_template(self, template_id: int | None = None) -> list[dict[str, str]]:
-        template = self.resolve_effective_template(template_id)
-        api_key = decrypt_value(template.ibmcloud_api_key_encrypted)
-        if not api_key:
-            raise ServiceError("ibm_cloud", "Failed to decrypt IBM Cloud API key")
-        # Pass the template through so the IAM token exchange uses the cache.
-        self._exchange_api_key(api_key, template=template)
-        return IBM_REGIONS
-
-    def list_regions(self, api_key: str) -> list[dict[str, str]]:
-        if not api_key:
-            raise BadRequestError("IBM Cloud API key is required")
-
-        # A successful IAM token exchange is sufficient to prove the API key is
-        # valid for this UX flow. IBM does not provide a stable public regions
-        # discovery endpoint suitable for this interaction, so we return the
-        # backend-owned canonical region catalog after validating the key.
-        self._exchange_api_key(api_key)
-        return IBM_REGIONS
 
     def ensure_cos_hmac_credentials(self, template: CloudCredentialTemplate) -> tuple[str, str]:
         """Create or reuse COS HMAC credentials for a selected COS instance."""
@@ -264,43 +217,6 @@ class IBMCloudService:
         logger.info("No reusable IBM COS HMAC resource key found credential_name=%s", credential_name)
         return None
 
-    def list_cos_instances(self, api_key: str) -> list[dict[str, str]]:
-        if not api_key:
-            raise BadRequestError("IBM Cloud API key is required")
-
-        access_token = self._exchange_api_key(api_key)
-        logger.info("Listing IBM COS instances via Search API")
-        response = requests.post(
-            IBM_SEARCH_URL,
-            params={"limit": 100},
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
-            json={"query": "type:resource-instance AND service_name:cloud-object-storage"},
-            timeout=15,
-        )
-        if response.status_code in {401, 403}:
-            raise BadRequestError("IBM Cloud API key is not authorized to search for COS instances")
-        if not response.ok:
-            raise ServiceError("ibm_cloud", f"IBM Cloud COS instance lookup failed with status {response.status_code}")
-
-        payload = response.json()
-        items = payload.get("items") or []
-        instances = []
-        for item in items:
-            name = item.get("name")
-            crn = item.get("crn")
-            if not name or not crn:
-                continue
-            instances.append({
-                "value": name,
-                "label": name,
-                "crn": crn,
-            })
-        logger.info("IBM COS instance query returned %s instance(s)", len(instances))
-        return sorted(instances, key=lambda inst: inst["label"].lower())
 
     def _exchange_api_key(self, api_key: str, *, template: CloudCredentialTemplate | None = None) -> str:
         """Exchange an API key for an IAM bearer token, with optional caching.

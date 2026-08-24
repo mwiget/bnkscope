@@ -13,8 +13,6 @@
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -31,40 +29,28 @@ import {
   Layers,
   Boxes,
   Zap,
-  ChevronDown,
-  ChevronRight,
   MemoryStick,
   Rocket,
-  SkipForward,
-  Ban,
-  Search,
-  Variable,
-  ArrowRight,
-  Info,
   CircuitBoard,
-  Cable,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   useClusterScan,
-  useAdaptiveModulePlan,
+  useClusterScanResult,
   useDeployHugePages,
-  useProbeNodeReadiness,
 } from '@/hooks/useK8s';
 import { queryKeys } from '@/lib/queryKeys';
 import type { BnkDeploymentSize, ClusterScanPrerequisites } from '@/types';
 import { getPlatformProfileLabel } from '@/lib/platform-context';
 import { HugePagesDeployDialog } from './HugePagesDeployDialog';
 import {
-  CisMigrationCard,
-  ExistingProxiesCard,
   ScanCard,
   StatRow,
   StatusDot,
   statusConfig,
-} from './migration';
-import type { PrereqStatus } from './migration';
+} from './scan';
+import type { PrereqStatus } from './scan';
 
 // ---- Types ----
 
@@ -115,12 +101,6 @@ export function ClusterScanResults({ clusterId, clusterName }: ClusterScanResult
   const scanMutation = useClusterScan();
   const deployHugePages = useDeployHugePages();
   const [hugePagesDialogOpen, setHugePagesDialogOpen] = useState(false);
-  const nodeReadinessMutation = useProbeNodeReadiness();
-
-  const handleProbeNodeReadiness = () => {
-    nodeReadinessMutation.mutate({ clusterId });
-  };
-
   const handleConfirmHugePagesDeploy = (size: BnkDeploymentSize) => {
     deployHugePages.mutate(
       { clusterId, payload: { size } },
@@ -150,21 +130,37 @@ export function ClusterScanResults({ clusterId, clusterName }: ClusterScanResult
     return () => clearInterval(interval);
   }, [scanMutation.isPending]);
 
-  // Prefer the mutation's own data (freshest), fall back to any result that
-  // was cached by a previous visit within the 5-minute staleTime window —
-  // useClusterScan.onSuccess populates queryKeys.k8s.clusters.scan(id).
-  const cachedScan = queryClient.getQueryData<typeof scanMutation.data>(
-    queryKeys.k8s.clusters.scan(clusterId)
-  );
-  const scanData = scanMutation.data ?? cachedScan;
-  const isScanning = scanMutation.isPending;
+  // A mutation is not keyed by anything: `scanMutation.data` is just the last
+  // result it produced, for whichever cluster that was. Switching clusters
+  // used to leave every tile below showing the previous cluster's scan — and
+  // worse, the stale data satisfied the auto-scan guard below, so no scan for
+  // the new cluster was ever started. The node count in the header changed
+  // because it comes from the cluster list, which *is* keyed.
+  //
+  // So the mutation's own state counts only when its variables name the
+  // cluster currently on screen.
+  const mutationClusterId =
+    typeof scanMutation.variables === 'number'
+      ? scanMutation.variables
+      : scanMutation.variables?.clusterId;
+  const isThisCluster = mutationClusterId === clusterId;
 
-  // Auto-trigger the scan on mount when there's nothing cached. Keeps the
-  // Dashboard view from landing on an empty "Scan Cluster" call-to-action —
-  // the user picked a cluster, they want to see its readiness *now*. Users
-  // can still click Rescan once results are shown.
+  // The cached result, read through a query rather than getQueryData so the
+  // component re-renders when it lands. Keyed by cluster; never fetches on
+  // its own (see useClusterScanResult) — the mutation populates it.
+  const { data: cachedScan } = useClusterScanResult(clusterId);
+
+  const scanData = (isThisCluster ? scanMutation.data : undefined) ?? cachedScan;
+  const isScanning = scanMutation.isPending && isThisCluster;
+  const scanFailed = scanMutation.isError && isThisCluster;
+
+  // Auto-trigger the scan when there is nothing cached for THIS cluster.
+  // Keeps the Dashboard view from landing on an empty "Scan Cluster"
+  // call-to-action — the user picked a cluster, they want to see its
+  // readiness *now*. Users can still click Rescan once results are shown.
   useEffect(() => {
-    if (!scanData && !scanMutation.isPending && !scanMutation.isError) {
+    const cached = queryClient.getQueryData(queryKeys.k8s.clusters.scan(clusterId));
+    if (!cached && !scanMutation.isPending) {
       scanMutation.mutate(clusterId);
     }
     // Intentionally only runs for this clusterId — mutation state is
@@ -179,9 +175,8 @@ export function ClusterScanResults({ clusterId, clusterName }: ClusterScanResult
     scanMutation.mutate({ clusterId, force: true });
   };
 
-
   // --- No scan yet: show loading state (scan auto-runs on mount) ---
-  if (!scanData && !scanMutation.isError) {
+  if (!scanData && !scanFailed) {
     return (
       <div className="space-y-4">
         <div className={cn(
@@ -224,7 +219,7 @@ export function ClusterScanResults({ clusterId, clusterName }: ClusterScanResult
   }
 
   // --- Error state ---
-  if (scanMutation.isError && !scanData) {
+  if (scanFailed && !scanData) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3">
         <AlertCircle className="h-10 w-10 text-destructive" />
@@ -846,17 +841,6 @@ export function ClusterScanResults({ clusterId, clusterName }: ClusterScanResult
           </ScanCard>
         )}
 
-        {/* Existing Proxies — only render when at least one is detected */}
-        {prerequisites?.existing_proxies && prerequisites.existing_proxies.discovered_count > 0 && (
-          <ExistingProxiesCard proxies={prerequisites.existing_proxies.proxies} clusterId={clusterId} />
-        )}
-
-        {/* CIS / BIG-IP Migration (D-023 P3) — only render when CIS is detected */}
-        {prerequisites?.cis && prerequisites.cis.status !== 'missing' && (
-          <CisMigrationCard cis={prerequisites.cis} clusterId={clusterId} />
-        )}
-
-
         {/* BNK Installation */}
         <ScanCard
           title="F5 BNK Installation"
@@ -1058,147 +1042,10 @@ export function ClusterScanResults({ clusterId, clusterName }: ClusterScanResult
         </div>
       )}
 
-      {/* Deploy BNK — Step 1: cluster prerequisites (read-only node readiness
-          detection), Step 2: the adaptive deployment plan. Node readiness used
-          to sit as a standalone scan card; it's now grouped with the deployment
-          plan so the deploy flow reads as one sequence (issue #387 follow-up).
-          This dashboard informs; it does not remediate — no "prepare cluster"
-          action lives here. */}
-      <div className="space-y-4">
-        <h2 className="font-semibold text-base flex items-center gap-2">
-          <Rocket className="h-4 w-4 text-primary" />
-          Deploy BNK
-        </h2>
-
-        {/* Step 1 · Cluster prerequisites (issue #387 part A — node readiness
-            detection only; informational, no remediation action here) */}
-        <ScanCard
-          title="Step 1 · Cluster Prerequisites"
-          icon={Cable}
-          status={
-            nodeReadinessMutation.data
-              ? nodeReadinessMutation.data.all_ready
-                ? 'detected'
-                : 'missing'
-              : 'unknown'
-          }
-        >
-          <div className="flex items-center gap-2 flex-wrap">
-            {cluster_info?.is_kind !== undefined && (
-              <Badge
-                variant="outline"
-                className={cn('text-[10px]', cluster_info.is_kind && 'border-info/20 text-info')}
-              >
-                {cluster_info.is_kind ? 'kind cluster' : 'not kind'}
-              </Badge>
-            )}
-            {cluster_info?.is_local !== undefined && (
-              <Badge
-                variant="outline"
-                className={cn('text-[10px]', cluster_info.is_local && 'border-info/20 text-info')}
-              >
-                {cluster_info.is_local ? 'local / lab cluster' : 'not local'}
-              </Badge>
-            )}
-          </div>
-
-          <p className={cn('text-xs', 'text-muted-foreground')}>
-            Checks node-level prerequisites F5 TMM needs: CNI delegate plugins
-            (macvlan / host-device / ipvlan) in <code className="font-mono">/opt/cni/bin</code>,
-            kernel <code className="font-mono">core_pattern</code> (a bare &quot;core&quot;{' '}
-            crashes F5&apos;s crashagent), and 2Mi hugepages capacity. Requires a
-            privileged node probe — not part of the normal scan.
-          </p>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleProbeNodeReadiness}
-              disabled={nodeReadinessMutation.isPending}
-            >
-              {nodeReadinessMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                  Probing nodes...
-                </>
-              ) : (
-                <>
-                  <Cable className="mr-1.5 h-3 w-3" />
-                  {nodeReadinessMutation.data ? 'Re-check node readiness' : 'Check node readiness (CNI / core_pattern)'}
-                </>
-              )}
-            </Button>
-            <span className={cn('text-[10px]', 'text-muted-foreground')}>
-              Dispatches a short-lived privileged probe pod to each node.
-            </span>
-          </div>
-
-          {nodeReadinessMutation.isError && (
-            <div className="flex items-center gap-1.5 text-xs text-destructive">
-              <AlertCircle className="h-3.5 w-3.5" />
-              <span>{(nodeReadinessMutation.error as Error)?.message || 'Probe failed'}</span>
-            </div>
-          )}
-
-          {nodeReadinessMutation.data && (
-            <div className="space-y-2 pt-1">
-              {nodeReadinessMutation.data.nodes.map((n) => (
-                <div key={n.node} className={cn('rounded border p-2 text-xs', 'border-border bg-muted/50')}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-mono truncate max-w-[160px]">{n.node}</span>
-                    {n.cni_ok && n.core_pattern_ok ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-                    ) : (
-                      <XCircle className="h-3.5 w-3.5 text-destructive" />
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(['macvlan', 'host_device', 'ipvlan'] as const).map((plugin) => (
-                      <Badge
-                        key={plugin}
-                        variant="outline"
-                        className={cn(
-                          'text-[10px] gap-1',
-                          n.cni_plugins[plugin]
-                            ? 'border-success/20 text-success'
-                            : 'border-destructive/20 text-destructive',
-                        )}
-                      >
-                        {n.cni_plugins[plugin] ? (
-                          <CheckCircle2 className="h-2.5 w-2.5" />
-                        ) : (
-                          <XCircle className="h-2.5 w-2.5" />
-                        )}
-                        {plugin === 'host_device' ? 'host-device' : plugin}
-                      </Badge>
-                    ))}
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        'text-[10px] font-mono',
-                        n.core_pattern_ok
-                          ? 'border-success/20 text-success'
-                          : 'border-destructive/20 text-destructive',
-                      )}
-                    >
-                      core_pattern: {n.core_pattern ?? 'unknown'}
-                    </Badge>
-                  </div>
-                  {!n.core_pattern_ok && (
-                    <p className="text-[10px] text-warning mt-1">
-                      A bare &quot;core&quot; core_pattern is incompatible with F5&apos;s crashagent.
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </ScanCard>
-
-        {/* Step 2 · Deployment plan */}
-        <DeploymentPlanSection clusterId={clusterId} />
-      </div>
+      {/* The "Deploy BNK" section lived here: node-readiness probing as step 1,
+          an adaptive deployment plan as step 2. Both went with the deployment
+          pipeline — bnkscope reports on a cluster, it does not install onto
+          one, and a plan for work this tool cannot do is worse than no plan. */}
 
       {/* HugePages Deploy Dialog */}
       <HugePagesDeployDialog
@@ -1211,331 +1058,3 @@ export function ClusterScanResults({ clusterId, clusterName }: ClusterScanResult
   );
 }
 
-
-// ---- Deployment Plan Section ----
-
-type ModuleActionType = 'deploy' | 'skip' | 'investigate' | 'blocked' | 'upgrade';
-type ConfidenceLevel = 'high' | 'medium' | 'low';
-
-const actionConfig: Record<ModuleActionType, { icon: typeof Rocket; color: string; bg: string; border: string; label: string }> = {
-  deploy:      { icon: Rocket,       color: 'text-success', bg: 'bg-success/10', border: 'border-success/20', label: 'Deploy' },
-  skip:        { icon: SkipForward,  color: 'text-muted-foreground',    bg: 'bg-muted',    border: 'border-border',    label: 'Skip' },
-  investigate: { icon: Search,       color: 'text-warning',   bg: 'bg-warning/10',   border: 'border-warning/20',   label: 'Investigate' },
-  blocked:     { icon: Ban,          color: 'text-destructive',     bg: 'bg-destructive/10',     border: 'border-destructive/20',     label: 'Blocked' },
-  upgrade:     { icon: RefreshCw,    color: 'text-info',    bg: 'bg-info/10',    border: 'border-info/20',    label: 'Upgrade' },
-};
-
-const confidenceConfig: Record<ConfidenceLevel, { color: string }> = {
-  high:   { color: 'text-success' },
-  medium: { color: 'text-warning' },
-  low:    { color: 'text-destructive' },
-};
-
-function DeploymentPlanSection({ clusterId }: { clusterId: number }) {
-  const planMutation = useAdaptiveModulePlan();
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('f5-bnk-2.2');
-  const [showVariables, setShowVariables] = useState(false);
-  const [labSizing, setLabSizing] = useState(false);
-
-
-  const planData = planMutation.data;
-  const isLoading = planMutation.isPending;
-
-  const handleGeneratePlan = () => {
-    planMutation.mutate({
-      clusterId,
-      templateSlug: selectedTemplate,
-      sizingProfile: labSizing ? 'lab' : undefined,
-    });
-  };
-
-  return (
-    <div className={cn(
-      'rounded-lg border p-5',
-      'bg-card border-border',
-    )}>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
-          <Rocket className="h-4 w-4 text-primary" />
-          Step 2 · Adaptive Deployment Plan
-        </h3>
-        <div className="flex items-center gap-2">
-          <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
-            <SelectTrigger className="h-8 text-xs w-[160px]">
-              <SelectValue placeholder="Select template" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="f5-bnk-2.2">F5 BNK 2.2</SelectItem>
-              <SelectItem value="f5-bnk-2.3">F5 BNK 2.3</SelectItem>
-              <SelectItem value="bnk-demo-apps">BNK Demo Apps</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            size="sm"
-            onClick={handleGeneratePlan}
-            disabled={isLoading}
-            className="h-8"
-          >
-            {isLoading ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-            ) : (
-              <Zap className="h-3.5 w-3.5 mr-1.5" />
-            )}
-            {isLoading ? 'Analyzing...' : planData ? 'Refresh Plan' : 'Generate Plan'}
-          </Button>
-        </div>
-      </div>
-
-      {/* Lab sizing (non-production) toggle — issue #387 part C */}
-      <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
-        <Checkbox
-          checked={labSizing}
-          onCheckedChange={(v) => setLabSizing(v === true)}
-        />
-        <span className="text-xs font-medium">Lab sizing (non-production)</span>
-        <span className="text-[10px] text-muted-foreground">
-          shrinks f5-tmm so it schedules on a small lab VM
-        </span>
-      </label>
-
-      {labSizing && (
-        <div className={cn(
-          'flex items-start gap-2 p-3 rounded-lg border mb-3',
-          'bg-destructive/5 border-destructive/20',
-        )}>
-          <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
-          <span className="text-xs text-destructive">
-            Lab sizing is NON-PRODUCTION — blobd/debug/observer are shrunk and TMM 2Gi memory OOMs under real traffic.
-          </span>
-        </div>
-      )}
-
-      {!planData && !planMutation.isError && (
-        <p className={cn('text-xs', 'text-muted-foreground')}>
-          Generate a deployment plan based on cluster scan results. The plan shows which modules
-          to deploy, skip, or investigate — with pre-filled variables from detected cluster state.
-        </p>
-      )}
-
-      {planMutation.isError && !planData && (
-        <div className="flex items-center gap-2 text-destructive text-xs">
-          <AlertCircle className="h-3.5 w-3.5" />
-          <span>Failed to generate plan: {(planMutation.error as Error)?.message || 'Unknown error'}</span>
-        </div>
-      )}
-
-      {planData && (
-        <div className="space-y-4">
-          {/* Summary Bar */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className={cn('text-xs font-medium', 'text-foreground/80')}>
-              {planData.template_name}
-            </span>
-            <span className={cn('text-xs', 'text-muted-foreground')}>·</span>
-            {planData.summary?.deploy > 0 && (
-              <Badge className="gap-1 text-[10px] h-5 bg-success/10 text-success border-success/20">
-                <Rocket className="h-3 w-3" />
-                {planData.summary.deploy} deploy
-              </Badge>
-            )}
-            {planData.summary?.skip > 0 && (
-              <Badge className="gap-1 text-[10px] h-5 bg-muted text-muted-foreground border-border">
-                <SkipForward className="h-3 w-3" />
-                {planData.summary.skip} skip
-              </Badge>
-            )}
-            {planData.summary?.investigate > 0 && (
-              <Badge className="gap-1 text-[10px] h-5 bg-warning/10 text-warning border-warning/20">
-                <Search className="h-3 w-3" />
-                {planData.summary.investigate} investigate
-              </Badge>
-            )}
-            {planData.summary?.blocked > 0 && (
-              <Badge className="gap-1 text-[10px] h-5 bg-destructive/10 text-destructive border-destructive/20">
-                <Ban className="h-3 w-3" />
-                {planData.summary.blocked} blocked
-              </Badge>
-            )}
-            {planData.is_ready ? (
-              <Badge className="gap-1 text-[10px] h-5 bg-success/10 text-success border-success/20">
-                <CheckCircle2 className="h-3 w-3" />
-                Ready
-              </Badge>
-            ) : (
-              <Badge className="gap-1 text-[10px] h-5 bg-destructive/10 text-destructive border-destructive/20">
-                <AlertCircle className="h-3 w-3" />
-                Not Ready
-              </Badge>
-            )}
-          </div>
-
-          {/* Global Blockers */}
-          {planData.global_blockers?.length > 0 && (
-            <div className="space-y-2">
-              {planData.global_blockers.map((b: string, i: number) => (
-                <div key={i} className={cn(
-                  'flex items-start gap-2 p-3 rounded-lg border',
-                  'bg-destructive/5 border-destructive/20',
-                )}>
-                  <Ban className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
-                  <span className="text-xs text-destructive">{b}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Global Warnings */}
-          {planData.global_warnings?.length > 0 && (
-            <div className="space-y-2">
-              {planData.global_warnings.map((w: string, i: number) => (
-                <div key={i} className={cn(
-                  'flex items-start gap-2 p-3 rounded-lg border',
-                  'bg-warning/5 border-warning/20',
-                )}>
-                  <AlertTriangle className="h-4 w-4 text-warning mt-0.5 flex-shrink-0" />
-                  <span className="text-xs text-warning">{w}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Module List */}
-          <div className="space-y-2">
-            {planData.modules?.map((mod, idx) => {
-              const actionCfg = actionConfig[mod.action as ModuleActionType] || actionConfig.deploy;
-              const ActionIcon = actionCfg.icon;
-              const confCfg = confidenceConfig[mod.confidence as ConfidenceLevel] || confidenceConfig.medium;
-              const hasOverrides = Object.keys(mod.variable_overrides || {}).length > 0;
-              const hasWarnings = (mod.warnings?.length || 0) > 0;
-              const hasBlockers = (mod.blockers?.length || 0) > 0;
-
-              return (
-                <div
-                  key={mod.path}
-                  className={cn(
-                    'rounded-lg border p-3',
-                    'border-border bg-muted/50',
-                    mod.action === 'skip' && 'opacity-60',
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    {/* Order number */}
-                    <span className={cn(
-                      'text-[10px] font-mono rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0',
-                      'bg-muted text-muted-foreground',
-                    )}>
-                      {mod.order || idx + 1}
-                    </span>
-
-                    {/* Module info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-sm font-medium">{mod.name}</span>
-                        <Badge className={cn('gap-1 text-[10px] h-5', actionCfg.bg, actionCfg.color, actionCfg.border)}>
-                          <ActionIcon className="h-3 w-3" />
-                          {actionCfg.label}
-                        </Badge>
-                        {hasOverrides && (
-                          <Badge className="gap-1 text-[10px] h-5 bg-info/10 text-info border-info/20">
-                            <Variable className="h-3 w-3" />
-                            Pre-filled
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className={cn('text-xs font-mono', 'text-muted-foreground')}>
-                          {mod.path}
-                        </span>
-                        <span className={cn('text-[10px]', confCfg.color)}>
-                          {mod.confidence} confidence
-                        </span>
-                      </div>
-                      <p className={cn('text-xs mt-1', 'text-muted-foreground')}>
-                        {mod.reason}
-                      </p>
-
-                      {/* Warnings */}
-                      {hasWarnings && (
-                        <div className="mt-1.5 space-y-1">
-                          {mod.warnings.map((w: string, wi: number) => (
-                            <div key={wi} className="flex items-start gap-1.5 text-[11px] text-warning">
-                              <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                              <span>{w}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Blockers */}
-                      {hasBlockers && (
-                        <div className="mt-1.5 space-y-1">
-                          {mod.blockers.map((b: string, bi: number) => (
-                            <div key={bi} className="flex items-start gap-1.5 text-[11px] text-destructive">
-                              <Ban className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                              <span>{b}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Variable Overrides */}
-                      {hasOverrides && (
-                        <div className={cn(
-                          'mt-2 p-2 rounded text-[11px] font-mono space-y-0.5',
-                          'bg-muted',
-                        )}>
-                          {Object.entries(mod.variable_overrides).map(([key, val]) => (
-                            <div key={key} className="flex items-center gap-1.5">
-                              <span className={'text-primary'}>{key}</span>
-                              <ArrowRight className="h-2.5 w-2.5 text-muted-foreground" />
-                              <span className={'text-foreground/80'}>
-                                {typeof val === 'object' ? JSON.stringify(val) : String(val)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Suggested Variables */}
-          {Object.keys(planData.suggested_variables || {}).length > 0 && (
-            <div>
-              <button
-                onClick={() => setShowVariables(!showVariables)}
-                className={cn(
-                  'flex items-center gap-2 text-xs font-medium w-full',
-                  'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {showVariables ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                <Info className="h-3.5 w-3.5 text-primary" />
-                Detected Project Variables ({Object.keys(planData.suggested_variables).length})
-              </button>
-              {showVariables && (
-                <div className={cn(
-                  'mt-2 p-3 rounded-lg border text-[11px] font-mono space-y-1',
-                  'bg-muted border-border',
-                )}>
-                  {Object.entries(planData.suggested_variables).map(([key, val]) => (
-                    <div key={key} className="flex items-center gap-2">
-                      <span className={'text-primary'}>{key}</span>
-                      <ArrowRight className="h-2.5 w-2.5 text-muted-foreground" />
-                      <span className={'text-foreground/80'}>
-                        {typeof val === 'object' ? JSON.stringify(val) : String(val)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}

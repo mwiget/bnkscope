@@ -161,4 +161,4 @@ export const SEVERITY_CONFIG: Record<HealthSeverity, SeverityConfig> = {
 
 - [Canonical Status Semantics (PLAT-REL-001)](STATUS_SEMANTICS.md)
 - [Diagnostic Payload Standardization (PLAT-REL-002)](DIAGNOSTIC_PAYLOAD.md)
-- [Status Surface Audit (PLAT-REL-003)](STATUS_SURFACE_AUDIT.md)
+- Status Surface Audit (PLAT-REL-003)

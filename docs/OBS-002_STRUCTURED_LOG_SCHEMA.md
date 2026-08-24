@@ -8,7 +8,15 @@
 
 ## Purpose
 
-Standardize structured logging fields across all BNK-Forge services to enable consistent querying, alerting, and correlation in log aggregation tools (ELK, Datadog, CloudWatch, Loki).
+Standardize structured logging fields across bnkscope's services to enable
+consistent querying, alerting, and correlation in log aggregation tools (ELK,
+Datadog, CloudWatch, Loki).
+
+> **The `service` value is still the literal string `bnk-forge`.** That is what
+> `core/logging_config.py` emits, and this document records what the code does
+> rather than what it should be called. Renaming it is safe; renaming the
+> sibling `bnk-forge-agent` strings in `services/qkview_service.py` is **not** —
+> those match labels on resources deployed in your clusters.
 
 ---
 
@@ -24,7 +32,7 @@ All services emit **JSON-formatted log lines** in production/staging. Developmen
 | `level` | string | Yes | Log severity level | `"INFO"`, `"WARNING"`, `"ERROR"` |
 | `logger` | string | Yes | Python logger name (module path) | `"routes.projects"`, `"services.helm_service"` |
 | `message` | string | Yes | Human-readable log message | `"Project created successfully"` |
-| `service` | string | Yes | Service identifier | `"bnk-forge"`, `"bnk-forge-worker"`, `"bnk-forge-mcp"` |
+| `service` | string | Yes | Service identifier | `"bnk-forge"` (API), `"bnk-forge-mcp"` |
 
 ### Correlation Fields (when available)
 
@@ -56,7 +64,6 @@ Any additional context passed via `logger.info("msg", extra={...})` appears unde
 | `extra.project_id` | int | Project being operated on | `42` |
 | `extra.cluster_id` | int | K8s cluster context | `7` |
 | `extra.module_id` | int | Module being deployed | `15` |
-| `extra.task_id` | string | Celery task ID | `"abc-123-def"` |
 | `extra.duration_ms` | int | Operation duration | `1250` |
 | `extra.error_code` | string | Structured error code | `"PROJECT_NOT_FOUND"` |
 
@@ -67,16 +74,6 @@ Any additional context passed via `logger.info("msg", extra={...})` appears unde
 ### API Server (`bnk-forge`)
 
 Standard fields plus `request_id` on every request-scoped log line.
-
-### Celery Worker (`bnk-forge-worker`)
-
-| Field | Source | Description |
-|-------|--------|-------------|
-| `service` | Config | Always `"bnk-forge-worker"` |
-| `extra.celery_task_id` | Task context | Celery task UUID |
-| `extra.celery_task_name` | Task context | Task function name |
-| `extra.worker_hostname` | Worker | Worker process hostname |
-| `extra.request_id` | Task headers | Inherited correlation ID from API request |
 
 ### MCP Server (`bnk-forge-mcp`)
 
@@ -140,7 +137,6 @@ logger.info("Failed for project %s", project_id)  # BETTER — aggregation-frien
 
 - **Config:** `backend/core/logging_config.py` — `JSONFormatter`, `HumanReadableFormatter`, `configure_logging()`
 - **Filter:** `backend/core/correlation.py` — `CorrelationLogFilter` (injects `request_id`)
-- **Worker:** `backend/celery_app.py` — `configure_logging(service_name="bnk-forge-worker")`
 - **MCP:** `mcp-server/src/bnk_forge_mcp/observability.py` — `ObservabilityMCPProxy`
 
 ---

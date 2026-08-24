@@ -15,27 +15,19 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ResourcePageHeader } from '@/components/layout/ResourcePageHeader';
 import { ResourceExplorerLayout } from '@/components/layout/ResourceExplorerLayout';
+import { ResourceCategorySidebarTrigger } from '@/components/layout/ResourceCategorySidebar';
 import { ResourceViewTabs } from '@/components/layout/ResourceViewTabs';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
-  Server, AlertTriangle, Activity, Plus, Globe, Shield, ShieldAlert,
-  ChevronDown, List, FileText, Code, Download, Network,
+  Server, AlertTriangle, Activity, Plus, Globe, Shield, ShieldAlert, List, Network, Cpu,
 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useProjectClusters, useClusterNamespaces } from '@/hooks/useK8s';
+import { useClusterNamespaces } from '@/hooks/useK8s';
 import { useAllClusters } from '@/hooks/useK8sClusters';
-import { useProjects } from '@/hooks/useProjects';
 import { parseApiError } from '@/lib/error-handler';
 import { SkeletonTable } from '@/components/ui/skeleton-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useDebounce } from '@/hooks/useDebounce';
-import { useAutoSelectProjectCluster } from '@/hooks/useAutoSelectProjectCluster';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { ResourceDescribeViewer } from '@/components/k8s/ResourceDescribeViewer';
 import { ResourceDeleteDialog } from '@/components/k8s/ResourceDeleteDialog';
@@ -48,13 +40,10 @@ import { F5BNKTopologyViewer } from '@/components/k8s/F5BNKTopologyViewer';
 import { BackendsCollection } from '@/components/k8s/BackendsCollection';
 import { PolicyBuilder } from '@/components/k8s/PolicyBuilder';
 import { ConfigBuilder } from '@/components/k8s/ConfigBuilder';
+import { NeedsWiderScreen } from '@/components/ui/needs-wider-screen';
 import { BNKHealthDashboard } from '@/components/k8s/BNKHealthDashboard';
-import { BNKUpgradePanel } from '@/components/k8s/BNKUpgradePanel';
-import { BNKReleaseRegistry } from '@/components/k8s/BNKReleaseRegistry';
 import { TrafficFlowOverview } from '@/components/k8s/TrafficFlowOverview';
-import { RunbookWizard } from '@/components/runbooks/RunbookWizard';
 import { QKViewPanel } from '@/components/k8s/QKViewPanel';
-import { LicensingPanel } from '@/components/k8s/LicensingPanel';
 import { TMMDebugPanel } from '@/components/k8s/TMMDebugPanel';
 import { RecoveryPanel } from '@/components/k8s/RecoveryPanel';
 import { A2AAgentDiscovery } from '@/components/k8s/A2AAgentDiscovery';
@@ -64,14 +53,14 @@ import { A2AProtocolReference } from '@/components/k8s/A2AProtocolReference';
 // DPFInfrastructurePanel moved to Fleet page (/fleet?tab=dpf)
 import { DEBOUNCE_MS } from '@/lib/constants';
 import { notify } from '@/lib/notify';
-import { STORAGE_KEYS } from '@/lib/storage-keys';
+import { useSelectedCluster } from '@/hooks/useSelectedCluster';
 import { ConnectivityGate } from '@/components/ConnectivityGate';
 import { useClusterReachable } from '@/hooks/useConnectivity';
 import type { K8sResource } from '@/types/kubernetes';
 import type { TopologyResourceSelection } from '@/components/k8s/F5BNKTopologyViewer';
 
 import {
-  VIEW_HEALTH, VIEW_POLICY_MAP, VIEW_AI_ANALYZERS, VIEW_TOPOLOGY, VIEW_TRAFFIC_FLOW, VIEW_UPGRADE, VIEW_DIAGNOSTICS, VIEW_BACKENDS, VIEW_POLICY_BUILDER, VIEW_CONFIG_BUILDER, VIEW_DPF_INFRA,
+  VIEW_HEALTH, VIEW_POLICY_MAP, VIEW_AI_ANALYZERS, VIEW_TOPOLOGY, VIEW_TRAFFIC_FLOW, VIEW_DIAGNOSTICS, VIEW_BACKENDS, VIEW_POLICY_BUILDER, VIEW_CONFIG_BUILDER, VIEW_DPF_INFRA,
   VIEW_A2A_DISCOVERY, VIEW_A2A_TEMPLATES, VIEW_A2A_IRULE_LIBRARY, VIEW_A2A_REFERENCE,
   isSpecialView,
   F5BNKSidebar, F5BNKResourceTable, F5BNKDetailPanel,
@@ -84,7 +73,7 @@ import { buildBnkCategories, BNK_CRD_GROUPS } from './f5bnk-parts/bnk-categories
 // ---------------------------------------------------------------------------
 
 function DiagnosticsView({ clusterId, descClass }: { clusterId: number; descClass: string }) {
-  const [activeTab, setActiveTab] = useState<'licensing' | 'tmm-debug' | 'qkview' | 'runbooks' | 'recovery'>('licensing');
+  const [activeTab, setActiveTab] = useState<'tmm-debug' | 'qkview' | 'recovery'>('tmm-debug');
 
   const tabBtn = (active: boolean) =>
     cn(
@@ -100,30 +89,17 @@ function DiagnosticsView({ clusterId, descClass }: { clusterId: number; descClas
         <div className="mb-6">
           <h2 className="text-xl font-semibold mb-2">Diagnostics</h2>
           <p className={descClass}>
-            License diagnostics, TMM inspection, QKView collection, runbooks, and recovery actions for BNK
-          </p>
-          <p className="text-xs mt-2 text-muted-foreground">
-            Next step: validate proxy behavior in{' '}
-            <a href="/benchmarks" className="font-medium underline-offset-2 hover:underline text-primary">
-              Performance Benchmarks
-            </a>
-            .
+            License diagnostics, TMM inspection, QKView collection, and recovery actions for BNK
           </p>
         </div>
 
         {/* Tab Buttons */}
         <div className="flex gap-1 p-1 rounded-lg border border-border mb-6 bg-muted/50">
-          <button onClick={() => setActiveTab('licensing')} className={tabBtn(activeTab === 'licensing')}>
-            Licensing
-          </button>
           <button onClick={() => setActiveTab('tmm-debug')} className={tabBtn(activeTab === 'tmm-debug')}>
             TMM Debug
           </button>
           <button onClick={() => setActiveTab('qkview')} className={tabBtn(activeTab === 'qkview')}>
             QKView
-          </button>
-          <button onClick={() => setActiveTab('runbooks')} className={tabBtn(activeTab === 'runbooks')}>
-            Runbooks
           </button>
           <button onClick={() => setActiveTab('recovery')} className={tabBtn(activeTab === 'recovery')}>
             Recovery
@@ -131,10 +107,8 @@ function DiagnosticsView({ clusterId, descClass }: { clusterId: number; descClas
         </div>
 
         {/* Tab Content */}
-        {activeTab === 'licensing' && <LicensingPanel clusterId={clusterId} />}
         {activeTab === 'tmm-debug' && <TMMDebugPanel clusterId={clusterId} />}
         {activeTab === 'qkview' && <QKViewPanel clusterId={clusterId} />}
-        {activeTab === 'runbooks' && <RunbookWizard clusterId={clusterId} />}
         {activeTab === 'recovery' && <RecoveryPanel clusterId={clusterId} />}
       </div>
     </div>
@@ -164,7 +138,17 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
             <h2 className="text-xl font-semibold mb-2">Traffic Flow</h2>
             <p className={descClass}>How traffic flows through BNK — infrastructure, gateways, routes, and backends with configuration insights</p>
           </div>
-          <TrafficFlowOverview clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} onNavigateView={onNavigateView} />
+          <NeedsWiderScreen
+            id="bnk-traffic-flow"
+            title="The traffic-flow diagram"
+            reason="It lays out gateways, routes and backends side by side; below about 1024px the columns collapse into each other."
+            threshold="compact"
+            instead={
+              <>Try <span className="font-medium text-foreground">Health</span> for the same components as a status list.</>
+            }
+          >
+            <TrafficFlowOverview clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} onNavigateView={onNavigateView} />
+          </NeedsWiderScreen>
         </div>
       );
 
@@ -186,7 +170,17 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
             <h2 className="text-xl font-semibold mb-2">Gateway Topology</h2>
             <p className={descClass}>Complete object graph — click any resource name to view its details</p>
           </div>
-          <F5BNKTopologyViewer clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} />
+          <NeedsWiderScreen
+            id="bnk-topology"
+            title="The gateway topology"
+            reason="The object graph needs room to lay out; below about 1024px the nodes overlap."
+            threshold="compact"
+            instead={
+              <>Try <span className="font-medium text-foreground">Health</span>, or pick a component from the list to see it on its own.</>
+            }
+          >
+            <F5BNKTopologyViewer clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} />
+          </NeedsWiderScreen>
         </div>
       );
 
@@ -195,10 +189,10 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
         <div className="p-6">
           <div className="max-w-6xl mx-auto">
             <div className="mb-6">
-              <h2 className="text-xl font-semibold mb-2">Policy-Gateway Associations</h2>
-              <p className={descClass}>View and manage F5 BNK security policies attached to Gateway listeners</p>
+              <h2 className="text-xl font-semibold mb-2">Policy Associations</h2>
+              <p className={descClass}>View and manage F5 BNK security policies attached to Gateway listeners and egress traffic</p>
             </div>
-            <F5BNKPolicyViewer clusterId={clusterId} namespace={namespace} />
+            <F5BNKPolicyViewer clusterId={clusterId} namespace={namespace} onSelectResource={onTopologySelect} />
           </div>
         </div>
       );
@@ -212,22 +206,6 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
               <p className={descClass}>Intelligent traffic distribution for LLM inference workloads using F5BigAnalyzer CRDs</p>
             </div>
             <F5AIAnalyzerViewer clusterId={clusterId} namespace={namespace} />
-          </div>
-        </div>
-      );
-
-    case VIEW_UPGRADE:
-      return (
-        <div className="p-6 overflow-y-auto">
-          <div className="max-w-5xl mx-auto">
-            <div className="mb-6">
-              <h2 className="text-xl font-semibold mb-2">BNK Upgrade</h2>
-              <p className={descClass}>Manage BNK platform upgrades with pre-flight checks, rolling execution, and rollback support</p>
-            </div>
-            <BNKUpgradePanel clusterId={clusterId} />
-            <div className="mt-6">
-              <BNKReleaseRegistry clusterId={clusterId} />
-            </div>
           </div>
         </div>
       );
@@ -250,7 +228,22 @@ function renderSpecialView(viewType: string, { clusterId, namespace, onTopologyS
             <h2 className="text-xl font-semibold mb-2">Policy Builder</h2>
             <p className={descClass}>Visually create and attach security and network policies to Gateway listeners</p>
           </div>
-          <PolicyBuilder clusterId={clusterId} namespace={namespace} />
+          {/* The same guard its two sibling views already carry. The editor
+              is a 420px fixed three-track grid with overflow-hidden and no
+              horizontal scroller: at 393px the palette is silently clipped,
+              and its YAML preview is a 700px centred modal whose Copy and
+              Close buttons land off-screen with no way to scroll to them. */}
+          <NeedsWiderScreen
+            id="bnk-policy-builder"
+            title="The policy builder"
+            reason="It lays out a palette, a canvas and an inspector side by side; below about 1024px they do not fit."
+            threshold="compact"
+            instead={
+              <>Read the policies under <span className="font-medium text-foreground">Policy Map</span>, or open one from the list.</>
+            }
+          >
+            <PolicyBuilder clusterId={clusterId} namespace={namespace} />
+          </NeedsWiderScreen>
         </div>
       );
 
@@ -337,65 +330,30 @@ export default function F5BNK() {
     navigate(`/fleet?tab=dpf&cluster=${clusterId}`, { replace: true });
   }, [navigate]);
 
-  // Project and cluster selection (persisted to localStorage)
-  const { data: projects } = useProjects();
+  // Cluster selection (persisted to localStorage). Clusters are a flat list
+  // now — project scoping went with the pipeline (bnkscope Phase 1).
   const { data: allClustersResponse } = useAllClusters();
-  const allClusters = allClustersResponse?.clusters ?? [];
+  const clusters = useMemo(() => allClustersResponse?.clusters ?? [], [allClustersResponse?.clusters]);
+  const visibleClusters = clusters;
 
-  const [selectedProject, setSelectedProject] = useState<number | null>(() => {
-    const stored = localStorage.getItem(STORAGE_KEYS.BNK_PROJECT);
-    return stored ? parseInt(stored) : null;
-  });
-  const [selectedCluster, setSelectedCluster] = useState<number | null>(() => {
-    const stored = localStorage.getItem(STORAGE_KEYS.BNK_CLUSTER);
-    return stored ? parseInt(stored) : null;
-  });
+  const [selectedCluster, setSelectedCluster] = useSelectedCluster();
 
-  const { data: clusters = [] } = useProjectClusters(selectedProject ?? 0, {
-    pollingEnabled: false,
-  });
+  // Recorded by discovery when it finds the DPF operator. A DPF cluster is the
+  // infrastructure one — BNK runs on the Kamaji tenant — so every panel here
+  // reads an empty cluster and reports it as a series of absent components,
+  // which looks like a broken install rather than the wrong cluster.
+  const selectedClusterHasDpf = Boolean(
+    clusters.find((c) => c.id === selectedCluster)?.meta_data?.has_dpf,
+  );
 
-  // Auto-resolve project from cluster (e.g. navigating from Fleet with only cluster ID)
   useEffect(() => {
-    if (selectedCluster && !selectedProject && allClusters.length > 0) {
-      const match = allClusters.find((c) => c.id === selectedCluster);
-      if (match?.project_id) {
-        setSelectedProject(match.project_id);
-      }
-    }
-  }, [selectedCluster, selectedProject, allClusters]);
-
-  const visibleClusters = useMemo(() => {
-    if (!selectedProject) return clusters ?? [];
-    if ((clusters ?? []).length > 0) return clusters ?? [];
-    return allClusters.filter((cluster) => cluster.project_id === selectedProject);
-  }, [selectedProject, clusters, allClusters]);
-
-  useAutoSelectProjectCluster({
-    projects,
-    allClusters,
-    visibleClusters,
-    selectedProject,
-    selectedCluster,
-    setSelectedProject,
-    setSelectedCluster,
-  });
+    if (clusters.length === 0) return;
+    const stillValid = selectedCluster ? clusters.some((c) => c.id === selectedCluster) : false;
+    if (!stillValid) setSelectedCluster(clusters[0].id);
+  }, [clusters, selectedCluster, setSelectedCluster]);
 
   // Resource type & sidebar state
-  const [selectedResourceType, setSelectedResourceType] = useState<string>(() => {
-    const initialView = localStorage.getItem('bnk-forge-bnk-initial-view');
-    if (initialView) {
-      localStorage.removeItem('bnk-forge-bnk-initial-view');
-      // DPF moved to Fleet — redirect if deep-link targets it
-      if (initialView === VIEW_DPF_INFRA) {
-        // Navigate after mount via useEffect (can't call navigate in useState initializer)
-        setTimeout(() => navigate('/fleet?tab=dpf'), 0);
-        return VIEW_HEALTH;
-      }
-      return initialView;
-    }
-    return VIEW_HEALTH;
-  });
+  const [selectedResourceType, setSelectedResourceType] = useState<string>(VIEW_HEALTH);
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearch = useDebounce(searchQuery, DEBOUNCE_MS.SEARCH);
   const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
@@ -416,6 +374,8 @@ export default function F5BNK() {
 
   // Topology-selected resource (shown as overlay detail panel in topology view)
   const [topologySelectedResource, setTopologySelectedResource] = useState<K8sResource | null>(null);
+  // Below `lg` the component tree is a drawer rather than a column.
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [topologyLoading, setTopologyLoading] = useState(false);
 
   // Search input ref for keyboard shortcut
@@ -433,33 +393,6 @@ export default function F5BNK() {
   ]);
 
   // Persist selections to localStorage
-  useEffect(() => {
-    if (selectedProject !== null) {
-      localStorage.setItem(STORAGE_KEYS.BNK_PROJECT, selectedProject.toString());
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.BNK_PROJECT);
-    }
-  }, [selectedProject]);
-
-  useEffect(() => {
-    if (selectedCluster !== null) {
-      localStorage.setItem(STORAGE_KEYS.BNK_CLUSTER, selectedCluster.toString());
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.BNK_CLUSTER);
-    }
-  }, [selectedCluster]);
-
-  // Clear cluster selection when project changes
-  useEffect(() => {
-    if (selectedProject && selectedCluster) {
-      const clusterExistsInProject = visibleClusters.some(c => c.id === selectedCluster);
-      if (!clusterExistsInProject && visibleClusters.length > 0) {
-        setSelectedCluster(visibleClusters[0].id);
-      } else if (!clusterExistsInProject) {
-        setSelectedCluster(null);
-      }
-    }
-  }, [selectedProject, visibleClusters, selectedCluster]);
 
   // Defense-in-depth: don't fire K8s queries for an unreachable cluster.
   // The wrapping ConnectivityGate already swaps the UI for an offline banner,
@@ -529,16 +462,12 @@ export default function F5BNK() {
     // Invalidate ALL queries related to this cluster:
     //   - 'bnk-resources' → resource list views (gateways, routes, policies, etc.)
     //   - 'k8s/clusters/N' → special views (health, topology, policy-map, upgrade, etc.)
-    //   - 'runbooks' → diagnostics runbook definitions
     //   - 'tmm-debug' → TMM debug pod discovery
     //   - 'qkview' → QKView operations
-    //   - 'licensing' → BNK licensing status
     queryClient.invalidateQueries({ queryKey: ['bnk-resources'] });
     queryClient.invalidateQueries({ queryKey: ['k8s', 'clusters', selectedCluster] });
-    queryClient.invalidateQueries({ queryKey: ['runbooks'] });
     queryClient.invalidateQueries({ queryKey: ['tmm-debug'] });
     queryClient.invalidateQueries({ queryKey: ['qkview'] });
-    queryClient.invalidateQueries({ queryKey: ['licensing'] });
   };
 
   const handleDescribe = (resource: K8sResource) => {
@@ -595,47 +524,7 @@ export default function F5BNK() {
   };
 
   // Export config
-  const [isExporting, setIsExporting] = useState(false);
 
-  const handleExportConfig = async (format: 'yaml' | 'json') => {
-    if (!selectedCluster) return;
-    setIsExporting(true);
-    try {
-      if (format === 'yaml') {
-        const blob = await api.exportClusterConfig(selectedCluster);
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const cluster = clusters.find(c => c.id === selectedCluster);
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        a.download = `bnk-config-${cluster?.name || selectedCluster}-${timestamp}.yaml`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-        notify.success('BNK configuration exported as YAML', undefined, { category: 'cluster' });
-      } else {
-        const config = await api.exportClusterConfigJson(selectedCluster);
-        const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const cluster = clusters.find(c => c.id === selectedCluster);
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        a.download = `bnk-config-${cluster?.name || selectedCluster}-${timestamp}.json`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-        notify.success('BNK configuration exported as JSON', undefined, { category: 'cluster' });
-      }
-    } catch (error: unknown) {
-      const parsed = parseApiError(error);
-      notify.error('Export failed', parsed.message, { category: 'cluster' });
-    } finally {
-      setIsExporting(false);
-    }
-  };
 
   // ---------------------------------------------------------------------------
   // Resource list view content (non-special views)
@@ -804,9 +693,6 @@ export default function F5BNK() {
       <ResourcePageHeader
         title="F5 BNK"
         subtitle="BIG-IP Next for Kubernetes — gateways, policies, and traffic flow"
-        projects={projects || []}
-        selectedProjectId={selectedProject}
-        onProjectChange={setSelectedProject}
         clusters={visibleClusters}
         selectedClusterId={selectedCluster}
         onClusterChange={setSelectedCluster}
@@ -817,38 +703,18 @@ export default function F5BNK() {
         onSearchChange={setSearchQuery}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
+        leading={
+          <ResourceCategorySidebarTrigger
+            label="Components"
+            onClick={() => setCategoriesOpen(true)}
+          />
+        }
       >
         {selectedCluster && !isSpecialView(selectedResourceType) && (
           <Badge variant="outline" className="text-xs h-7">
             <Activity className="h-3 w-3 mr-1" />
             {filteredResources.length} resources
           </Badge>
-        )}
-        {selectedCluster && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs gap-1.5"
-                disabled={isExporting}
-              >
-                <Download className={cn('h-3.5 w-3.5', isExporting && 'animate-pulse')} />
-                Export Config
-                <ChevronDown className="h-3 w-3 opacity-50" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleExportConfig('yaml')}>
-                <FileText className="h-4 w-4 mr-2" />
-                Export as YAML
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExportConfig('json')}>
-                <Code className="h-4 w-4 mr-2" />
-                Export as JSON
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         )}
       </ResourcePageHeader>
 
@@ -871,6 +737,8 @@ export default function F5BNK() {
       <ResourceExplorerLayout.Body>
         {/* Sidebar — items of the active category */}
         <F5BNKSidebar
+          open={categoriesOpen}
+          onOpenChange={setCategoriesOpen}
           activeCategory={activeCategory}
           selectedResourceType={selectedResourceType}
           onSelectResourceType={handleSelectResourceType}
@@ -878,13 +746,17 @@ export default function F5BNK() {
         />
 
         {/* Center + Detail Panel */}
-        {!selectedProject ? (
-          <ResourceExplorerLayout.Content className="flex items-center justify-center">
-            <EmptyState icon={Server} title="No project selected" description="Select a project to view its clusters and F5 BNK resources" />
-          </ResourceExplorerLayout.Content>
-        ) : !selectedCluster ? (
+        {!selectedCluster ? (
           <ResourceExplorerLayout.Content className="flex items-center justify-center">
             <EmptyState icon={Server} title="No cluster selected" description="Select a cluster to view F5 BNK resources" />
+          </ResourceExplorerLayout.Content>
+        ) : selectedClusterHasDpf ? (
+          <ResourceExplorerLayout.Content className="flex items-center justify-center p-6">
+            <EmptyState
+              icon={Cpu}
+              title="BNK does not run on this cluster"
+              description="This is a DPF infrastructure cluster — it runs the DPF operator and the DPUs. BNK runs on the Kamaji tenant cluster; select that one to see its health. The DPUs, BFB images and DPUSets are under Clusters › DPF."
+            />
           </ResourceExplorerLayout.Content>
         ) : (
           <>
@@ -897,7 +769,7 @@ export default function F5BNK() {
                 target={{
                   type: 'cluster',
                   id: selectedCluster,
-                  displayName: allClusters.find((c) => c.id === selectedCluster)?.name,
+                  displayName: clusters.find((c) => c.id === selectedCluster)?.name,
                 }}
               >
                 {isSpecialView(selectedResourceType)
@@ -909,10 +781,16 @@ export default function F5BNK() {
 
             {/* Right Panel: Resource Details (resource list views + topology click) */}
             <ResourceExplorerLayout.DetailPanel
+              label="Component details"
               open={
                 (!!selectedResource && !isSpecialView(selectedResourceType)) ||
-                (!!topologySelectedResource && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW))
+                (!!topologySelectedResource && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW || selectedResourceType === VIEW_POLICY_MAP))
               }
+              onOpenChange={(next) => {
+                if (next) return;
+                setSelectedResource(null);
+                setTopologySelectedResource(null);
+              }}
             >
               {/* Resource list selection */}
               {selectedResource && !isSpecialView(selectedResourceType) && (
@@ -928,7 +806,7 @@ export default function F5BNK() {
                 />
               )}
               {/* Topology / Traffic Flow selection */}
-              {topologySelectedResource && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW) && (
+              {topologySelectedResource && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW || selectedResourceType === VIEW_POLICY_MAP) && (
                 <F5BNKDetailPanel
                   resource={topologySelectedResource}
                   onClose={() => setTopologySelectedResource(null)}
@@ -940,7 +818,7 @@ export default function F5BNK() {
                   borderDefault={borderDefault}
                 />
               )}
-              {topologyLoading && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW) && (
+              {topologyLoading && (selectedResourceType === VIEW_TOPOLOGY || selectedResourceType === VIEW_TRAFFIC_FLOW || selectedResourceType === VIEW_POLICY_MAP) && (
                 <div className="flex items-center justify-center py-20">
                   <Activity className="h-5 w-5 animate-spin text-primary mr-2" />
                   <span className="text-sm text-muted-foreground">

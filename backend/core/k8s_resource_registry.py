@@ -701,14 +701,8 @@ def list_resource_types() -> dict[str, K8sResourceType]:
     return RESOURCE_REGISTRY.copy()
 
 
-def list_namespaced_resources() -> dict[str, K8sResourceType]:
-    """Get all namespaced resource types."""
-    return {k: v for k, v in RESOURCE_REGISTRY.items() if v.namespaced}
 
 
-def list_cluster_resources() -> dict[str, K8sResourceType]:
-    """Get all cluster-scoped (non-namespaced) resource types."""
-    return {k: v for k, v in RESOURCE_REGISTRY.items() if not v.namespaced}
 
 
 def list_resources_by_category(category: str) -> dict[str, K8sResourceType]:
@@ -716,6 +710,3 @@ def list_resources_by_category(category: str) -> dict[str, K8sResourceType]:
     return {k: v for k, v in RESOURCE_REGISTRY.items() if v.category == category}
 
 
-def list_categories() -> list:
-    """Get all unique categories."""
-    return list(set(v.category for v in RESOURCE_REGISTRY.values()))

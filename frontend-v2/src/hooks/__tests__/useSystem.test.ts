@@ -12,13 +12,9 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import {
   useSystemHealth,
-  useQueueMetrics,
   usePerformanceMetrics,
   useRecentErrors,
   useDatabaseStats,
-  useCleanupDatabase,
-  useContainerStatus,
-  useRestartContainers,
 } from '@/hooks/useSystem';
 import React from 'react';
 
@@ -50,41 +46,12 @@ describe('useSystemHealth', () => {
     });
 
     expect(result.current.data).toMatchObject({
-      status: 'healthy',
-      version: '2.10.49',
-      uptime_seconds: 86400,
-      database: { status: 'healthy' },
-      redis: { status: 'healthy' },
-      celery: { status: 'healthy', workers: 2 },
+      services: {
+        backend: { status: 'healthy' },
+        database: { status: 'healthy' },
+      },
     });
-  });
-});
-
-// ============================================================================
-// useQueueMetrics
-// ============================================================================
-
-describe('useQueueMetrics', () => {
-  it('fetches queue metrics', async () => {
-    const { result } = renderHook(() => useQueueMetrics(), {
-      wrapper: createWrapper(),
-    });
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(result.current.data).toMatchObject({
-      total_pending: 3,
-      total_active: 1,
-      workers: 2,
-    });
-    expect(result.current.data!.queues).toHaveLength(2);
-    expect(result.current.data!.queues[0]).toMatchObject({
-      name: 'default',
-      pending: 3,
-      active: 1,
-    });
+    expect(result.current.data!.timestamp).toBeTruthy();
   });
 });
 
@@ -182,112 +149,8 @@ describe('useDatabaseStats', () => {
     });
     expect(result.current.data!.tables).toHaveLength(3);
     expect(result.current.data!.tables[0]).toMatchObject({
-      name: 'tasks',
-      rows: 5000,
-    });
-  });
-});
-
-// ============================================================================
-// useCleanupDatabase
-// ============================================================================
-
-describe('useCleanupDatabase', () => {
-  it('sends cleanup request with type and olderThanDays', async () => {
-    let capturedBody: Record<string, unknown> | null = null;
-    server.use(
-      http.post('*/api/system/database/cleanup', async ({ request }) => {
-        capturedBody = (await request.json()) as Record<string, unknown>;
-        return HttpResponse.json({
-          success: true,
-          deleted_count: 150,
-          cleanup_type: 'tasks',
-          cutoff_date: '2026-01-01T00:00:00Z',
-        });
-      })
-    );
-
-    const { result } = renderHook(() => useCleanupDatabase(), {
-      wrapper: createWrapper(),
-    });
-
-    result.current.mutate({ type: 'tasks' as const, olderThanDays: 30 });
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(capturedBody).toMatchObject({
-      cleanup_type: 'tasks',
-      older_than_days: 30,
-    });
-    expect(result.current.data).toMatchObject({
-      success: true,
-      deleted_count: 150,
-    });
-  });
-});
-
-// ============================================================================
-// useContainerStatus
-// ============================================================================
-
-describe('useContainerStatus', () => {
-  it('fetches container status', async () => {
-    const { result } = renderHook(() => useContainerStatus(), {
-      wrapper: createWrapper(),
-    });
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(result.current.data).toMatchObject({
-      total: 6,
-    });
-    expect(result.current.data!.containers).toHaveLength(6);
-    expect(result.current.data!.containers[0]).toMatchObject({
-      service: 'backend',
-      status: 'running',
-      state: 'healthy',
-    });
-  });
-});
-
-// ============================================================================
-// useRestartContainers
-// ============================================================================
-
-describe('useRestartContainers', () => {
-  it('sends restart request with specified services', async () => {
-    let capturedBody: Record<string, unknown> | null = null;
-    server.use(
-      http.post('*/api/system/containers/restart', async ({ request }) => {
-        capturedBody = (await request.json()) as Record<string, unknown>;
-        return HttpResponse.json({
-          message: 'Restart initiated',
-          results: [{ service: 'backend', status: 'restarted' }],
-          note: 'Services will be back shortly',
-        });
-      })
-    );
-
-    const { result } = renderHook(() => useRestartContainers(), {
-      wrapper: createWrapper(),
-    });
-
-    result.current.mutate(['backend']);
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(capturedBody).toMatchObject({
-      services: ['backend'],
-    });
-    expect(result.current.data).toMatchObject({
-      message: 'Restart initiated',
-      results: [{ service: 'backend', status: 'restarted' }],
+      name: 'kubernetes_clusters',
+      rows: 3,
     });
   });
 });
@@ -320,7 +183,7 @@ describe('useSystem error handling', () => {
 
   it('handles API errors on database stats', async () => {
     server.use(
-      http.get('*/api/system/database/stats', () => {
+      http.get('*/api/database/stats', () => {
         return HttpResponse.json(
           { error: { code: 'INTERNAL_ERROR', message: 'Database unreachable' } },
           { status: 500 }

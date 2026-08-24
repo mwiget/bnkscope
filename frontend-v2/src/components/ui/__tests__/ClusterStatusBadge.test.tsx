@@ -96,29 +96,7 @@ describe('ClusterStatusBadge', () => {
     expect(screen.getByText('Offline')).toBeInTheDocument();
   });
 
-  it("queries 'ssh' probe by ssh_credential_id when ssh_tunnel_enabled", () => {
-    // Phase-2 SSH probe lives in the same registry — the badge should ask
-    // for ('ssh', cred_id) instead of ('cluster', id) for tunneled clusters.
-    setRegistryState({
-      state: 'reachable',
-      error_context: { target_name: 'jumphost-1' },
-    });
-    render(
-      <ClusterStatusBadge
-        cluster={{
-          id: 1,
-          name: 'on-prem-1',
-          ssh_tunnel_enabled: true,
-          ssh_credential_id: 42,
-        }}
-      />,
-    );
-    expect(mockUseTargetConnectivity).toHaveBeenCalledWith('ssh', 42);
-    const el = screen.getByLabelText(/on-prem-1 — Reachable/);
-    expect(el).toHaveAttribute('title', expect.stringContaining('SSH tunnel'));
-  });
-
-  it("queries 'cluster' probe by cluster id when not tunneled", () => {
+  it("queries 'cluster' probe by cluster id", () => {
     setRegistryState({ state: 'reachable' });
     render(<ClusterStatusBadge cluster={{ id: 7, name: 'edge-east' }} />);
     expect(mockUseTargetConnectivity).toHaveBeenCalledWith('cluster', 7);

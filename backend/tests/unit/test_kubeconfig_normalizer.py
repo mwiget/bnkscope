@@ -149,14 +149,33 @@ class TestExecGke:
 
 
 class TestExecAks:
-    """exec_aks.yaml — kubelogin exec → passes (rewritten later in engine router)."""
+    """exec_aks.yaml — kubelogin → rejected since Phase 5.
+
+    It used to pass, on the basis that the worker container shipped the binary.
+    There is no worker and no binary, and unlike `aws` and
+    `gke-gcloud-auth-plugin` there is no Python equivalent to mint the token
+    with — so accepting it meant accepting a kubeconfig that validates and then
+    fails at connect time with a vague error.
+    """
 
     @pytest.mark.parametrize("source", ALL_SOURCES)
-    def test_passes_all_sources(self, source):
-        result = normalize_kubeconfig(load_fixture("exec_aks.yaml"), source=source)
-        parsed = yaml.safe_load(result)
-        user = parsed["users"][0]["user"]
-        assert user["exec"]["command"] == "kubelogin"
+    def test_raises_for_all_sources(self, source):
+        with pytest.raises(KubeconfigUnportableError) as exc_info:
+            normalize_kubeconfig(load_fixture("exec_aks.yaml"), source=source)
+        err = exc_info.value
+        assert err.details["field"] == "exec.command"
+        assert "kubelogin" in err.details["user_message"]
+
+    def test_the_message_says_what_to_do_instead(self):
+        """A rejection an operator cannot act on is just a wall."""
+        with pytest.raises(KubeconfigUnportableError) as exc_info:
+            normalize_kubeconfig(
+                load_fixture("exec_aks.yaml"), source=NormalizationSource.MANUAL_UPLOAD
+            )
+        message = exc_info.value.details["user_message"]
+        assert "kubectl create token" in message
+        for cmd in SUPPORTED_EXEC_COMMANDS:
+            assert cmd in message
 
 
 class TestExecUnknown:

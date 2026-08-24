@@ -192,20 +192,3 @@ class TestDeleteNotification:
 class TestNotificationAuthentication:
     """Authentication enforcement for notification endpoints."""
 
-    def test_unauthenticated_list(self, client):
-        """Unauthenticated request returns 401."""
-        response = client.get("/api/notifications")
-        assert response.status_code == 401
-
-    def test_unauthenticated_create(self, client):
-        """Unauthenticated create returns 401."""
-        response = client.post(
-            "/api/notifications",
-            json={
-                "user": "admin",
-                "type": "info",
-                "title": "Test",
-                "message": "msg",
-            },
-        )
-        assert response.status_code == 401

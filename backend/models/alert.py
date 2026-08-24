@@ -25,7 +25,6 @@ class AlertChannel(Base):
     email_from = Column(String(255))
 
     event_types = Column(JSON, default=list)
-    project_ids = Column(JSON, default=list)
     cluster_ids = Column(JSON, default=list)
 
     min_interval_seconds = Column(Integer, default=60)
@@ -57,7 +56,6 @@ class AlertHistory(Base):
     title = Column(String(500), nullable=False)
     message = Column(Text)
 
-    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     cluster_id = Column(Integer, ForeignKey("kubernetes_clusters.id", ondelete="SET NULL"), nullable=True)
     payload = Column(JSON)
 

@@ -3,12 +3,6 @@ import { render, screen } from '@/test/test-utils';
 import { F5iRuleViewer } from '../F5iRuleViewer';
 
 // Mock Monaco editor
-vi.mock('@monaco-editor/react', () => ({
-  Editor: ({ value }: { value: string }) => (
-    <pre data-testid="mock-editor">{value}</pre>
-  ),
-}));
-
 const mockResource = {
   kind: 'F5BigCneIrule',
   apiVersion: 'k8s.f5net.com/v1',

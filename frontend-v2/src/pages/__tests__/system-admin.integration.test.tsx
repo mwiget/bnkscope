@@ -10,8 +10,6 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { render } from '@/test/test-utils';
-import { useAuthStore } from '@/stores/authStore';
-import { mockUser } from '@/test/test-fixtures';
 import System from '@/pages/System';
 
 const mockNavigate = vi.fn();
@@ -22,10 +20,8 @@ vi.mock('react-router-dom', async () => {
 
 describe('System Administration — Integration', () => {
   beforeEach(() => {
-    useAuthStore.getState().logout();
     localStorage.clear();
     mockNavigate.mockReset();
-    useAuthStore.getState().login('mock-jwt-token', mockUser);
   });
 
   // ────────────────────────────────────────────────────────────────────────
@@ -44,7 +40,6 @@ describe('System Administration — Integration', () => {
     const tabs = screen.getAllByRole('tab');
     const tabLabels = tabs.map((tab) => tab.textContent);
     expect(tabLabels).toContain('System Monitor');
-    expect(tabLabels).toContain('Audit Log');
     expect(tabLabels).toContain('Alerts');
     expect(tabLabels).toContain('Defaults');
     expect(tabLabels).toContain('Appearance');
@@ -60,11 +55,15 @@ describe('System Administration — Integration', () => {
 
     // The System Monitor tab is the default — wait for sub-components to load.
     // SystemUpgrade renders version info, PerformanceMonitor renders metrics,
-    // ContainerManagement renders container heading.
+    // DatabaseManagement renders its own heading.
+    //
+    // Container management used to be asserted here. Its two endpoints shelled
+    // out to `docker`, a binary the backend image does not ship and cannot —
+    // no socket is mounted, by design, because the CLI owns lifecycle — so the
+    // panel only ever rendered an error.
     await waitFor(
       () => {
-        // SectionCard eyebrow title — sentence case now ("Container management").
-        expect(screen.getByText(/container management/i)).toBeInTheDocument();
+        expect(screen.getByText(/database management/i)).toBeInTheDocument();
       },
       { timeout: 3000 },
     );
@@ -88,15 +87,6 @@ describe('System Administration — Integration', () => {
     // Wait for page to render
     await waitFor(() => {
       expect(screen.getByText('System Administration')).toBeInTheDocument();
-    });
-
-    // Click "Audit Log" tab
-    await user.click(screen.getByRole('tab', { name: /audit log/i }));
-
-    // Audit tab should become active
-    await waitFor(() => {
-      const auditTab = screen.getByRole('tab', { name: /audit log/i });
-      expect(auditTab).toHaveAttribute('aria-selected', 'true');
     });
 
     // Click "Appearance" tab

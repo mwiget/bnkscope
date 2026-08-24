@@ -1,9 +1,9 @@
 /**
  * Unified cluster reachability badge — single source of truth.
  *
- * Reads from the SSE-driven reachability registry: cluster probe for direct
- * kubeconfig + operator-engine clusters, SSH probe for ssh-tunnel-enabled
- * clusters. Same icon + label + tooltip everywhere a cluster is shown.
+ * Reads from the SSE-driven reachability registry. There used to be two probe
+ * types to choose between here; SSH tunnels went in Phase 3, so every cluster
+ * is probed directly over its kubeconfig and the branch went with them.
  *
  * Visual: Network glyph + warning-pulse / success / destructive / muted, tooltip
  * carries the diagnostic so users see *why* not just *what*.
@@ -15,8 +15,6 @@ import { useTargetConnectivity } from '@/hooks/useConnectivity';
 interface ClusterLike {
   id: number;
   name: string;
-  ssh_tunnel_enabled?: boolean;
-  ssh_credential_id?: number | null;
 }
 
 interface ClusterStatusBadgeProps {
@@ -38,17 +36,9 @@ export function ClusterStatusBadge({
   showLabel = false,
   showStatusLabel = false,
 }: ClusterStatusBadgeProps) {
-  const usesJumphost = !!cluster.ssh_tunnel_enabled && !!cluster.ssh_credential_id;
+  const { state: registryState } = useTargetConnectivity('cluster', cluster.id);
 
-  // For ssh-tunnel-enabled clusters, the registry's SSH probe is the truth
-  // (Phase 2 — collapses Phase 1's bespoke useSSHConnectivity branch). For
-  // direct/operator clusters, the cluster probe is the truth. Both paths
-  // read from the same registry, so behavior is identical end-to-end.
-  const targetType = usesJumphost ? 'ssh' : 'cluster';
-  const targetId = usesJumphost ? (cluster.ssh_credential_id ?? undefined) : cluster.id;
-  const { state: registryState } = useTargetConnectivity(targetType, targetId);
-
-  const method = usesJumphost ? 'SSH tunnel (jumphost)' : 'cluster reachability probe';
+  const method = 'cluster reachability probe';
   const value = registryState?.state ?? 'unknown';
 
   let state: State;

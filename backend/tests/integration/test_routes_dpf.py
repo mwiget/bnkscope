@@ -86,19 +86,14 @@ def _make_dpf_health() -> dict:
 class TestDPFDetect:
     """GET /api/k8s/clusters/{cluster_id}/dpf/detect."""
 
-    def test_requires_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="dpf-detect-noauth")
-        response = client.get(f"/api/k8s/clusters/{cluster.id}/dpf/detect")
-        assert response.status_code == 401
-
     @patch("routes.k8s.dpf.detect_dpf")
     @patch("routes.k8s.dpf.KubernetesService")
     def test_dpf_installed(
         self, mock_k8s_cls, mock_detect,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can detect DPF installed on a cluster."""
-        cluster = make_k8s_cluster(project=sample_project, name="dpf-detect-installed")
+        cluster = make_k8s_cluster(name="dpf-detect-installed")
         mock_detect.return_value = _make_dpf_detect_result(installed=True)
 
         response = client.get(
@@ -116,10 +111,10 @@ class TestDPFDetect:
     @patch("routes.k8s.dpf.KubernetesService")
     def test_dpf_not_installed(
         self, mock_k8s_cls, mock_detect,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Returns installed=False when DPF is not present."""
-        cluster = make_k8s_cluster(project=sample_project, name="dpf-detect-none")
+        cluster = make_k8s_cluster(name="dpf-detect-none")
         mock_detect.return_value = _make_dpf_detect_result(installed=False)
 
         response = client.get(
@@ -139,20 +134,15 @@ class TestDPFDetect:
 class TestDPFData:
     """GET /api/k8s/clusters/{cluster_id}/dpf/data."""
 
-    def test_requires_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="dpf-data-noauth")
-        response = client.get(f"/api/k8s/clusters/{cluster.id}/dpf/data")
-        assert response.status_code == 401
-
     @patch("routes.k8s.dpf.analyze_dpf_health")
     @patch("routes.k8s.dpf.fetch_all_dpf_data")
     @patch("routes.k8s.dpf.KubernetesService")
     def test_returns_data_and_health(
         self, mock_k8s_cls, mock_fetch, mock_health,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can fetch unified DPF data with health analysis."""
-        cluster = make_k8s_cluster(project=sample_project, name="dpf-data-cluster")
+        cluster = make_k8s_cluster(name="dpf-data-cluster")
         dpf_data = _make_dpf_data()
         mock_fetch.return_value = dpf_data
         mock_health.return_value = _make_dpf_health()
@@ -183,20 +173,15 @@ class TestDPFData:
 class TestDPFHealth:
     """GET /api/k8s/clusters/{cluster_id}/dpf/health."""
 
-    def test_requires_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="dpf-health-noauth")
-        response = client.get(f"/api/k8s/clusters/{cluster.id}/dpf/health")
-        assert response.status_code == 401
-
     @patch("routes.k8s.dpf.analyze_dpf_health")
     @patch("routes.k8s.dpf.fetch_all_dpf_data")
     @patch("routes.k8s.dpf.KubernetesService")
     def test_returns_health_summary(
         self, mock_k8s_cls, mock_fetch, mock_health,
-        client, viewer_headers, all_test_users, sample_project, make_k8s_cluster,
+        client, viewer_headers, all_test_users, make_k8s_cluster,
     ):
         """Viewer can get DPF health summary."""
-        cluster = make_k8s_cluster(project=sample_project, name="dpf-health-cluster")
+        cluster = make_k8s_cluster(name="dpf-health-cluster")
         mock_fetch.return_value = _make_dpf_data()
         health = _make_dpf_health()
         mock_health.return_value = health
@@ -223,15 +208,3 @@ class TestDPFHealth:
 class TestDPFAllEndpointsRequireAuth:
     """All DPF endpoints reject unauthenticated requests."""
 
-    def test_all_endpoints_require_auth(self, client, sample_project, make_k8s_cluster):
-        cluster = make_k8s_cluster(project=sample_project, name="dpf-bulk-noauth")
-        cid = cluster.id
-
-        endpoints = [
-            f"/api/k8s/clusters/{cid}/dpf/detect",
-            f"/api/k8s/clusters/{cid}/dpf/data",
-            f"/api/k8s/clusters/{cid}/dpf/health",
-        ]
-        for url in endpoints:
-            resp = client.get(url)
-            assert resp.status_code == 401, f"GET {url} should require auth"

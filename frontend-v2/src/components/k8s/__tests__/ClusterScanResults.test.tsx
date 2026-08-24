@@ -242,6 +242,19 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('ClusterScanResults', () => {
+  it('offers no deployment affordances — bnkscope reports, it does not install', () => {
+    // The "Deploy BNK" section (node-readiness probe + adaptive deployment
+    // plan) went with the pipeline. A plan for work this tool cannot carry out
+    // is worse than no plan.
+    render(<ClusterScanResults clusterId={1} clusterName="dev-cluster" />);
+
+    expect(screen.queryByText(/Deploy BNK/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Deployment Plan/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /node readiness/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it('shows scan CTA when no scan has been run', () => {
     render(<ClusterScanResults clusterId={1} clusterName="dev-cluster" />);
 
@@ -510,220 +523,68 @@ describe('ClusterScanResults', () => {
   // (issue #387 follow-up: no "prepare cluster" action on this screen).
   // -------------------------------------------------------------------------
 
-  it('does not render a "prepare cluster" remediation action for a local/kind cluster', async () => {
-    server.use(
-      http.post('*/api/k8s/clusters/:clusterId/scan', () => {
-        return HttpResponse.json({
-          ...mockScanResult,
-          cluster_info: { ...mockScanResult.cluster_info, is_kind: true, is_local: true },
-        });
-      }),
-    );
-
-    const user = userEvent.setup();
-    render(<ClusterScanResults clusterId={1} clusterName="dev-cluster" />);
-
-    await user.click(screen.getByRole('button', { name: /Scan Cluster/ }));
-    // Click-only contract — the probe hasn't run yet, so the button still
-    // shows its initial label.
-    await screen.findByRole('button', { name: /Check node readiness/ });
-
-    expect(
-      screen.queryByRole('button', { name: /Prepare cluster for BNK/ }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByRole('checkbox', { name: /override/i })).not.toBeInTheDocument();
-  });
-
-  it('does not render a "prepare cluster" remediation action for a non-local cluster', async () => {
-    server.use(
-      http.post('*/api/k8s/clusters/:clusterId/scan', () => {
-        return HttpResponse.json({
-          ...mockScanResult,
-          cluster_info: { ...mockScanResult.cluster_info, is_kind: false, is_local: false },
-        });
-      }),
-    );
-
-    const user = userEvent.setup();
-    render(<ClusterScanResults clusterId={1} clusterName="dev-cluster" />);
-
-    await user.click(screen.getByRole('button', { name: /Scan Cluster/ }));
-    // Click-only contract — the probe hasn't run yet, so the button still
-    // shows its initial label.
-    await screen.findByRole('button', { name: /Check node readiness/ });
-
-    expect(
-      screen.queryByRole('button', { name: /Prepare cluster for BNK/ }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByRole('checkbox', { name: /override/i })).not.toBeInTheDocument();
-  });
-
-  // -------------------------------------------------------------------------
+      // -------------------------------------------------------------------------
   // Node Readiness — click-only probe (no auto-fire on scan)
   // -------------------------------------------------------------------------
 
-  it('runs the node-readiness probe only when the button is clicked (local/kind cluster)', async () => {
-    let probeCallCount = 0;
-    server.use(
-      http.post('*/api/k8s/clusters/:clusterId/scan', () => {
-        return HttpResponse.json({
-          ...mockScanResult,
-          cluster_info: { ...mockScanResult.cluster_info, is_kind: true, is_local: true },
-        });
-      }),
-      http.post('*/api/k8s/clusters/:clusterId/node-readiness/probe', () => {
-        probeCallCount += 1;
-        return HttpResponse.json({
-          cluster_id: 1,
-          job_name: 'bnk-node-readiness-auto',
-          is_kind: true,
-          is_local: true,
-          nodes: [
-            {
-              node: 'bnkfull-control-plane',
-              cni_ok: true,
-              core_pattern_ok: true,
-              core_pattern: '/tmp/core.%e.%p',
-              cni_plugins: { macvlan: true, host_device: true, ipvlan: true },
-            },
-          ],
-          all_ready: true,
-          message: 'ok',
-        });
-      }),
-    );
-
-    const user = userEvent.setup();
-    render(<ClusterScanResults clusterId={1} clusterName="dev-cluster" />);
-
-    await user.click(screen.getByRole('button', { name: /Scan Cluster/ }));
-
-    // The probe does not fire on its own — initial label, no node rows, no calls yet.
-    const checkButton = await screen.findByRole('button', { name: /Check node readiness/ });
-    expect(screen.queryByText('bnkfull-control-plane')).not.toBeInTheDocument();
-    expect(probeCallCount).toBe(0);
-
-    // Clicking fires the probe.
-    await user.click(checkButton);
-    await screen.findByText('bnkfull-control-plane');
-    expect(await screen.findByRole('button', { name: /Re-check node readiness/ })).toBeInTheDocument();
-    expect(probeCallCount).toBe(1);
-
-    // Re-clicking re-fires the same mutation rather than looping on its own.
-    await user.click(screen.getByRole('button', { name: /Re-check node readiness/ }));
-    await waitFor(() => expect(probeCallCount).toBe(2));
-  });
-
-  it('runs the node-readiness probe only when the button is clicked for a non-local (e.g. AWS EKS) cluster too — the checks are a BNK requirement everywhere', async () => {
-    let probeCallCount = 0;
-    server.use(
-      http.post('*/api/k8s/clusters/:clusterId/scan', () => {
-        return HttpResponse.json({
-          ...mockScanResult,
-          cluster_info: { ...mockScanResult.cluster_info, is_kind: false, is_local: false },
-        });
-      }),
-      http.post('*/api/k8s/clusters/:clusterId/node-readiness/probe', () => {
-        probeCallCount += 1;
-        return HttpResponse.json({
-          cluster_id: 1,
-          job_name: 'bnk-node-readiness-eks',
-          is_kind: false,
-          is_local: false,
-          nodes: [
-            {
-              node: 'ip-10-0-1-42.ec2.internal',
-              cni_ok: true,
-              core_pattern_ok: true,
-              core_pattern: '/tmp/core.%e.%p',
-              cni_plugins: { macvlan: true, host_device: true, ipvlan: true },
-            },
-          ],
-          all_ready: true,
-          message: 'ok',
-        });
-      }),
-    );
-
-    const user = userEvent.setup();
-    render(<ClusterScanResults clusterId={1} clusterName="dev-cluster" />);
-
-    await user.click(screen.getByRole('button', { name: /Scan Cluster/ }));
-
-    // Does not fire on its own even though this is not a local/kind cluster.
-    const checkButton = await screen.findByRole('button', { name: /Check node readiness/ });
-    expect(screen.queryByText('ip-10-0-1-42.ec2.internal')).not.toBeInTheDocument();
-    expect(probeCallCount).toBe(0);
-
-    // The privileged-probe note is shown for all clusters, even before a click.
-    expect(
-      screen.getByText(/Dispatches a short-lived privileged probe pod to each node\./),
-    ).toBeInTheDocument();
-
-    await user.click(checkButton);
-    await screen.findByText('ip-10-0-1-42.ec2.internal');
-    expect(await screen.findByRole('button', { name: /Re-check node readiness/ })).toBeInTheDocument();
-    expect(probeCallCount).toBe(1);
-
-    // No remediation action on this (informational) dashboard.
-    expect(
-      screen.queryByRole('button', { name: /Prepare cluster for BNK/ }),
-    ).not.toBeInTheDocument();
-  });
-
-  // -------------------------------------------------------------------------
+      // -------------------------------------------------------------------------
   // Adaptive Deployment Plan — template selector
   // -------------------------------------------------------------------------
 
-  it('groups cluster prerequisites (node readiness, informational only) with the deployment plan under a single "Deploy BNK" flow', async () => {
+    
+  // -------------------------------------------------------------------------
+  // Switching clusters
+  // -------------------------------------------------------------------------
+
+  it('rescans and repaints when the selected cluster changes', async () => {
+    // A mutation is not keyed by anything — `scanMutation.data` is just the
+    // last result it produced. Switching clusters left every tile showing the
+    // previous cluster's scan, and the stale data also satisfied the
+    // auto-scan guard, so no scan for the new cluster ever started. The node
+    // count in the header changed, because that comes from the cluster list,
+    // which made it look like a partial refresh rather than a stuck panel.
+    const scanned: string[] = [];
     server.use(
-      http.post('*/api/k8s/clusters/:clusterId/scan', () => {
+      http.post('*/api/k8s/clusters/:clusterId/scan', ({ params }) => {
+        const id = String(params.clusterId);
+        scanned.push(id);
         return HttpResponse.json({
           ...mockScanResult,
-          cluster_info: { ...mockScanResult.cluster_info, is_kind: true, is_local: true },
+          cluster_info: { ...mockScanResult.cluster_info, node_count: id === '1' ? 3 : 9 },
+          recommendations: [
+            {
+              id: `rec-${id}`,
+              category: 'prerequisite',
+              title: id === '1' ? 'Deploy SR-IOV' : 'Investigate node taints',
+              description: `Recommendation for cluster ${id}`,
+              severity: 'required',
+              // Both must be a status the Recommendations section renders —
+              // it shows `deploy` and `investigate` only.
+              status: id === '1' ? 'deploy' : 'investigate',
+            },
+          ],
         });
       }),
     );
 
-    const user = userEvent.setup();
-    render(<ClusterScanResults clusterId={1} clusterName="dev-cluster" />);
+    const { rerender } = render(<ClusterScanResults clusterId={1} clusterName="one" />);
 
-    await user.click(screen.getByRole('button', { name: /Scan Cluster/ }));
+    await waitFor(() => {
+      expect(screen.getByText('Deploy SR-IOV')).toBeInTheDocument();
+    });
 
-    // Step 1 (prerequisites) and Step 2 (deployment plan) both render under
-    // the same "Deploy BNK" heading, with Step 1 first in document order.
-    await screen.findByText('Deploy BNK');
-    const step1 = await screen.findByText('Step 1 · Cluster Prerequisites');
-    const step2 = await screen.findByText('Step 2 · Adaptive Deployment Plan');
-    expect(
-      step1.compareDocumentPosition(step2) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    rerender(<ClusterScanResults clusterId={2} clusterName="two" />);
 
-    // Node readiness content (detection, click-only) still present, now inside Step 1.
-    const checkButton = await screen.findByRole('button', { name: /Check node readiness/ });
-    await user.click(checkButton);
-    expect(await screen.findByRole('button', { name: /Re-check node readiness/ })).toBeInTheDocument();
+    // The scan for the new cluster must actually be issued — this is the half
+    // that silently did not happen.
+    await waitFor(() => {
+      expect(scanned).toEqual(['1', '2']);
+    });
 
-    // No remediation action — this dashboard informs, it doesn't fix.
-    expect(
-      screen.queryByRole('button', { name: /Prepare cluster for BNK/ }),
-    ).not.toBeInTheDocument();
-
-    // The old standalone card no longer exists as a separate grid card.
-    expect(screen.queryByText('Node Readiness')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Investigate node taints')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Deploy SR-IOV')).not.toBeInTheDocument();
   });
 
-  it('offers F5 BNK 2.3 alongside F5 BNK 2.2 in the deployment-plan template selector', async () => {
-    const user = userEvent.setup();
-    render(<ClusterScanResults clusterId={1} clusterName="dev-cluster" />);
-
-    await user.click(screen.getByRole('button', { name: /Scan Cluster/ }));
-    await screen.findByText('Step 2 · Adaptive Deployment Plan');
-
-    await user.click(screen.getByRole('combobox'));
-
-    expect(await screen.findByRole('option', { name: 'F5 BNK 2.2' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'F5 BNK 2.3' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'BNK Demo Apps' })).toBeInTheDocument();
-  });
 });

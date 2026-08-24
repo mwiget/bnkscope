@@ -1,15 +1,14 @@
 """
-Shared test fixtures for BNK-Forge backend integration tests.
+Shared test fixtures for bnkscope backend integration tests.
 
 Provides:
 - SQLite in-memory database with all tables created
 - FastAPI TestClient with dependency overrides
-- Pre-authenticated JWT headers for admin/operator/viewer roles
-- Sample data fixtures (project, user)
+- Sample data fixtures
 
 Usage:
-    def test_example(client, admin_headers, sample_project):
-        response = client.get("/api/projects", headers=admin_headers)
+    def test_example(client):
+        response = client.get("/api/k8s/clusters")
         assert response.status_code == 200
 """
 
@@ -21,12 +20,15 @@ import tempfile
 # Environment setup — MUST happen before any backend imports
 # ---------------------------------------------------------------------------
 
-# Use SQLite for tests (overrides PostgreSQL default in Settings)
-os.environ["DATABASE_URL"] = "sqlite:///file::memory:?cache=shared"
-os.environ["REQUIRE_AUTH"] = "true"
+# Settings-level DATABASE_URL. The engine fixture below builds its own
+# in-memory engine; this one exists for the code that reads settings rather
+# than the session — ``backup_service._database_path()`` in particular, which
+# needs a real path. It must not be ``sqlite:///file::memory:...``: SQLAlchemy
+# has no ``uri=True`` here, so that form creates a junk file named
+# ``file::memory:`` in the working directory.
+os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/bnkscope-settings.db"
 os.environ["ENVIRONMENT"] = "development"
 # Force inline (single-threaded) discovery so tests run synchronously against the test session.
-os.environ["DISCOVERY_MAX_PARALLEL"] = "1"
 
 # Create a temporary encryption key file so core.encryption doesn't fail
 _tmp_key_dir = tempfile.mkdtemp()
@@ -53,9 +55,6 @@ from sqlalchemy.pool import StaticPool
 # Import ALL models so Base.metadata knows about every table
 import models  # noqa: F401 — triggers barrel imports in models/__init__.py
 from database import Base, get_db
-from models import User
-from services.auth_service import create_access_token, hash_password
-from services.registry import ServiceRegistry
 
 # ---------------------------------------------------------------------------
 # Database fixtures
@@ -83,17 +82,36 @@ def engine():
     eng.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _reset_reachability_breakers():
+    """Isolate the reachability circuit-breaker registry between tests (#55).
+
+    Autouse -- NOT tied to the ``db`` fixture -- because a unit test can trip a
+    breaker without touching the database, and the next test would inherit it.
+    The registry is a process-global singleton keyed by (target_type,
+    target_id); a breaker tripped OPEN by one test otherwise short-circuits
+    every later test reusing that id with BreakerOpenError. Order-dependent
+    failures that only appear in a monolithic ``pytest tests/`` run, never in
+    CI's per-suite processes -- which is exactly why they went unnoticed.
+
+    Reset before AND after: before, so a test never inherits state from a
+    predecessor that failed mid-way; after, so a test's own trips don't
+    outlive it even if a later fixture errors.
+    """
+    from services.reachability.registry import registry
+
+    registry.reset_breaker_state()
+    yield
+    registry.reset_breaker_state()
+
+
 @pytest.fixture()
 def db(engine):
     """
     Provide a transactional database session that rolls back after each test.
 
     This keeps tests isolated without paying the cost of table recreation.
-    Also resets the ServiceRegistry singleton to avoid cross-test contamination.
     """
-    # Reset service registry between tests
-    ServiceRegistry.reset()
-
     connection = engine.connect()
     transaction = connection.begin()
     TestingSessionLocal = sessionmaker(bind=connection)
@@ -161,189 +179,44 @@ def client(db):
 # Auth token helpers
 # ---------------------------------------------------------------------------
 
-def _make_token(username: str, role: str) -> str:
-    """Create a valid JWT for the given user/role."""
-    return create_access_token(data={"sub": username, "role": role})
-
-
-def _make_headers(username: str, role: str) -> dict:
-    """Return Authorization headers with a valid JWT."""
-    return {"Authorization": f"Bearer {_make_token(username, role)}"}
+# bnkscope has no authentication (Phase 3). These fixtures survive as no-ops
+# so route tests keep their existing signatures — headers are empty and the
+# "user" objects are None.
 
 
 @pytest.fixture()
 def admin_headers() -> dict:
-    """Authorization headers for an admin user."""
-    return _make_headers("testadmin", "admin")
+    return {}
 
 
 @pytest.fixture()
 def operator_headers() -> dict:
-    """Authorization headers for an operator user."""
-    return _make_headers("testoperator", "operator")
+    return {}
 
 
 @pytest.fixture()
 def viewer_headers() -> dict:
-    """Authorization headers for a viewer user."""
-    return _make_headers("testviewer", "viewer")
-
-
-# ---------------------------------------------------------------------------
-# Sample data fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture()
-def sample_user(db) -> User:
-    """Create a pre-existing admin user in the test DB."""
-    user = User(
-        username="testadmin",
-        email="testadmin@bnk-forge.test",
-        hashed_password=hash_password("testpassword123"),
-        role="admin",
-        is_active=True,
-        must_change_password=False,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    return {}
 
 
 @pytest.fixture()
-def sample_operator_user(db) -> User:
-    """Create a pre-existing operator user in the test DB."""
-    user = User(
-        username="testoperator",
-        email="testoperator@bnk-forge.test",
-        hashed_password=hash_password("testpassword123"),
-        role="operator",
-        is_active=True,
-        must_change_password=False,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+def sample_user() -> None:
+    return None
 
 
 @pytest.fixture()
-def sample_viewer_user(db) -> User:
-    """Create a pre-existing viewer user in the test DB."""
-    user = User(
-        username="testviewer",
-        email="testviewer@bnk-forge.test",
-        hashed_password=hash_password("testpassword123"),
-        role="viewer",
-        is_active=True,
-        must_change_password=False,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+def sample_operator_user() -> None:
+    return None
 
 
 @pytest.fixture()
-def sample_project(db):
-    """Create a pre-existing project in the test DB."""
-    from models import Project
-
-    project = Project(
-        name="Test Project",
-        description="A test project for integration tests",
-        project_type="kubernetes",
-        cloud_provider="on-prem",
-        environment="dev",
-        backend_type="local",
-        color="#a8337a",
-        icon="cloud",
-        is_active=True,
-    )
-    db.add(project)
-    db.commit()
-    db.refresh(project)
-    return project
+def sample_viewer_user() -> None:
+    return None
 
 
 @pytest.fixture()
-def all_test_users(db):
-    """Create admin + operator + viewer users in one fixture."""
-    users = {}
-    for username, role in [("testadmin", "admin"), ("testoperator", "operator"), ("testviewer", "viewer")]:
-        user = User(
-            username=username,
-            email=f"{username}@bnk-forge.test",
-            hashed_password=hash_password("testpassword123"),
-            role=role,
-            is_active=True,
-            must_change_password=False,
-        )
-        db.add(user)
-        users[role] = user
-    db.commit()
-    for u in users.values():
-        db.refresh(u)
-    return users
-
-
-# ---------------------------------------------------------------------------
-# Factory-based fixtures (use these for new tests — more composable)
-# ---------------------------------------------------------------------------
-
-@pytest.fixture()
-def make_user(db):
-    """Factory fixture: returns a callable that creates users.
-
-    Usage:
-        def test_example(make_user):
-            admin = make_user(role="admin")
-            operator = make_user(role="operator")
-    """
-    from tests.factories import UserFactory
-    return lambda **kwargs: UserFactory(db, **kwargs)
-
-
-@pytest.fixture()
-def make_project(db):
-    """Factory fixture: returns a callable that creates projects."""
-    from tests.factories import ProjectFactory
-    return lambda **kwargs: ProjectFactory(db, **kwargs)
-
-
-@pytest.fixture()
-def make_module_library(db):
-    """Factory fixture: returns a callable that creates module library entries."""
-    from tests.factories import ModuleLibraryFactory
-    return lambda **kwargs: ModuleLibraryFactory(db, **kwargs)
-
-
-@pytest.fixture()
-def make_project_module(db):
-    """Factory fixture: returns a callable that creates project modules."""
-    from tests.factories import ProjectModuleFactory
-    return lambda **kwargs: ProjectModuleFactory(db, **kwargs)
-
-
-@pytest.fixture()
-def make_task(db):
-    """Factory fixture: returns a callable that creates tasks."""
-    from tests.factories import TaskFactory
-    return lambda **kwargs: TaskFactory(db, **kwargs)
-
-
-@pytest.fixture()
-def make_stack_template(db):
-    """Factory fixture: returns a callable that creates stack templates."""
-    from tests.factories import StackTemplateFactory
-    return lambda **kwargs: StackTemplateFactory(db, **kwargs)
-
-
-@pytest.fixture()
-def make_stack_instance(db):
-    """Factory fixture: returns a callable that creates stack instances."""
-    from tests.factories import StackInstanceFactory
-    return lambda **kwargs: StackInstanceFactory(db, **kwargs)
+def all_test_users() -> dict:
+    return {}
 
 
 @pytest.fixture()
@@ -360,13 +233,6 @@ def make_proxy_deployment(db):
     return lambda **kwargs: ProxyDeploymentFactory(db, **kwargs)
 
 
-@pytest.fixture()
-def make_bnk_upgrade(db):
-    """Factory fixture: returns a callable that creates BnkUpgrade rows."""
-    from tests.factories import BnkUpgradeFactory
-    return lambda **kwargs: BnkUpgradeFactory(db, **kwargs)
-
-
 # ---------------------------------------------------------------------------
 # Mock service fixtures
 # ---------------------------------------------------------------------------
@@ -374,30 +240,7 @@ def make_bnk_upgrade(db):
 @pytest.fixture()
 def mock_cache():
     """Provide a standalone MockCacheService for tests that need explicit cache control."""
-    from tests.mocks.redis_mock import MockCacheService
+    from tests.mocks.cache_mock import MockCacheService
     return MockCacheService()
 
 
-@pytest.fixture()
-def mock_tofu(monkeypatch):
-    """Patch subprocess.run to return mock tofu results.
-
-    Returns a function to configure the mock behavior:
-        def test_example(mock_tofu):
-            mock_tofu(command="apply", success=True, apply_added=5)
-    """
-    from tests.mocks.subprocess_mock import mock_tofu_subprocess
-    results = []
-
-    def _configure(**kwargs):
-        result = mock_tofu_subprocess(**kwargs)
-        results.append(result)
-        return result
-
-    def _side_effect(*args, **kwargs):
-        if results:
-            return results.pop(0)
-        return mock_tofu_subprocess(command="init")
-
-    monkeypatch.setattr("subprocess.run", _side_effect)
-    return _configure

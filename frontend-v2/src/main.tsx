@@ -13,28 +13,14 @@ if (isPostRestore) {
 }
 import { queryClient } from './lib/queryClient'
 import { router } from './router'
-import { NotificationProvider } from './components/providers/NotificationProvider'
-import { WebSocketProvider } from './components/providers/WebSocketProvider'
 import { ThemeProvider } from './context/ThemeContext'
 import { useUIStore } from './stores/uiStore'
 import './styles.css'
 
-// ---------------------------------------------------------------------------
-// Monaco Editor: use locally bundled package instead of CDN.
-// Without this, @monaco-editor/react fetches from jsDelivr which fails
-// in air-gapped environments or behind firewalls (dialog shows "Loading..." forever).
-// ---------------------------------------------------------------------------
-import * as monaco from 'monaco-editor'
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
-
-self.MonacoEnvironment = {
-  getWorker() {
-    return new editorWorker()
-  },
-}
-
-import { loader } from '@monaco-editor/react'
-loader.config({ monaco })
+// Monaco used to be configured here, which meant every visitor downloaded
+// 3.8 MB of editor before the app rendered. It now loads on first use from
+// components/k8s/MonacoEditor.tsx — still the locally bundled copy, never a
+// CDN, because BNK clusters are routinely air-gapped.
 
 // After a restore reload, nuke the entire query cache so no hook
 // (even those with their own staleTime overrides) can serve pre-restore data.
@@ -54,16 +40,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <NotificationProvider>
-          <WebSocketProvider>
-            <RouterProvider
-              router={router}
-              future={{
-                v7_startTransition: true,
-              }}
-            />
-          </WebSocketProvider>
-        </NotificationProvider>
+        <RouterProvider
+          router={router}
+          future={{
+            v7_startTransition: true,
+          }}
+        />
       </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>

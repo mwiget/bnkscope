@@ -1,0 +1,90 @@
+# Loki for bnkscope — logs beside the TMM metrics, same 24h window.
+#
+# Single-binary, filesystem-backed, no auth: this is a local single-user tool
+# and Loki sits behind the same bind boundary as everything else. Retention
+# mirrors Prometheus deliberately — logs and metrics that disagree about how far
+# back they go make correlation a guessing game.
+auth_enabled: false
+
+server:
+  http_listen_address: 0.0.0.0
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # TMM logs a single line per config event; the default 4MB is ample, but an
+  # HSL burst can arrive in large batches.
+  grpc_server_max_recv_msg_size: 16777216
+  grpc_server_max_send_msg_size: 16777216
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-04-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # 24h, the same window Prometheus keeps. Enforced by the compactor below.
+  retention_period: 24h
+  # A cluster that has just been restarted replays a burst of startup logs;
+  # rejecting them is worse than absorbing them.
+  ingestion_rate_mb: 32
+  ingestion_burst_size_mb: 64
+  max_streams_per_user: 0
+  max_global_streams_per_user: 0
+  reject_old_samples: true
+  reject_old_samples_max_age: 24h
+  max_query_lookback: 24h
+  # Free-text search over a day of logs is the point of this; let it run.
+  max_query_length: 25h
+  max_entries_limit_per_query: 10000
+  volume_enabled: true
+
+compactor:
+  working_directory: /loki/compactor
+  # Without this, retention_period above is advisory and the disk grows forever.
+  retention_enabled: true
+  delete_request_store: filesystem
+  compaction_interval: 10m
+  retention_delete_delay: 1h
+
+ingester:
+  # Pod logs arrive out of order, and not by a little. The collector tails each
+  # container from the start of what the runtime still holds, so on first start
+  # it replays that container's backlog while newer lines from its siblings are
+  # already landing. Loki's out-of-order window is max_chunk_age/2 — one hour by
+  # default — and anything older is refused with "entry too far behind".
+  #
+  # 48h buys a 24h unordered window, matching retention. That turns the replay
+  # from a wall of dropped batches into the useful thing it should be: start
+  # bnkscope and a day of history is already there.
+  #
+  # (This lives under `ingester`, not `limits_config` — Loki rejects the config
+  # outright if you put it there.)
+  max_chunk_age: 48h
+  chunk_idle_period: 5m
+  chunk_retain_period: 30s
+  wal:
+    enabled: true
+    dir: /loki/wal
+
+analytics:
+  reporting_enabled: false
+
+querier:
+  max_concurrent: 4

@@ -36,28 +36,4 @@ export function SkeletonTable({ rows = 5, columns = 5, className }: SkeletonTabl
   );
 }
 
-interface SkeletonCardProps {
-  count?: number;
-  className?: string;
-}
 
-export function SkeletonCards({ count = 3, className }: SkeletonCardProps) {
-  return (
-    <div className={cn('grid gap-4 md:grid-cols-2 lg:grid-cols-3', className)}>
-      {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="rounded-lg border p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <Skeleton className="h-6 w-32" />
-            <Skeleton className="h-5 w-16" />
-          </div>
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-3/4" />
-          <div className="flex gap-2">
-            <Skeleton className="h-8 w-20" />
-            <Skeleton className="h-8 w-20" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}

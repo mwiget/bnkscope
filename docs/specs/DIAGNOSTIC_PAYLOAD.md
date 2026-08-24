@@ -182,5 +182,5 @@ The `DiagnosticItem` and `DiagnosticSummary` schemas should live in `backend/sch
 ## Related Documents
 
 - [Canonical Status Semantics (PLAT-REL-001)](STATUS_SEMANTICS.md)
-- [Strategic Backlog](../STRATEGIC_BACKLOG.md)
-- [Sprint Plan — Platform Truthfulness 001](../SPRINT_PLATFORM_TRUTHFULNESS_001.md)
+- Strategic Backlog
+- Sprint Plan — Platform Truthfulness 001

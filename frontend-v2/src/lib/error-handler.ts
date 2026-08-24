@@ -1,5 +1,5 @@
 /**
- * Centralized error handling utility for BNK-Forge v2
+ * Centralized error handling utility
  *
  * Provides user-friendly error messages with actionable suggestions
  */
@@ -7,7 +7,6 @@
 import { AxiosError } from 'axios';
 import type { ErrorAction } from '@/types/common';
 import type { PlatformCapabilities, PlatformConstraints, PlatformProfile } from '@/types/platform';
-import { logger } from '@/lib/logger';
 
 interface ErrorResponse {
   message: string;
@@ -217,7 +216,7 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
     const targetType = typeof details.target_type === 'string' ? details.target_type : '';
     const suggestedAction = typeof details.suggested_action === 'string'
       ? details.suggested_action
-      : 'Refresh your credentials in Project Settings, then retry.';
+      : 'Refresh your credentials on the host, then restart bnkscope.';
 
     const isAwsTarget = targetType === 'aws' || hasAwsEksHint;
 
@@ -226,7 +225,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
         title: 'AWS Credentials Expired',
         message: 'Your AWS credentials are expired or invalid — cluster information is unavailable.',
         suggestion: suggestedAction,
-        action: { label: 'Configure Credentials', route: '/auth-templates' },
         severity: 'warning',
       };
     }
@@ -235,7 +233,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
       title: 'Remote Credentials Expired',
       message: 'Authentication to the remote system failed — credentials may be expired or invalid.',
       suggestion: suggestedAction,
-      action: { label: 'Configure Credentials', route: '/auth-templates' },
       severity: 'warning',
     };
   }
@@ -246,7 +243,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
       title: 'Authentication Required',
       message: 'Your session has expired. Please log in again.',
       suggestion: 'Refresh the page to log in',
-      action: { label: 'Log In', route: '/login' },
       severity: 'warning',
     };
   }
@@ -293,7 +289,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
       title: 'Server Error',
       message: 'An internal server error occurred.',
       suggestion: 'Please try again later or contact support if the issue persists',
-      action: { label: 'View Tasks', route: '/tasks' },
       severity: 'error',
     };
   }
@@ -327,17 +322,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
       title: 'Request Timeout',
       message: 'The operation took too long and was cancelled.',
       suggestion: 'This operation may be running in the background. Check the status in a moment.',
-      action: { label: 'View Tasks', route: '/tasks' },
-      severity: 'warning',
-    };
-  }
-
-  if (domainErrorCode === 'BLUEPRINT_MODULES_MISSING') {
-    return {
-      title: 'Blueprint Modules Missing',
-      message: errorMessage,
-      suggestion: 'Sync the catalog source that contains the missing modules, then retry.',
-      action: { label: 'View Modules', route: '/catalog' },
       severity: 'warning',
     };
   }
@@ -348,7 +332,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
       title: 'Dependency Error',
       message: errorMessage,
       suggestion: 'Ensure all required dependencies are applied first',
-      action: { label: 'Deploy Now', route: '/projects' },
       severity: 'error',
     };
   }
@@ -415,19 +398,7 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
       title: 'Metrics Unavailable',
       message: 'Metrics server is not installed or not responding.',
       suggestion: 'Install metrics-server to view resource usage',
-      action: { label: 'Helm Packages', route: '/helm' },
       severity: 'info',
-    };
-  }
-
-  // OpenTofu/Terraform errors
-  if (errorMessage?.includes('terraform') || errorMessage?.includes('tofu')) {
-    return {
-      title: 'Infrastructure Error',
-      message: errorMessage,
-      suggestion: 'Check the logs for detailed error information',
-      action: { label: 'View Logs', route: '/tasks' },
-      severity: 'error',
     };
   }
 
@@ -436,42 +407,8 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
     return {
       title: 'Credentials Error',
       message: 'Unable to authenticate with your cloud provider.',
-      suggestion: 'Check your credentials in Project Settings',
-      action: { label: 'Configure Credentials', route: '/auth-templates' },
+      suggestion: 'bnkscope reads cloud credentials from the host environment — refresh them there and restart.',
       severity: 'error',
-    };
-  }
-
-  const lockErrorCodes = new Set(['STATE_LOCKED', 'WORKSPACE_LOCKED', 'MODULE_LOCKED', 'ENTITY_LOCKED', 'LOCK_HELD']);
-  const lockPhrasePatterns = [
-    /\bstate\s+(is\s+)?locked\b/i,
-    /\bworkspace\s+(is\s+)?locked\b/i,
-    /\bmodule\s+(is\s+)?locked\b/i,
-    /\bentity\s+(is\s+)?locked\b/i,
-    /\block\s+held\b/i,
-  ];
-  const isLockCode = typeof domainErrorCode === 'string' && lockErrorCodes.has(domainErrorCode);
-  const hasLockPhrase = lockPhrasePatterns.some((pattern) => pattern.test(errorMessage));
-
-  // State locking errors
-  if (statusCode === 423 || isLockCode || hasLockPhrase) {
-    return {
-      title: 'State Locked',
-      message: 'The state is currently locked by another operation.',
-      suggestion: 'Wait for the other operation to complete or force unlock if needed',
-      action: { label: 'View Tasks', route: '/tasks' },
-      severity: 'warning',
-    };
-  }
-
-  // Drift detection errors
-  if (errorMessage?.includes('drift') || errorMessage?.includes('Drift')) {
-    return {
-      title: 'Drift Detected',
-      message: errorMessage,
-      suggestion: 'Review the changes and reconcile or accept the current state',
-      action: { label: 'Review Changes', route: '/projects' },
-      severity: 'warning',
     };
   }
 
@@ -481,7 +418,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
       title: 'Cluster Offline',
       message: errorMessage || 'The target cluster is not reachable.',
       suggestion: 'Check your cluster connection or register an operator',
-      action: { label: 'Connect Cluster', route: '/operators' },
       severity: 'error',
     };
   }
@@ -492,7 +428,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
       title: 'Operator Disconnected',
       message: errorMessage || 'The BNK operator is not connected.',
       suggestion: 'Check operator status or re-register',
-      action: { label: 'Manage Operators', route: '/operators' },
       severity: 'error',
     };
   }
@@ -505,7 +440,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
         title: 'FAR Authentication Failed',
         message: 'Unable to authenticate with F5 App Registry.',
         suggestion: 'Upload your FAR service account key',
-        action: { label: 'Upload Now', route: '/auth-templates' },
         severity: 'error',
       };
     }
@@ -526,7 +460,6 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
         title: 'FLO License Validation Failed',
         message: 'Unable to validate F5 license.',
         suggestion: 'Check JWT token from MyF5 portal or verify license mode',
-        action: { label: 'Upload License', route: '/auth-templates' },
         severity: 'error',
       };
     }
@@ -593,50 +526,3 @@ export function parseApiError(error: unknown, context?: ParseApiErrorContext): P
   };
 }
 
-/**
- * Format error for toast notification
- */
-export function formatErrorForToast(error: unknown): {
-  title: string;
-  description?: string;
-  action?: ErrorAction;
-} {
-  const parsed = parseApiError(error);
-  return {
-    title: parsed.title,
-    description: parsed.suggestion
-      ? `${parsed.message}\n${parsed.suggestion}`
-      : parsed.message,
-    action: parsed.action,
-  };
-}
-
-/**
- * Get error severity icon
- */
-export function getErrorIcon(severity: ParsedError['severity']): string {
-  switch (severity) {
-    case 'error':
-      return '❌';
-    case 'warning':
-      return '⚠️';
-    case 'info':
-      return 'ℹ️';
-    default:
-      return '❌';
-  }
-}
-
-/**
- * Log error with context for debugging
- */
-export function logError(context: string, error: unknown): void {
-  const parsed = parseApiError(error);
-  logger.error(`[${context}]`, {
-    title: parsed.title,
-    message: parsed.message,
-    suggestion: parsed.suggestion,
-    severity: parsed.severity,
-    originalError: error,
-  });
-}

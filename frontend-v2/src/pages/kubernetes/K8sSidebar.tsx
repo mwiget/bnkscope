@@ -43,6 +43,9 @@ interface K8sSidebarProps {
   resourceSummary?: Record<string, ResourceSummaryEntry>;
   isResourceSummaryLoading?: boolean;
   showOnlyUnhealthy?: boolean;
+  /** Below `lg` the tree is a drawer; these drive it. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +63,8 @@ export function K8sSidebar({
   resourceSummary,
   isResourceSummaryLoading,
   showOnlyUnhealthy = false,
+  open,
+  onOpenChange,
 }: K8sSidebarProps) {
   const { data: crdsData } = useCrds(clusterId ?? 0, { enabled: !!clusterId });
 
@@ -138,6 +143,8 @@ export function K8sSidebar({
 
   return (
     <ResourceCategorySidebar
+      open={open}
+      onOpenChange={onOpenChange}
       aria-label="Kubernetes resource categories"
       groups={groups}
       selectedKey={showClusterScan ? null : selectedResourceType}

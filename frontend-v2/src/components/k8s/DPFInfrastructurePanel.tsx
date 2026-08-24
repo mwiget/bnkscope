@@ -18,14 +18,12 @@ import { cn } from '@/lib/utils';
 import { useDpfData } from '@/hooks/k8s/useDpf';
 import { DPUDeviceList } from './DPUDeviceList';
 import { DPUClusterDetail } from './DPUClusterDetail';
-import { DPUProvisioningTab } from './DPUProvisioningTab';
 import { DPUServicesTab } from './DPUServicesTab';
-import { DPFSetupWizard } from './DPFSetupWizard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type {
-  DpfDpuDevice, DpfDpuCluster, DpfDpu, DpfDpuSet, DpfBfb, DpfDpuFlavor,
+  DpfDpuDevice, DpfDpuCluster, DpfDpuSet, DpfBfb, DpfDpuFlavor,
   DpfDpuService, DpfDpuDeployment, DpfDpuServiceChain, DpfDpuServiceInterface,
   DpfServiceChain, DpfServiceInterface,
 } from '@/types';
@@ -153,7 +151,9 @@ function OperatorSection({ health }: { health: DpfHealthResponse }) {
         <div className="flex items-center gap-2">
           {op.version && (
             <Badge variant="outline" className="text-xs">
-              v{op.version}
+              {/* status.version already carries a leading 'v' (e.g. "v26.4.0"); strip it
+                  so we render a single 'v' whether or not upstream includes one. */}
+              v{op.version.replace(/^v/i, '')}
             </Badge>
           )}
           {op.ready ? (
@@ -469,13 +469,11 @@ function OverviewTab({ health }: { health: DpfHealthResponse }) {
 export function DPFInfrastructurePanel({ clusterId }: DPFInfrastructurePanelProps) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<DpfTab>('overview');
-  const [showWizard, setShowWizard] = useState(false);
   const { data, isLoading, error, isFetching } = useDpfData(clusterId);
 
   const health = data?.health;
   const devices = (data?.resources?.dpudevice ?? []) as DpfDpuDevice[];
   const clusters = (data?.resources?.dpucluster ?? []) as DpfDpuCluster[];
-  const dpus = (data?.resources?.dpu ?? []) as DpfDpu[];
   const dpuSets = (data?.resources?.dpuset ?? []) as DpfDpuSet[];
   const bfbs = (data?.resources?.bfb ?? []) as DpfBfb[];
   const dpuFlavors = (data?.resources?.dpuflavor ?? []) as DpfDpuFlavor[];
@@ -508,14 +506,7 @@ export function DPFInfrastructurePanel({ clusterId }: DPFInfrastructurePanelProp
   }
 
   if (!health || health.status === 'not_installed') {
-    if (showWizard) {
-      return <DPFSetupWizard clusterId={clusterId} onClose={() => setShowWizard(false)} />;
-    }
-    return <NotInstalledState onSetup={() => setShowWizard(true)} />;
-  }
-
-  if (showWizard) {
-    return <DPFSetupWizard clusterId={clusterId} onClose={() => setShowWizard(false)} />;
+    return <NotInstalledState />;
   }
 
   return (
@@ -533,7 +524,6 @@ export function DPFInfrastructurePanel({ clusterId }: DPFInfrastructurePanelProp
             variant="outline"
             size="sm"
             className="h-7 text-xs gap-1.5"
-            onClick={() => setShowWizard(true)}
           >
             <Wand2 className="h-3.5 w-3.5" /> Setup Wizard
           </Button>
@@ -590,9 +580,6 @@ export function DPFInfrastructurePanel({ clusterId }: DPFInfrastructurePanelProp
       )}
       {activeTab === 'clusters' && (
         <DPUClusterDetail clusters={clusters} isLoading={isLoading} />
-      )}
-      {activeTab === 'provisioning' && (
-        <DPUProvisioningTab dpuSets={dpuSets} dpus={dpus} bfbs={bfbs} flavors={dpuFlavors} isLoading={isLoading} />
       )}
       {activeTab === 'services' && (
         <DPUServicesTab

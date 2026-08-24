@@ -1,0 +1,707 @@
+#!/usr/bin/env bash
+#
+# bnkscope — troubleshooting and monitoring for F5 BNK clusters.
+#
+#   bnkscope up        start it (negotiates ports, writes the discovery file)
+#   bnkscope down      stop it
+#   bnkscope status    running state, ports, discovered clusters
+#   bnkscope open      open the UI
+#   bnkscope logs      follow container logs
+#
+# The CLI shape mirrors tmmscope's on purpose: the two run side by side on the
+# same laptop, and an operator should not have to remember which one takes
+# `--purge` and which one takes `-v`.
+#
+# Ports are negotiated, not assumed. bnkscope wants 8080 (UI) and 8000 (API),
+# but under `network_mode: host` it shares the port space with everything else
+# on the machine — including tmmscope's Grafana, a dev server, or a second
+# bnkscope. When a preferred port is taken it walks upward and *persists* the
+# choice, so a running stack keeps its ports across re-runs. Same contract
+# tmmscope publishes, and for the same reason.
+
+set -euo pipefail
+
+REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/bnkscope"
+ENDPOINTS_FILE="$CONFIG_DIR/endpoints.json"
+GRAFANA_PASSWORD_FILE="$CONFIG_DIR/grafana-admin-password"
+DEFAULT_PROMETHEUS_PORT=9491
+DEFAULT_GRAFANA_PORT=3000
+
+DEFAULT_UI_PORT=8080
+DEFAULT_API_PORT=8000
+MAX_PORT_PROBE=50
+
+# regcachectl's docker.io pull-through cache. The cross-tool contract is the
+# container name and the in-container port — not a shared library — so this
+# must stay in step with regcachectl's layout. Same two constants tmmscope uses.
+REGCACHE_CONTAINER="regcache-dockerhub"
+REGCACHE_INTERNAL_PORT="5000/tcp"
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+if [ -t 1 ]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+  YELLOW=$'\033[33m'; RESET=$'\033[0m'
+else
+  BOLD=''; DIM=''; RED=''; GREEN=''; YELLOW=''; RESET=''
+fi
+
+info() { printf '%s\n' "$*"; }
+step() { printf '%s==>%s %s\n' "$BOLD" "$RESET" "$*"; }
+warn() { printf '%s warning:%s %s\n' "$YELLOW" "$RESET" "$*" >&2; }
+die()  { printf '%serror:%s %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Prerequisites
+# ---------------------------------------------------------------------------
+
+require_docker() {
+  command -v docker >/dev/null 2>&1 \
+    || die "docker is required but not on PATH"
+  docker compose version >/dev/null 2>&1 \
+    || die "docker compose v2 is required (found docker, but not 'docker compose')"
+  docker info >/dev/null 2>&1 \
+    || die "cannot talk to the Docker daemon — is it running, and are you in the docker group?"
+}
+
+# Compose picks its own networking: host on Linux, the bridge overlay on macOS
+# and WSL2, where `network_mode: host` binds inside Docker Desktop's VM rather
+# than on the machine you are sitting at.
+compose() {
+  # Every compose invocation interpolates the file, including `down` and `ps`,
+  # and the Grafana password is a required variable there. Load it rather than
+  # letting an unrelated subcommand fail on a missing value.
+  [ -s "$GRAFANA_PASSWORD_FILE" ] && \
+    BNKSCOPE_GRAFANA_PASSWORD="$(cat "$GRAFANA_PASSWORD_FILE")" && \
+    export BNKSCOPE_GRAFANA_PASSWORD
+  : "${BNKSCOPE_GRAFANA_PASSWORD:=unset}"
+  export BNKSCOPE_GRAFANA_PASSWORD
+  local files=(-f "$REPO_DIR/docker-compose.yml")
+  case "$(uname -s)" in
+    Darwin) files+=(-f "$REPO_DIR/docker-compose.local.yml") ;;
+    Linux)
+      if grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
+        files+=(-f "$REPO_DIR/docker-compose.local.yml")
+      fi
+      ;;
+  esac
+  if [ -f "$REPO_DIR/docker-compose.override.yml" ]; then
+    files+=(-f "$REPO_DIR/docker-compose.override.yml")
+  fi
+  local profiles=()
+  # Profiles have to be named on every invocation, not just `up`: without them
+  # `down` and `ps` cannot see the containers they started.
+  [ "${BNKSCOPE_TELEMETRY:-}" = "on" ] && profiles+=(--profile telemetry)
+  [ "${BNKSCOPE_MCP:-}" = "on" ] && profiles+=(--profile mcp)
+  (cd "$REPO_DIR" && docker compose "${files[@]}" "${profiles[@]+"${profiles[@]}"}" "$@")
+}
+
+# ---------------------------------------------------------------------------
+# Ports
+# ---------------------------------------------------------------------------
+
+# Whether a TCP port can be bound. Uses Python rather than `nc`/`ss` because
+# it is the one thing already guaranteed present — the repo cannot build
+# without it.
+port_free() {
+  python3 - "$1" <<'PY'
+import socket, sys
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(("0.0.0.0", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+PY
+}
+
+# The port to aim for, most-binding first:
+#
+#   1. an explicit request this run    — you asked for it
+#   2. the remembered port, if running — never move a live stack
+#   3. the remembered port, if you asked for it last time — a deliberate
+#      choice is sticky; only the env var clears it
+#   4. the default, when it is free    — a port we only picked because the
+#      default was taken should not outlive whatever took it
+#   5. the remembered port             — the default is still occupied
+#
+# (4) is the auto-revert. Without it, negotiating around a conflict once meant
+# living on the odd port forever, long after the thing that caused it went
+# away. (3) is what stops that from overriding someone who genuinely wants 9090.
+preferred_port() {
+  local explicit="$1" claimed="$2" claimed_explicit="$3" default="$4" running="$5"
+
+  if [ -n "$explicit" ]; then printf '%s' "$explicit"; return; fi
+  if [ -z "$claimed" ] || [ "$claimed" = "null" ]; then printf '%s' "$default"; return; fi
+  if [ "$running" = "yes" ]; then printf '%s' "$claimed"; return; fi
+  if [ -n "$claimed_explicit" ]; then printf '%s' "$claimed"; return; fi
+  if [ "$claimed" != "$default" ] && port_free "$default"; then
+    printf '%s' "$default"; return
+  fi
+  printf '%s' "$claimed"
+}
+
+# Resolve a usable port, walking upward from `preferred`. A port we already
+# claimed counts as free even though binding it would fail — that is what makes
+# `up` idempotent against an already-running stack.
+pick_port() {
+  local preferred="$1" claimed="$2" running="$3" port
+  if [ "$running" = "yes" ] && [ "$preferred" = "$claimed" ]; then
+    printf '%s' "$preferred"; return
+  fi
+  for (( port = preferred; port < preferred + MAX_PORT_PROBE; port++ )); do
+    if [ "$running" = "yes" ] && [ "$port" = "$claimed" ]; then
+      printf '%s' "$port"; return
+    fi
+    if port_free "$port"; then printf '%s' "$port"; return; fi
+  done
+  die "no free port found in ${preferred}..$((preferred + MAX_PORT_PROBE))"
+}
+
+# Read one field of a remembered endpoint ("port" or "explicit").
+read_claimed() {
+  [ -f "$ENDPOINTS_FILE" ] || return 0
+  python3 - "$ENDPOINTS_FILE" "$1" "${2:-port}" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+value = (doc.get(sys.argv[2]) or {}).get(sys.argv[3])
+if value not in (None, False):
+    print(value)
+PY
+}
+
+# The discovery file. Same shape and purpose as tmmscope's: ports move, so
+# anything that wants to reach bnkscope reads them rather than guessing.
+# `explicit` records *why* a port is what it is — asked for, or negotiated
+# around a conflict. Only the second kind reverts to the default later.
+write_endpoints() {
+  local ui_port="$1" api_port="$2" running="$3" ui_explicit="${4:-}" api_explicit="${5:-}"
+  local bind="${6:-$(read_claimed ui bind)}"
+  bind="${bind:-127.0.0.1}"
+  local advertised; advertised="$(advertised_host "$bind")"
+  local prom_port="${7:-$(read_claimed prometheus)}"
+  local graf_port="${8:-$(read_claimed grafana)}"
+  mkdir -p "$CONFIG_DIR"
+  python3 - "$ENDPOINTS_FILE" "$ui_port" "$api_port" "$running" "$ui_explicit" "$api_explicit" \
+    "$bind" "$advertised" "${prom_port:-}" "${graf_port:-}" "${BNKSCOPE_TELEMETRY:-off}" <<'PY'
+import json, sys, datetime
+path, ui, api, running = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == "true"
+ui_explicit, api_explicit = bool(sys.argv[5]), bool(sys.argv[6])
+bind, advertised = sys.argv[7], sys.argv[8]
+prom, graf = sys.argv[9], sys.argv[10]
+telemetry_on = sys.argv[11] == "on"
+doc = {
+    "running": running,
+    # `bind` is what nginx listens on; `url` is somewhere you can actually
+    # paste. They differ whenever the bind is a wildcard.
+    "ui": {
+        "port": ui,
+        "url": f"http://{advertised}:{ui}",
+        "bind": bind,
+        "explicit": ui_explicit,
+    },
+    "api": {
+        "port": api,
+        "url": f"http://localhost:{api}",
+        "docs_url": f"http://localhost:{api}/docs",
+        "explicit": api_explicit,
+    },
+    "updated_at": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+if prom and graf:
+    # Same shape tmmscope publishes, so anything already reading its discovery
+    # file — including bnkscope's own backend — needs no second code path.
+    doc["prometheus"] = {
+        "port": int(prom),
+        "url": f"http://localhost:{prom}",
+        "remote_write_url": f"http://localhost:{prom}/api/v1/write",
+        "remote_write_path": "/api/v1/write",
+        "running": running and telemetry_on,
+    }
+    doc["grafana"] = {
+        "port": int(graf),
+        "url": f"http://localhost:{graf}",
+        "dashboard_url": f"http://localhost:{graf}/d/tmm-realtime",
+        "running": running and telemetry_on,
+    }
+json.dump(doc, open(path, "w"), indent=2)
+PY
+}
+
+# Grafana's admin password, generated once per install and kept 0600.
+#
+# It used to be the literal string "bnkscope", written in docker-compose.yml
+# and therefore in git — and it authenticated over the network. A Grafana admin
+# can create a datasource pointing anywhere, including at bnkscope's own API,
+# which makes it a way around any gate the UI might grow later.
+ensure_grafana_password() {
+  if [ ! -s "$GRAFANA_PASSWORD_FILE" ]; then
+    mkdir -p "$CONFIG_DIR"
+    ( umask 077; python3 -c 'import secrets; print(secrets.token_urlsafe(18))' \
+        > "$GRAFANA_PASSWORD_FILE" )
+    chmod 600 "$GRAFANA_PASSWORD_FILE"
+  fi
+  BNKSCOPE_GRAFANA_PASSWORD="$(cat "$GRAFANA_PASSWORD_FILE")"
+  export BNKSCOPE_GRAFANA_PASSWORD
+}
+
+# An address a human can paste. `0.0.0.0` is a bind wildcard, not a
+# destination, so resolve it to this machine's primary address.
+advertised_host() {
+  local listen="$1"
+  if [ "$listen" != "0.0.0.0" ] && [ "$listen" != "::" ]; then
+    printf '%s' "$listen"; return
+  fi
+  local ip
+  ip="$(ip route get 1 2>/dev/null | awk '{print $7; exit}')" || true
+  [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')" || true
+  printf '%s' "${ip:-localhost}"
+}
+
+# ---------------------------------------------------------------------------
+# Host directories
+# ---------------------------------------------------------------------------
+
+# Docker creates a missing bind-mount source as a root-owned directory inside
+# the user's home. The backend mounts these read-only to find clusters and mint
+# cloud tokens, and not everyone has all four — so create them as the user
+# first, before compose gets the chance to create them as root.
+ensure_host_dirs() {
+  mkdir -p "$HOME/.kube" "$HOME/.aws" \
+           "${XDG_CONFIG_HOME:-$HOME/.config}/gcloud" \
+           "${XDG_CONFIG_HOME:-$HOME/.config}/tmmscope"
+}
+
+# ---------------------------------------------------------------------------
+# Registry cache
+# ---------------------------------------------------------------------------
+
+# host:port/ for a running regcachectl docker.io cache, or empty. Reads the
+# published port from `docker port` so a non-default --port-base is honoured.
+detect_registry_cache() {
+  local host="${BNKSCOPE_REGISTRY_CACHE_HOST:-localhost}" mapping port
+  mapping="$(docker port "$REGCACHE_CONTAINER" "$REGCACHE_INTERNAL_PORT" 2>/dev/null | head -1)" || return 0
+  [ -n "$mapping" ] || return 0
+  port="${mapping##*:}"
+  [ -n "$port" ] || return 0
+  printf '%s/' "$host:$port"
+}
+
+resolve_registry_cache() {
+  local mode="${BNKSCOPE_REGISTRY_CACHE:-auto}" prefix
+  case "$mode" in
+    off) return 0 ;;
+    auto|on) ;;
+    *) die "BNKSCOPE_REGISTRY_CACHE must be auto, on or off (got '$mode')" ;;
+  esac
+
+  prefix="$(detect_registry_cache)"
+  if [ -z "$prefix" ]; then
+    [ "$mode" = "on" ] && die "registry cache required but the regcachectl fleet is not running (run 'regcachectl up')"
+    return 0
+  fi
+  # stderr, not stdout: this function's stdout IS the prefix, and a stray
+  # line here ends up inside the image reference.
+  printf '  %sregistry cache: pulling base images through regcachectl at %s%s\n' \
+    "$DIM" "${prefix%/}" "$RESET" >&2
+  printf '%s' "$prefix"
+}
+
+# Renders the cluster list from `GET /api/k8s/clusters` on stdin. Kept as a
+# variable so the shell quoting stays out of the Python.
+CLUSTER_SUMMARY_PY='
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+rows = doc.get("clusters") or []
+if not rows:
+    print("  no clusters registered yet")
+    sys.exit(0)
+print("  %d cluster(s):" % len(rows))
+for c in rows:
+    version = " v" + c["version"] if c.get("version") else ""
+    print("    %-32s %-12s%s" % (c["name"], c.get("status", "?"), version))
+'
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+is_running() {
+  [ -n "$(compose ps -q backend 2>/dev/null)" ]
+}
+
+cmd_up() {
+  # The bind is sticky, like the ports: `--listen` once and it stays until you
+  # say otherwise. It used to default to loopback on every run, so any plain
+  # `bnkscope up` — a rebuild, a restart after an edit — silently closed
+  # network access again, with nothing said about it.
+  #
+  # Unlike a port there is no auto-revert. A port that moved around a conflict
+  # should go back when the conflict clears; a bind is a decision about who can
+  # reach this, and it should only change when someone changes it. Go back with
+  # `--listen 127.0.0.1`.
+  local build=yes listen="${BNKSCOPE_UI_BIND:-$(read_claimed ui bind)}"
+  listen="${listen:-127.0.0.1}"
+  local telemetry="${BNKSCOPE_TELEMETRY:-}"
+  local mcp="${BNKSCOPE_MCP:-}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-build) build=no ;;
+      --telemetry) telemetry=on ;;
+      --no-telemetry) telemetry=off ;;
+      --mcp) mcp=on ;;
+      --no-mcp) mcp=off ;;
+      --listen)
+        shift
+        [ $# -gt 0 ] || die "--listen needs an address (e.g. --listen 0.0.0.0)"
+        listen="$1"
+        ;;
+      --listen=*) listen="${1#--listen=}" ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown option for 'up': $1" ;;
+    esac
+    shift
+  done
+  export BNKSCOPE_UI_BIND="$listen"
+  # On by default. TMM Live is a headline feature, and a dead dashboard is
+  # worse company than two extra containers. `--no-telemetry` opts out for a
+  # run; BNKSCOPE_TELEMETRY=off in the environment opts out for good.
+  export BNKSCOPE_TELEMETRY="${telemetry:-on}"
+  # On by default, like telemetry. It is read-only — every tool is a GET on a
+  # route the backend already serves — and the MCP page is otherwise a live
+  # view of a container that is never running. Loopback-bound.
+  export BNKSCOPE_MCP="${mcp:-on}"
+
+  require_docker
+  ensure_host_dirs
+
+  # Recorded before the resolved ports overwrite these below.
+  local BNKSCOPE_UI_PORT_REQUESTED="" BNKSCOPE_API_PORT_REQUESTED=""
+  [ -n "${BNKSCOPE_UI_PORT:-}" ] && BNKSCOPE_UI_PORT_REQUESTED=yes
+  [ -n "${BNKSCOPE_API_PORT:-}" ] && BNKSCOPE_API_PORT_REQUESTED=yes
+  # A port asked for on an earlier run stays asked-for.
+  [ -n "$(read_claimed ui explicit)" ] && BNKSCOPE_UI_PORT_REQUESTED=yes
+  [ -n "$(read_claimed api explicit)" ] && BNKSCOPE_API_PORT_REQUESTED=yes
+
+  local running=no
+  is_running && running=yes
+
+  local ui_claimed api_claimed ui_port api_port
+  ui_claimed="$(read_claimed ui)"
+  api_claimed="$(read_claimed api)"
+
+  ui_port="$(pick_port \
+    "$(preferred_port "${BNKSCOPE_UI_PORT:-}" "$ui_claimed" "$(read_claimed ui explicit)" "$DEFAULT_UI_PORT" "$running")" \
+    "$ui_claimed" "$running")"
+  api_port="$(pick_port \
+    "$(preferred_port "${BNKSCOPE_API_PORT:-}" "$api_claimed" "$(read_claimed api explicit)" "$DEFAULT_API_PORT" "$running")" \
+    "$api_claimed" "$running")"
+
+  # Say what happened either way. A port that silently moved — in either
+  # direction — is the kind of thing you only notice through a stale bookmark.
+  if [ "$ui_port" != "$DEFAULT_UI_PORT" ]; then
+    warn "UI port $DEFAULT_UI_PORT is taken — using $ui_port"
+  elif [ -n "$ui_claimed" ] && [ "$ui_claimed" != "$DEFAULT_UI_PORT" ]; then
+    info "  ${DIM}UI port $DEFAULT_UI_PORT is free again — moving back from $ui_claimed${RESET}"
+  fi
+  if [ "$api_port" != "$DEFAULT_API_PORT" ]; then
+    warn "API port $DEFAULT_API_PORT is taken — using $api_port"
+  elif [ -n "$api_claimed" ] && [ "$api_claimed" != "$DEFAULT_API_PORT" ]; then
+    info "  ${DIM}API port $DEFAULT_API_PORT is free again — moving back from $api_claimed${RESET}"
+  fi
+
+  export BNKSCOPE_UI_PORT="$ui_port" BNKSCOPE_API_PORT="$api_port"
+
+  # Telemetry ports, negotiated the same way. Prometheus defaults to 9491
+  # rather than 9090 because that is what tmmscope settled on, and an operator
+  # switching between them should not have to re-point anything.
+  local prom_port="" graf_port=""
+  if [ "$BNKSCOPE_TELEMETRY" = "on" ]; then
+    local prom_claimed graf_claimed
+    prom_claimed="$(read_claimed prometheus)"
+    graf_claimed="$(read_claimed grafana)"
+    # Sticky — deliberately unlike the UI and API ports, which auto-revert to
+    # their defaults once free. This port is baked into the exporter's
+    # environment inside your clusters, and an ephemeral container is
+    # immutable, so moving it orphans every existing injection with no way to
+    # repoint it. A stale bookmark is cheap; silently-dead telemetry is not.
+    # The empty `claimed_explicit` argument is what allowed the revert; passing
+    # `sticky` keeps a claimed port claimed.
+    prom_port="$(pick_port \
+      "$(preferred_port "${BNKSCOPE_PROMETHEUS_PORT:-}" "$prom_claimed" "sticky" "$DEFAULT_PROMETHEUS_PORT" "$running")" \
+      "$prom_claimed" "$running")"
+    graf_port="$(pick_port \
+      "$(preferred_port "${BNKSCOPE_GRAFANA_PORT:-}" "$graf_claimed" "" "$DEFAULT_GRAFANA_PORT" "$running")" \
+      "$graf_claimed" "$running")"
+    # Distinguish "the default was taken" from "we are keeping the port a
+    # running stack already has". Saying a free port is taken sends people
+    # hunting for a conflict that is not there.
+    report_port() {
+      local name="$1" chosen="$2" default="$3" claimed="$4"
+      [ "$chosen" = "$default" ] && return 0
+      if [ "$running" = "yes" ] && [ "$chosen" = "$claimed" ]; then
+        if port_free "$default"; then
+          info "  ${DIM}$name is on $chosen; $default is free again — 'bnkscope down' then up to move back${RESET}"
+        fi
+        return 0
+      fi
+      warn "$name port $default is taken — using $chosen"
+    }
+    report_port Prometheus "$prom_port" "$DEFAULT_PROMETHEUS_PORT" "$prom_claimed"
+    report_port Grafana "$graf_port" "$DEFAULT_GRAFANA_PORT" "$graf_claimed"
+    export BNKSCOPE_PROMETHEUS_PORT="$prom_port" BNKSCOPE_GRAFANA_PORT="$graf_port"
+    ensure_grafana_password
+
+    # Prometheus receives remote_write from pods in your clusters, so it cannot
+    # be loopback-only. Say so once, rather than leaving it to be discovered.
+    info "  ${DIM}telemetry: Prometheus :$prom_port (receives from your clusters) · Grafana :$graf_port${RESET}"
+  fi
+
+  if [ "$build" = yes ]; then
+    step "Building images"
+    BNKSCOPE_DOCKERHUB_PREFIX="$(resolve_registry_cache)" \
+      BUILDX_NO_DEFAULT_ATTESTATIONS=1 compose build
+  fi
+
+  # The UI is the front door: nginx proxies /api through to an API that has no
+  # authentication at all. Widening this bind exposes every registered cluster
+  # — pod exec and log streaming included — to anyone who can reach the port.
+  if [ "$listen" != "127.0.0.1" ] && [ "$listen" != "localhost" ]; then
+    warn "listening on $listen — there is NO authentication, and nothing takes"
+    warn "over now that the bind is open. Anyone who can reach port ${ui_port} gets"
+    warn "a shell in any pod, and one request to /api/system/backup returns every"
+    warn "kubeconfig and cloud credential together with the key that decrypts them."
+    warn "Traffic is plain HTTP, so it is readable in flight."
+    warn "Use this only on a private lab network, or over a VPN with --listen bound"
+    warn "to the VPN interface. Otherwise leave the default and use an SSH tunnel:"
+    warn "  ssh -N -L ${ui_port}:localhost:${ui_port} $(whoami)@$(hostname)"
+  fi
+
+  step "Starting bnkscope"
+  compose up -d
+
+  # Record the ports before waiting: if health never comes, the operator still
+  # needs to know where to look.
+  # Carry the "you asked for this" flag forward: an explicit request this run
+  # makes the port sticky, and one made on a previous run stays sticky.
+  write_endpoints "$ui_port" "$api_port" true \
+    "${BNKSCOPE_UI_PORT_REQUESTED:-}" "${BNKSCOPE_API_PORT_REQUESTED:-}" "$listen" \
+    "$prom_port" "$graf_port"
+
+  # GF_SECURITY_ADMIN_PASSWORD only applies when Grafana initialises its
+  # database. On an install that already has one — anybody upgrading — the old
+  # password survives, so setting the env var alone silently changes nothing.
+  # Reset it explicitly, every time, which is also how rotation works.
+  if [ "$BNKSCOPE_TELEMETRY" = "on" ]; then
+    ( for _ in $(seq 1 40); do
+        if docker exec bnkscope-grafana grafana cli admin reset-admin-password \
+             "$BNKSCOPE_GRAFANA_PASSWORD" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 3
+      done ) &
+  fi
+
+  printf '  waiting for the API'
+  local i
+  for (( i = 0; i < 60; i++ )); do
+    if curl -sf "http://127.0.0.1:${api_port}/api/system/health" >/dev/null 2>&1; then
+      printf ' %sready%s\n' "$GREEN" "$RESET"
+      break
+    fi
+    printf '.'
+    sleep 1
+  done
+  if ! curl -sf "http://127.0.0.1:${api_port}/api/system/health" >/dev/null 2>&1; then
+    printf '\n'
+    warn "the API did not become healthy — try 'bnkscope logs'"
+  fi
+
+  info ""
+  if [ "$listen" = "127.0.0.1" ] || [ "$listen" = "localhost" ]; then
+    info "  ${BOLD}http://localhost:${ui_port}${RESET}"
+    info "  ${DIM}no login — bound to loopback only${RESET}"
+  else
+    local advertised
+    advertised="$(advertised_host "$listen")"
+    info "  ${BOLD}http://${advertised}:${ui_port}${RESET}"
+    info "  ${YELLOW}no login, and reachable from the network${RESET}"
+  fi
+  info ""
+  info "  Your kube contexts are being probed now. Clusters running BNK register"
+  info "  themselves; anything else is listed with a one-click add."
+}
+
+cmd_down() {
+  local purge=no
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --purge) purge=yes ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown option for 'down': $1" ;;
+    esac
+    shift
+  done
+
+  require_docker
+  # Tearing down has to see every profile, whatever this run's flags say.
+  # Compose only removes services in an *active* profile, so a `down` without
+  # this left Prometheus and Grafana running — still holding their ports, so the
+  # next `up` negotiated around bnkscope's own leftovers and moved to 9492.
+  export BNKSCOPE_TELEMETRY=on
+  export BNKSCOPE_MCP=on
+
+  step "Stopping bnkscope"
+  if [ "$purge" = yes ]; then
+    # The database AND the encryption key. Kubeconfigs are stored encrypted, so
+    # dropping the key makes the database unreadable even if it survived.
+    warn "--purge deletes the database and the encryption key. Registered clusters go with them."
+    compose down -v
+  else
+    compose down
+  fi
+
+  local ui api
+  ui="$(read_claimed ui)"; api="$(read_claimed api)"
+  [ -n "$ui" ] && write_endpoints "$ui" "${api:-$DEFAULT_API_PORT}" false \
+    "$(read_claimed ui explicit)" "$(read_claimed api explicit)"
+  info "  stopped"
+}
+
+cmd_status() {
+  require_docker
+
+  if ! is_running; then
+    info "bnkscope is ${YELLOW}not running${RESET}"
+    info "  ${DIM}bnkscope up${RESET}"
+    return 0
+  fi
+
+  local ui api bind advertised
+  ui="$(read_claimed ui)"; api="$(read_claimed api)"
+  ui="${ui:-$DEFAULT_UI_PORT}"; api="${api:-$DEFAULT_API_PORT}"
+  bind="$(read_claimed ui bind)"; bind="${bind:-127.0.0.1}"
+  advertised="$(advertised_host "$bind")"
+
+  info "bnkscope is ${GREEN}running${RESET}"
+  info "  UI   http://${advertised}:${ui}"
+  info "  API  http://localhost:${api}  ${DIM}(loopback only)${RESET}"
+  if [ "$bind" != "127.0.0.1" ] && [ "$bind" != "localhost" ]; then
+    info "  ${YELLOW}reachable from the network (bind $bind) — no authentication${RESET}"
+  fi
+  local prom graf
+  prom="$(read_claimed prometheus)"; graf="$(read_claimed grafana)"
+  if [ "$(read_claimed prometheus running)" = "True" ]; then
+    info "  ${DIM}Prometheus http://localhost:${prom}  ·  Grafana http://localhost:${graf}${RESET}"
+  fi
+  info ""
+  compose ps --format 'table {{.Name}}\t{{.Status}}' 2>/dev/null || compose ps
+
+  # The cluster list is the thing an operator actually wants from `status`.
+  local clusters
+  clusters="$(curl -sf "http://127.0.0.1:${api}/api/k8s/clusters" 2>/dev/null || true)"
+  if [ -n "$clusters" ]; then
+    info ""
+    # The JSON arrives on stdin. A `python3 - <<EOF` here would take stdin for
+    # the *script*, silently discarding whatever was piped in — so the script
+    # goes in as an argument and stdin is left alone for the data.
+    printf '%s' "$clusters" | python3 -c "$CLUSTER_SUMMARY_PY"
+  fi
+}
+
+cmd_open() {
+  local ui bind
+  ui="$(read_claimed ui)"; ui="${ui:-$DEFAULT_UI_PORT}"
+  bind="$(read_claimed ui bind)"; bind="${bind:-127.0.0.1}"
+  local url
+  url="http://$(advertised_host "$bind"):${ui}"
+  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$url" >/dev/null 2>&1 &
+  elif command -v open >/dev/null 2>&1; then open "$url"
+  else info "$url"
+  fi
+}
+
+cmd_logs() {
+  require_docker
+  compose logs -f --tail 100 "$@"
+}
+
+cmd_endpoint() {
+  # The producer contract, mirroring `tmmscope endpoint --json`.
+  if [ -f "$ENDPOINTS_FILE" ]; then
+    cat "$ENDPOINTS_FILE"
+  else
+    printf '{"running": false}\n'
+  fi
+}
+
+usage() {
+  cat <<EOF
+${BOLD}bnkscope${RESET} — troubleshooting and monitoring for F5 BNK clusters
+
+  bnkscope up [--no-build]     start it; negotiates ports, probes your kubeconfig
+             [--listen ADDR]   bind the UI to ADDR instead of 127.0.0.1.
+                               Remembered across runs — go back to loopback
+                               with --listen 127.0.0.1.
+                               THE API HAS NO AUTHENTICATION — anyone who can
+                               reach the port gets full access to every
+                               registered cluster, pod exec included.
+             [--no-telemetry]  skip Prometheus + Grafana. They run by default,
+                               for TMM Live; Prometheus is NOT loopback-only,
+                               because your clusters push metrics to it.
+             [--no-mcp]        skip the read-only MCP server. It runs by
+                               default on 8081, loopback-only, for an AI
+                               agent.
+  bnkscope down [--purge]      stop it (--purge also drops the database and key)
+  bnkscope status              running state, ports, registered clusters
+  bnkscope open                open the UI in a browser
+  bnkscope logs [service]      follow container logs
+  bnkscope endpoint            print the discovery file (ports are negotiated)
+  bnkscope grafana-password    print Grafana's generated admin password
+
+Environment:
+  BNKSCOPE_UI_BIND             UI bind address (--listen wins; then this, then
+                               the remembered bind, then 127.0.0.1)
+  BNKSCOPE_UI_PORT             preferred UI port (default $DEFAULT_UI_PORT, walks up if taken)
+  BNKSCOPE_API_PORT            preferred API port (default $DEFAULT_API_PORT, walks up if taken)
+  BNKSCOPE_TELEMETRY           on (default) | off — run the TMM telemetry stack
+  BNKSCOPE_MCP                 on (default) | off — run the read-only MCP server
+  BNKSCOPE_PROMETHEUS_PORT     preferred Prometheus port (default $DEFAULT_PROMETHEUS_PORT).
+                               Not loopback-only: your clusters push to it.
+  BNKSCOPE_GRAFANA_PORT        preferred Grafana port (default $DEFAULT_GRAFANA_PORT)
+  BNKSCOPE_REGISTRY_CACHE      auto (default) | on | off — pull base images
+                               through a local regcachectl docker.io cache
+  BNKSCOPE_REGISTRY_CACHE_HOST host the build uses to reach it (default localhost)
+
+Discovery file: $ENDPOINTS_FILE
+EOF
+}
+
+main() {
+  local cmd="${1:-status}"
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    up)       cmd_up "$@" ;;
+    down)     cmd_down "$@" ;;
+    status)   cmd_status "$@" ;;
+    open)     cmd_open "$@" ;;
+    logs)     cmd_logs "$@" ;;
+    grafana-password) ensure_grafana_password; printf '%s\n' "$BNKSCOPE_GRAFANA_PASSWORD" ;;
+    endpoint) cmd_endpoint "$@" ;;
+    -h|--help|help) usage ;;
+    *) die "unknown command '$cmd' — try 'bnkscope --help'" ;;
+  esac
+}
+
+main "$@"

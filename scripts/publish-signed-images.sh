@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# publish-signed-images.sh — Keyless cosign signing + SBOM + provenance for all BNK Forge images.
+# publish-signed-images.sh — Keyless cosign signing + SBOM + provenance for the bnkscope images.
 #
 # Workflow:
 #   1. Caller MUST have already pushed images via `make push-images` (or push-customer-build).
@@ -11,17 +11,17 @@
 #
 # Usage:
 #   # Print the plan (safe, no network I/O beyond digest resolve):
-#   BNK_FORGE_REGISTRY=ghcr.io/your-org ./scripts/publish-signed-images.sh
+#   BNKSCOPE_REGISTRY=ghcr.io/your-org ./scripts/publish-signed-images.sh
 #
 #   # Execute signing (opens a browser for OIDC login on first run):
-#   BNK_FORGE_REGISTRY=ghcr.io/your-org ./scripts/publish-signed-images.sh --execute
+#   BNKSCOPE_REGISTRY=ghcr.io/your-org ./scripts/publish-signed-images.sh --execute
 #
 #   # Override version:
-#   BNK_FORGE_REGISTRY=ghcr.io/your-org BNK_FORGE_VERSION=3.1.6 ./scripts/publish-signed-images.sh --execute
+#   BNKSCOPE_REGISTRY=ghcr.io/your-org BNKSCOPE_VERSION=3.1.6 ./scripts/publish-signed-images.sh --execute
 #
 # Environment variables:
-#   BNK_FORGE_REGISTRY  — required; e.g. ghcr.io/jlcode-tech
-#   BNK_FORGE_VERSION   — optional; defaults to contents of ./VERSION
+#   BNKSCOPE_REGISTRY  — required; e.g. ghcr.io/jlcode-tech
+#   BNKSCOPE_VERSION   — optional; defaults to contents of ./VERSION
 #   DRY_RUN             — set to 0 to execute (equivalent to --execute)
 #
 # Prerequisites:
@@ -59,15 +59,15 @@ done
 
 # ─── Validate environment ─────────────────────────────────────────────────────
 
-if [[ -z "${BNK_FORGE_REGISTRY:-}" ]]; then
-  echo "ERROR: BNK_FORGE_REGISTRY is not set." >&2
+if [[ -z "${BNKSCOPE_REGISTRY:-}" ]]; then
+  echo "ERROR: BNKSCOPE_REGISTRY is not set." >&2
   echo "" >&2
-  echo "Usage: BNK_FORGE_REGISTRY=ghcr.io/your-org $0 [--execute]" >&2
+  echo "Usage: BNKSCOPE_REGISTRY=ghcr.io/your-org $0 [--execute]" >&2
   exit 1
 fi
 
-REGISTRY="${BNK_FORGE_REGISTRY}"
-VERSION="${BNK_FORGE_VERSION:-$(cat "$(dirname "$0")/../VERSION")}"
+REGISTRY="${BNKSCOPE_REGISTRY}"
+VERSION="${BNKSCOPE_VERSION:-$(cat "$(dirname "$0")/../VERSION")}"
 
 # ─── Check required tools ────────────────────────────────────────────────────
 
@@ -87,22 +87,14 @@ if [[ "$DRY_RUN" == "0" ]]; then
 fi
 
 # ─── Image list ───────────────────────────────────────────────────────────────
-# 6 images from docker-bake.hcl (pushed via `make push-images`).
-#
-# The bnk-operator image is intentionally excluded: bnk-operator/build.sh
-# builds it as "bnk-operator" (not "bnk-forge-operator"), defaults its tag to
-# 1.1.0 (not VERSION), and pushes to an ECR/Docker Hub path rather than
-# BNK_FORGE_REGISTRY. It is not part of the docker-bake.hcl / push-images
-# publish path, so there is no "${BNK_FORGE_REGISTRY}/bnk-forge-operator:${VERSION}"
-# image to sign here. Revisit if the operator gets added to docker-bake.hcl.
+# The images docker-bake.hcl builds. bnkscope publishes two, plus the optional
+# MCP server; the worker, beat, proxy and operator images went with the
+# subsystems they served (bnkscope Phases 1-4).
 
 IMAGES=(
-  "bnk-forge-api"
-  "bnk-forge-worker"
-  "bnk-forge-beat"
-  "bnk-forge-frontend"
-  "bnk-forge-proxy"
-  "bnk-forge-mcp"
+  "bnkscope-api"
+  "bnkscope-frontend"
+  "bnkscope-mcp"
 )
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -152,7 +144,7 @@ write_provenance() {
     repo_url="${repo_url%.git}"
     repo_url="${repo_url/git@github.com:/https://github.com/}"
   fi
-  repo_url="${repo_url:-https://github.com/f5devcentral/bnk-forge}"
+  repo_url="${repo_url:-https://github.com/mwiget/bnkscope}"
 
   cat > "$out_file" <<PROVENANCE
 {
@@ -286,13 +278,13 @@ if [[ "$DRY_RUN" == "1" ]]; then
   echo "  DRY-RUN complete — no registry writes performed."
   echo ""
   echo "  To sign for real:"
-  echo "    BNK_FORGE_REGISTRY=${REGISTRY} $0 --execute"
+  echo "    BNKSCOPE_REGISTRY=${REGISTRY} $0 --execute"
 else
   echo "  All images signed + SBOM + provenance attached."
   echo ""
   echo "  Verify a signed image:"
   echo "    cosign verify \\"
-  echo "      ${REGISTRY}/bnk-forge-api@<digest> \\"
+  echo "      ${REGISTRY}/bnkscope-api@<digest> \\"
   echo "      --certificate-identity <your-email> \\"
   echo "      --certificate-oidc-issuer https://github.com/login/oauth"
   echo ""
@@ -301,6 +293,6 @@ else
   echo "      --type cyclonedx \\"
   echo "      --certificate-identity <your-email> \\"
   echo "      --certificate-oidc-issuer https://github.com/login/oauth \\"
-  echo "      ${REGISTRY}/bnk-forge-api@<digest>"
+  echo "      ${REGISTRY}/bnkscope-api@<digest>"
 fi
 echo "========================================================"

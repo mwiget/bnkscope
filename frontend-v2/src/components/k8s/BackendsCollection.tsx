@@ -249,7 +249,7 @@ export function BackendsCollection({ clusterId, namespace }: BackendsCollectionP
   return (
     <div className="space-y-4">
       {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <SummaryCard
           label="Total Services"
           value={counts.total}

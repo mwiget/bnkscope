@@ -5,13 +5,10 @@ import { apiClient } from './client';
 import type {
   SystemHealth,
   ProcessMetrics,
-  QueueMetrics,
   PerformanceMetrics,
   ErrorsList,
   DatabaseStats,
-  CleanupResult,
   VacuumResult,
-  CleanupType,
   VersionInfo,
   UpgradeResponse,
   UpgradeState,
@@ -26,33 +23,21 @@ export const systemApi = {
   getProcessMetrics: () =>
     apiClient.get<ProcessMetrics>('/api/system/process-metrics').then((res) => res.data),
 
-  getQueueMetrics: () =>
-    apiClient.get<QueueMetrics>('/api/system/queue-metrics').then((res) => res.data),
-
   getPerformanceMetrics: () =>
     apiClient.get<PerformanceMetrics>('/api/system/performance').then((res) => res.data),
 
   getRecentErrors: (limit = 10) =>
     apiClient.get<ErrorsList>(`/api/system/errors?limit=${limit}`).then((res) => res.data),
 
+  // `/api/database/stats`, not `/api/system/database/stats` — this one hangs
+  // off the api router, not the system router. The prefix was wrong, so the
+  // card 404'd on System's default tab.
   getDatabaseStats: () =>
-    apiClient.get<DatabaseStats>('/api/system/database/stats').then((res) => res.data),
-
-  cleanupDatabase: (type: CleanupType, olderThanDays: number) =>
-    apiClient.post<CleanupResult>('/api/system/database/cleanup', {
-      cleanup_type: type,
-      older_than_days: olderThanDays,
-    }).then((res) => res.data),
+    apiClient.get<DatabaseStats>('/api/database/stats').then((res) => res.data),
 
   vacuumDatabase: () =>
     apiClient.post<VacuumResult>('/api/system/database/vacuum').then((res) => res.data),
 
-  // Container Management
-  getContainerStatus: () =>
-    apiClient.get<{ containers: Array<{ service: string; container_name: string; status: string; state: string }>; total: number }>('/api/system/containers/status').then((res) => res.data),
-
-  restartContainers: (services?: string[]) =>
-    apiClient.post<{ message: string; results: Array<{ service: string; status: string; container?: string; error?: string }>; note: string }>('/api/system/containers/restart', { services }).then((res) => res.data),
 
   // System Version & Upgrade
   getSystemVersion: () =>

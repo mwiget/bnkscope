@@ -11,7 +11,7 @@ container that exists in every f5-tmm-* pod. Supports:
 Architecture: Direct pod exec via kubeconfig. Does NOT use the bnk-forge-agent
 pod (that's for CWC REST API access). See Decision D4.
 
-All endpoints are read-only diagnostics → require_viewer auth.
+All endpoints are read-only diagnostics.
 """
 
 import logging
@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
 from database import get_db
-from routes.auth import require_viewer
 from services.kubernetes_service import KubernetesService
 from services.tmm_debug_service import (
     discover_configview_uuids,
@@ -108,7 +107,6 @@ def _resolve_namespace(cluster) -> str:
 
 @router.get(
     "/k8s/clusters/{cluster_id}/tmm-debug/pods",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("list TMM debug pods")
 def get_tmm_debug_pods(
@@ -136,7 +134,6 @@ def get_tmm_debug_pods(
 
 @router.post(
     "/k8s/clusters/{cluster_id}/tmm-debug/exec",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("exec TMM debug command")
 def post_tmm_debug_exec(
@@ -172,7 +169,6 @@ def post_tmm_debug_exec(
 
 @router.post(
     "/k8s/clusters/{cluster_id}/tmm-debug/tmctl",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("exec tmctl command")
 def post_tmm_debug_tmctl(
@@ -206,7 +202,6 @@ def post_tmm_debug_tmctl(
 
 @router.post(
     "/k8s/clusters/{cluster_id}/tmm-debug/configview",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("exec configview command")
 def post_tmm_debug_configview(
@@ -229,7 +224,6 @@ def post_tmm_debug_configview(
 
 @router.post(
     "/k8s/clusters/{cluster_id}/tmm-debug/configview/uuids",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("discover configview UUIDs")
 def post_tmm_debug_configview_uuids(
@@ -252,7 +246,6 @@ def post_tmm_debug_configview_uuids(
 
 @router.post(
     "/k8s/clusters/{cluster_id}/tmm-debug/bdt",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("exec bdt_cli command")
 def post_tmm_debug_bdt(

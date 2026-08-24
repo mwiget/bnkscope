@@ -47,7 +47,6 @@ class TestClusterCreateRequestNegative:
         with pytest.raises(ValidationError):
             ClusterCreateRequest(name="dev", kubeconfig="data", cloud_provider="aws", region="xx-fake-1")
 
-
 class TestClusterUpdateRequestNegative:
     def test_all_optional(self):
         req = ClusterUpdateRequest()
@@ -56,11 +55,6 @@ class TestClusterUpdateRequestNegative:
     def test_invalid_region_rejected(self):
         with pytest.raises(ValidationError):
             ClusterUpdateRequest(cloud_provider="aws", region="xx-fake-1")
-
-    def test_ssh_port_wrong_type_rejected(self):
-        with pytest.raises(ValidationError):
-            ClusterUpdateRequest(ssh_remote_k8s_port="not-an-int")  # type: ignore[arg-type]
-
 
 class TestResourceCreateRequestNegative:
     def test_valid_create(self):
@@ -75,12 +69,10 @@ class TestResourceCreateRequestNegative:
         with pytest.raises(ValidationError):
             ResourceCreateRequest(resource_yaml=123)  # type: ignore[arg-type]
 
-
 class TestResourceUpdateRequestNegative:
     def test_missing_resource_yaml_rejected(self):
         with pytest.raises(ValidationError):
             ResourceUpdateRequest()  # type: ignore[call-arg]
-
 
 class TestScaleDeploymentRequestNegative:
     def test_valid_scale(self):
@@ -103,7 +95,6 @@ class TestScaleDeploymentRequestNegative:
         with pytest.raises(ValidationError):
             ScaleDeploymentRequest()  # type: ignore[call-arg]
 
-
 class TestResourcePatchRequestNegative:
     def test_valid_patch(self):
         req = ResourcePatchRequest(patch_data={"spec": {"replicas": 5}})
@@ -116,7 +107,6 @@ class TestResourcePatchRequestNegative:
     def test_patch_data_wrong_type_rejected(self):
         with pytest.raises(ValidationError):
             ResourcePatchRequest(patch_data="not a dict")  # type: ignore[arg-type]
-
 
 class TestLabelResourceRequestNegative:
     def test_valid_label(self):
@@ -131,12 +121,10 @@ class TestLabelResourceRequestNegative:
         with pytest.raises(ValidationError):
             LabelResourceRequest(labels="not a dict")  # type: ignore[arg-type]
 
-
 class TestAnnotateResourceRequestNegative:
     def test_missing_annotations_rejected(self):
         with pytest.raises(ValidationError):
             AnnotateResourceRequest()  # type: ignore[call-arg]
-
 
 class TestAdaptiveModuleRequestNegative:
     def test_all_optional(self):
@@ -148,7 +136,6 @@ class TestAdaptiveModuleRequestNegative:
     def test_module_paths_wrong_type_rejected(self):
         with pytest.raises(ValidationError):
             AdaptiveModuleRequest(module_paths="not-a-list")  # type: ignore[arg-type]
-
 
 class TestCreateMigrationRequestKubectlResources:
     """Validate kubectl_resources format hardening on CreateMigrationRequest."""

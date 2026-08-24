@@ -3,12 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>BNK-Forge v2</title>
+    <!-- The mark is generated: edit scripts/bnkscope-icon/build.py and re-run,
+         never hand-patch an .svg. The -small builds drop the code rain and the
+         blur filters, which turn to mud below 32px. -->
+    <link rel="icon" type="image/svg+xml" href="/icons/bnkscope.svg" />
+    <link rel="alternate icon" href="/icons/png/bnkscope-32-small.png" sizes="32x32" />
+    <link rel="icon" href="/icons/png/bnkscope-16-small.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/icons/png/bnkscope-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#E4002B" />
+    <title>bnkscope</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <script src="/config.js"></script>
     <script>
       // Apply theme from localStorage BEFORE first paint to prevent flash.
       // Default is LIGHT — only add "dark" class if user explicitly chose dark.

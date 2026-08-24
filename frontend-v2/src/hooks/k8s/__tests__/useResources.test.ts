@@ -16,7 +16,6 @@ import {
   useScaleDeployment,
   useClusterScan,
   useClusterScanResult,
-  useAdaptiveModulePlan,
 } from '../useResources';
 import React from 'react';
 import * as notifyModule from '@/lib/notify';
@@ -584,40 +583,3 @@ describe('useClusterScanResult', () => {
 // useAdaptiveModulePlan
 // ============================================================================
 
-describe('useAdaptiveModulePlan', () => {
-  it('generates an adaptive module plan', async () => {
-    setupResourceHandlers();
-    const { result } = renderHook(() => useAdaptiveModulePlan(), { wrapper: createWrapper() });
-
-    act(() => {
-      result.current.mutate({ clusterId: 1, templateSlug: 'default' });
-    });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    expect(result.current.data).toMatchObject({
-      plan: {
-        modules: expect.any(Array),
-      },
-    });
-  });
-
-  it('handles plan generation error', async () => {
-    server.use(
-      http.post('*/api/k8s/clusters/:clusterId/adaptive-modules', () => {
-        return HttpResponse.json(
-          { error: { message: 'Cannot connect to cluster' } },
-          { status: 500 },
-        );
-      }),
-    );
-
-    const { result } = renderHook(() => useAdaptiveModulePlan(), { wrapper: createWrapper() });
-
-    act(() => {
-      result.current.mutate({ clusterId: 99 });
-    });
-
-    await waitFor(() => expect(result.current.isError).toBe(true));
-  });
-});

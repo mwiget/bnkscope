@@ -1,4 +1,4 @@
-# BNK Forge — Testing Guide
+# bnkscope — Testing Guide
 
 Complete guide to the test infrastructure, patterns, and how to run tests.
 
@@ -13,8 +13,6 @@ Complete guide to the test infrastructure, patterns, and how to run tests.
 - [Running Tests](#running-tests)
 - [Backend Tests](#backend-tests)
 - [Frontend Tests](#frontend-tests)
-- [E2E Tests](#e2e-tests)
-- [BNK Operator Tests](#bnk-operator-tests)
 - [CI Pipeline](#ci-pipeline)
 - [Writing New Tests](#writing-new-tests)
 - [Contract Testing (CT-012)](#contract-testing-ct-012)
@@ -54,8 +52,7 @@ make coverage                # Backend + frontend coverage reports
 | Backend Legacy | pytest | flat `backend/tests/test_*.py` | Older tests retained outside the newer split layout |
 | Backend Contract | pytest | `backend/tests/contract/` | Golden response-shape verification for Tier-1 APIs |
 | Frontend | vitest | `frontend-v2/src/**/*.{test,spec}.{ts,tsx}` | Hooks, components, pages with MSW |
-| E2E | Playwright | `tests/e2e/` | Full stack browser tests |
-| BNK Operator | pytest | `bnk-operator/tests/` | Legacy/secondary operator command handlers and health |
+| MCP | pytest | `mcp-server/` | The MCP tool server's own suite |
 
 ---
 
@@ -74,12 +71,9 @@ make coverage                # Backend + frontend coverage reports
 | `make test-backend-component` | ~30s | `pytest backend/tests/component/` |
 | `make test-backend-legacy` | ~15s | Legacy tests at `backend/tests/` root |
 | `make test-frontend` | ~30s | `npm test -- --run` (vitest) |
-| `make test-proxy` | ~5s | `pytest tests/test_proxy_config.py` |
-| `make test-operator` | ~5s | `pytest` in `bnk-operator/` (skips if no venv) |
-| `make test-db` | ~5s | `pytest tests/test_migrations.py` |
-| `make test-integration-full` | ~5m | Full-stack integration (requires running Docker) |
-| `make test-e2e` | ~5m | Playwright E2E tier 1 |
-| `make test-e2e-tier2` | ~60m | Playwright E2E tier 2 (requires AWS) |
+| `make test-mcp` | ~10s | The MCP server's own suite |
+| `make test-integration` | ~4m | Integration tests, default marker set (everything except `full`) |
+| `make test-integration-full` | ~5m | Full-stack integration (`-m full`) |
 | `make coverage` | ~2m | Coverage reports for backend + frontend |
 | `make lint` | ~10s | Lint backend (ruff) + frontend (eslint) |
 | `make typecheck-backend` | ~15s | mypy on `core/` and `schemas/` |
@@ -112,25 +106,26 @@ backend/tests/
 ├── conftest.py              # Root fixtures: DB engine, client, auth, factories
 ├── factories.py             # Model factories (User, Project, Module, Task, etc.)
 ├── mocks/                   # Mock modules
-│   ├── aws_mock.py
 │   ├── kubernetes_mock.py
-│   ├── redis_mock.py
+│   ├── cache_mock.py
 │   └── subprocess_mock.py
-├── unit/                    # 31 files — pure logic, no DB
+├── unit/                    # 52 files — pure logic, no DB
 │   ├── conftest.py          # temp_encryption_key, mock_settings
 │   ├── test_schemas_*.py    # Pydantic schema validation
 │   ├── test_core_*.py       # Encryption, config, errors
 │   ├── test_bnk_*.py        # BNK health, topology, backends
 │   └── test_scanner_*.py    # Cluster scanner components
-├── component/               # 65 files — services + real SQLite DB
-│   ├── conftest.py          # mock_celery, project_with_modules
+├── component/               # 24 files — services + real SQLite DB
 │   └── test_*_service.py    # Service-level tests
-├── integration/             # 46 files — full HTTP via TestClient
-│   ├── conftest.py          # mock_celery_dispatch, sample entities
+├── integration/             # 14 files — full HTTP via TestClient
 │   ├── conftest_full.py     # Live Docker stack fixtures
 │   └── test_routes_*.py     # Route-level HTTP tests
-└── (32 legacy test files)   # Flat test_*.py at root level
+├── contract/                # 5 files — golden response shapes
+├── migrations/              # 1 file
+└── (3 legacy test files)    # Flat test_*.py at root level
 ```
+
+Roughly 1,770 backend tests and 1,440 frontend tests.
 
 ### Configuration
 
@@ -156,27 +151,25 @@ addopts = "-v --tb=short -m 'not full'"
 |---------|-------|-------------|
 | `engine` | session | SQLite in-memory with `StaticPool`, foreign keys ON |
 | `db` | function | Transactional session (rolls back after each test) |
-| `client` | function | FastAPI `TestClient` with DB override + mocked Redis |
-| `admin_headers` | function | JWT auth headers for admin user |
-| `operator_headers` | function | JWT auth headers for operator user |
-| `viewer_headers` | function | JWT auth headers for viewer user |
-| `sample_user` | function | Pre-created admin user |
-| `sample_project` | function | Pre-created project |
-| `make_user` | function | Factory: create user with custom attrs |
-| `make_project` | function | Factory: create project |
-| `make_module_library` | function | Factory: create module in library |
-| `make_project_module` | function | Factory: add module to project |
-| `make_task` | function | Factory: create task |
-| `make_stack_template` | function | Factory: create stack template |
-| `make_k8s_cluster` | function | Factory: create K8s cluster |
-| `mock_cache` | function | `MockCacheService` replacing Redis |
-| `mock_tofu` | function | Patched subprocess.run for OpenTofu |
+| `client` | function | FastAPI `TestClient` with the DB overridden |
+| `db` | function | A real SQLite session |
+| `engine` | session | The test engine |
+| `mock_cache` | function | `MockCacheService` in place of a cache |
+| `make_k` | function | Factory: create a K8s cluster |
+| `make_proxy_deployment` | function | Factory: create a proxy deployment |
+| `sample_user` / `sample_operator_user` / `sample_viewer_user` | function | Pre-created users |
+| `admin_headers` / `operator_headers` / `viewer_headers` | function | **All return `{}`** — see below |
 
-**Unit conftest** adds: `temp_encryption_key`, `mock_settings`
+> **The `*_headers` fixtures are no-ops.** They returned JWT headers before
+> Phase 3 removed authentication, and were left returning `{}` so that ~1600
+> tests did not all need editing. A test that passes with `admin_headers` proves
+> nothing about access control — there is none. Avoid them in new tests.
 
-**Component conftest** adds: `mock_celery`, `module_library`, `project_with_modules`
+**Unit conftest** adds: `temp_encryption_key`, `mock_settings`.
 
-**Integration conftest** adds: `mock_celery_dispatch`, `sample_module`, `sample_task`
+Component and integration conftests carry no extra fixtures of their own — the
+`mock_celery` / `mock_celery_dispatch` pair was removed once Celery was gone and
+nothing referenced them.
 
 ### Test Patterns
 
@@ -309,92 +302,31 @@ describe('ProjectCard', () => {
 
 ---
 
-## E2E Tests
-
-### Structure
-
-```
-tests/e2e/
-├── playwright.config.ts           # Config (base URL, retries, browser)
-├── global-setup.ts                # Login + save auth state
-├── tests/
-│   ├── 00-smoke.spec.ts           # Basic health + login
-│   ├── 01-project-lifecycle.spec.ts
-│   ├── 02-module-management.spec.ts
-│   ├── 03-stack-operations.spec.ts
-│   ├── 04-deployment-workflow.spec.ts
-│   ├── 05-kubernetes-explorer.spec.ts
-│   ├── 06-helm-management.spec.ts
-│   ├── 07-system-admin.spec.ts
-│   ├── 08-rbac.spec.ts
-│   ├── 09-error-handling.spec.ts
-│   └── tier2/
-│       └── 10-full-deployment.spec.ts
-├── fixtures/                      # Test fixtures
-├── pages/                         # Page object models
-└── utils/                         # Helpers
-```
-
-### Tiers
-
-| Tier | Tests | Requires | Duration |
-|------|-------|----------|----------|
-| Tier 1 | 00-09 | Running Docker stack | ~5 min |
-| Tier 2 | 10 | Docker stack + AWS creds | ~30-60 min |
-
-### Running
-
-```bash
-# Start the stack first
-docker compose up -d
-
-# Tier 1
-make test-e2e
-
-# Tier 2 (requires AWS credentials)
-make test-e2e-tier2
-```
-
-See `tests/e2e/README.md` for detailed setup instructions.
-
----
-
-## BNK Operator Tests
-
-```
-bnk-operator/tests/
-├── conftest.py
-├── test_command_handlers.py
-├── test_control_plane_client.py
-├── test_health_server.py
-├── test_health_watcher.py
-└── test_polling_client.py
-```
-
-`bnk-operator/` is still retained and CI-covered as a legacy/secondary-supported connectivity path. It is not safe to remove blindly while Makefile, CI, backend install-command support, and docs still reference it.
-
-For local execution it uses a separate venv (`bnk-operator/.venv`). Config: `pytest.ini` with `asyncio_mode = auto`.
-
-```bash
-make test-operator   # Skips if venv doesn't exist
-```
-
----
-
 ## CI Pipeline
 
-`.github/workflows/ci.yml` — 4-phase pipeline with path-based filtering:
+`.github/workflows/ci.yml` — 9 jobs behind a `changes` filter, gated by
+`ci-gate`:
 
-| Phase | Jobs | Duration | Runs When |
-|-------|------|----------|-----------|
-| **P1** | Lint backend, Lint frontend, Type check, Unit tests (BE+FE), Operator tests | ~60s | Backend/frontend/operator changes |
-| **P2** | Component tests, Legacy tests, Frontend build | ~90s | After P1 |
-| **P3** | Integration tests | ~2m | After P2 |
-| **P4** | Security audit, Docker build | ~3m | After P3 |
+| Job | What it runs |
+|---|---|
+| `changes` | `dorny/paths-filter` — decides which of the rest run |
+| `lint` | ruff (backend) + eslint (frontend) |
+| `typecheck-backend` | mypy, then `make openapi-check` and `make api-docs-check` |
+| `typecheck-frontend` | tsc |
+| `backend-tests` | pytest: unit, component, contract, integration |
+| `frontend-tests` | vitest |
+| `mcp-tests` | the MCP server's own suite |
+| `security-audit` | dependency and image scanning |
+| `docker-build` | builds both images, enforces size thresholds, Trivy scan |
+| `ci-gate` | the required check — fails if any needed job did |
 
-Path filtering via `dorny/paths-filter` — jobs for unchanged areas are skipped.
+Path filtering means jobs for unchanged areas are skipped, so `ci-gate` exists to
+give branch protection one status to require regardless of what ran.
 
-**Skipped entirely** when only these paths change: `docs/`, `.agent/`, `*.md`, `.gitignore`, `Makefile`.
+**Skipped entirely** when only these paths change: `docs/`, `*.md`, `.gitignore`.
+
+Phase 8 cut this from 25 jobs to 10 by removing the suites for subsystems that
+no longer exist.
 
 ---
 
@@ -402,20 +334,26 @@ Path filtering via `dorny/paths-filter` — jobs for unchanged areas are skipped
 
 ### Backend: Adding a New Route Test
 
-1. Identify the route file and its auth dependency
+1. Identify the route file.
 2. Write the test in the appropriate directory:
    - `unit/` for schema validation
    - `component/` for service logic
    - `integration/` for HTTP endpoint behaviour
-3. Use existing fixtures (`admin_headers`, `make_project`, etc.)
+3. Use existing fixtures — `client`, `db`, and the factories in
+   `backend/tests/factories.py`.
 4. Follow the naming convention: `test_{unit}_{condition}_{expected}`
+
+> **`admin_headers` and `operator_headers` still exist, and both return `{}`.**
+> They were left as no-ops when authentication was removed in Phase 3 so that
+> ~1600 tests did not all have to be edited. Do not read them as evidence that
+> a route is protected — nothing is. Prefer not to use them in new tests.
 
 ```python
 # backend/tests/integration/test_routes_new_feature.py
 class TestNewFeatureRoutes:
-    def test_create_requires_auth(self, client):
-        response = client.post("/api/new-feature", json={"name": "test"})
-        assert response.status_code == 401
+    def test_create_rejects_a_blank_name(self, client):
+        response = client.post("/api/new-feature", json={"name": ""})
+        assert response.status_code == 422
 
     def test_create_returns_201(self, client, admin_headers):
         response = client.post(
@@ -543,7 +481,7 @@ describe('useCreateProject', () => {
 
 - **`full` marker tests require Docker**: Tests marked `@pytest.mark.full` need the full Docker Compose stack running. They use `requests.Session` (not `TestClient`).
 
-- **Celery is always mocked**: All test categories mock Celery task dispatch. Real Celery is never used in tests.
+- **Background work is synchronous in tests**: there is no broker and no worker. `core/background.py` runs on a thread pool; prefer `run_sync()` in tests.
 
 - **Factory sequence counters**: `factories.py` uses `_counters` dict for unique names. The counter persists across tests in the same session.
 

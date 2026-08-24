@@ -15,10 +15,10 @@ import {
 } from 'lucide-react';
 import {
   useSystemHealth,
-  useQueueMetrics,
   usePerformanceMetrics,
   useRecentErrors,
 } from '@/hooks/useSystem';
+import { BackendProcessCard } from './BackendProcessCard';
 import { DISPLAY_LIMITS } from '@/lib/constants';
 import type { ServiceStatus, TaskError } from '@/types';
 
@@ -48,11 +48,10 @@ const SERVICE_BADGE_VARIANT: Record<string, BadgeVariant> = {
 
 export default function PerformanceMonitor() {
   const { data: health, isLoading: healthLoading, refetch: refetchHealth } = useSystemHealth();
-  const { data: queueMetrics, isLoading: queueLoading } = useQueueMetrics();
   const { data: perfMetrics, isLoading: perfLoading } = usePerformanceMetrics();
   const { data: errors, isLoading: errorsLoading } = useRecentErrors(5);
 
-  const isLoading = healthLoading || queueLoading || perfLoading || errorsLoading;
+  const isLoading = healthLoading || perfLoading || errorsLoading;
 
   // Determine overall system status
   const getSystemStatus = (): SystemStatus => {
@@ -87,30 +86,6 @@ export default function PerformanceMonitor() {
       });
     }
 
-    // Check task queue depth
-    if (queueMetrics?.tasks?.pending && queueMetrics.tasks.pending > 50) {
-      alerts.push({
-        severity: 'medium',
-        message: `High task queue depth: ${queueMetrics.tasks.pending} pending tasks`,
-      });
-    }
-
-    // Check worker availability
-    if (queueMetrics?.workers?.total === 0) {
-      alerts.push({
-        severity: 'high',
-        message: 'No Celery workers available',
-      });
-    }
-
-    // Check if worker inspection timed out (indicates workers are very busy)
-    if (queueMetrics?.workers?.inspection_timeout) {
-      alerts.push({
-        severity: 'low',
-        message: 'Worker inspection timed out (workers may be busy with long operations)',
-      });
-    }
-
     // Check error rate
     const failedTasks = perfMetrics?.api?.failed_tasks_last_hour || perfMetrics?.api?.failed_requests_last_hour || 0;
     const totalTasks = perfMetrics?.api?.tasks_last_hour || perfMetrics?.api?.requests_last_hour || 0;
@@ -127,7 +102,7 @@ export default function PerformanceMonitor() {
     return alerts;
   };
 
-  const degradationAlerts = perfMetrics && queueMetrics ? checkDegradation() : [];
+  const degradationAlerts = perfMetrics ? checkDegradation() : [];
 
   const getServiceIcon = (serviceName: string) => {
     switch (serviceName) {
@@ -237,11 +212,6 @@ export default function PerformanceMonitor() {
                               {serviceData.response_time_ms.toFixed(0)}ms
                             </div>
                           )}
-                          {serviceData.workers !== undefined && (
-                            <div className="text-xs text-muted-foreground">
-                              {serviceData.workers} worker(s), {serviceData.active_tasks} active
-                            </div>
-                          )}
                         </div>
                       </div>
                       <Badge variant={badgeVariant} className="capitalize">
@@ -259,40 +229,8 @@ export default function PerformanceMonitor() {
             </div>
           </div>
 
-          {/* Task Queue Metrics */}
-          {queueMetrics && (
-            <div>
-              <h3 className="text-sm font-semibold mb-3 text-foreground">
-                Task Queue
-              </h3>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="p-4 rounded-lg border border-border bg-muted/50">
-                  <div className="text-sm mb-1 text-muted-foreground">
-                    Pending
-                  </div>
-                  <div className="text-2xl font-bold text-foreground">
-                    {queueMetrics.tasks?.pending || 0}
-                  </div>
-                </div>
-                <div className="p-4 rounded-lg border border-border bg-muted/50">
-                  <div className="text-sm mb-1 text-muted-foreground">
-                    Active
-                  </div>
-                  <div className="text-2xl font-bold text-foreground">
-                    {queueMetrics.tasks?.active || 0}
-                  </div>
-                </div>
-                <div className="p-4 rounded-lg border border-border bg-muted/50">
-                  <div className="text-sm mb-1 text-muted-foreground">
-                    Completed (1h)
-                  </div>
-                  <div className="text-2xl font-bold text-foreground">
-                    {queueMetrics.tasks?.completed_last_hour || 0}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* bnkscope's own process — moved off the app header in Phase 6. */}
+          <BackendProcessCard />
 
           {/* Performance Metrics */}
           {perfMetrics && (
@@ -310,7 +248,7 @@ export default function PerformanceMonitor() {
                       Task Performance
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div>
                       <div className="text-xs text-muted-foreground">
                         Avg Task Duration
@@ -355,7 +293,7 @@ export default function PerformanceMonitor() {
                         Database Performance
                       </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                       <div>
                         <div className="text-xs text-muted-foreground">
                           Size

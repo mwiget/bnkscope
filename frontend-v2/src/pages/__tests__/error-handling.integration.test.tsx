@@ -1,26 +1,26 @@
 /**
  * Error Handling Integration Tests
  *
- * Tests error handling scenarios across the application:
- *   1. NotFound renders 404 page
- *   2. API error doesn't crash page
- *   3. Multiple API failures handled gracefully
- *   4. Network timeout handled
+ * What the app does when something is broken:
+ *   1. an unknown route
+ *   2. the backend returning 500 on the page's own data
+ *   3. the backend not answering at all
  *
- * ErrorBoundary uses useRouteError() and requires a react-router errorElement
- * context, so it cannot be tested in isolation here. NotFound is a standalone
- * component and is tested directly.
+ * (2) and (3) used to exercise the Projects page, which went with the pipeline
+ * in Phase 1. They now run against the home page, which is the right target:
+ * it is the first thing an operator loads, and a tool for diagnosing broken
+ * things has no business rendering a blank screen when it is itself broken.
+ *
+ * ErrorBoundary uses useRouteError() and needs a react-router errorElement
+ * context, so it cannot be tested in isolation here. NotFound is standalone.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { render } from '@/test/test-utils';
-import { useAuthStore } from '@/stores/authStore';
-import { mockUser } from '@/test/test-fixtures';
 import { NotFound } from '@/components/ErrorBoundary';
-import Projects from '@/pages/Projects';
-import Dashboard from '@/pages/Dashboard';
+import CommandCenter from '@/pages/CommandCenter';
 
 // ---------------------------------------------------------------------------
 // Navigation mock
@@ -36,9 +36,7 @@ vi.mock('react-router-dom', async () => {
 // ---------------------------------------------------------------------------
 beforeEach(() => {
   vi.clearAllMocks();
-  useAuthStore.getState().logout();
   localStorage.clear();
-  useAuthStore.getState().login('mock-jwt-token', mockUser);
 });
 
 // ===========================================================================
@@ -72,115 +70,45 @@ describe('Error Handling (integration)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. API error doesn't crash page
+  // 2. A 500 on the page's own data
   // -------------------------------------------------------------------------
-  it('API error on Projects page does not crash the page', async () => {
+  it('offers a retry rather than a blank page when the cluster list 500s', async () => {
     server.use(
-      http.get('*/api/projects', ({ request }) => {
-        const url = new URL(request.url);
-        if (url.pathname !== '/api/projects') return;
-        return HttpResponse.json(
-          { error: { code: 'INTERNAL_ERROR', message: 'Database unavailable' } },
-          { status: 500 },
-        );
-      }),
-    );
-
-    render(<Projects />);
-
-    // Page should still render without crashing — shows empty or error state
-    await waitFor(
-      () => {
-        const hasEmptyState = screen.queryByText(/no projects/i);
-        const hasErrorIndicator = screen.queryByText(/error/i);
-        const hasPageTitle = screen.queryByText('Projects');
-        // At least one of these should be present, proving the page didn't crash
-        expect(hasEmptyState || hasErrorIndicator || hasPageTitle).toBeTruthy();
-      },
-      { timeout: 3000 },
-    );
-  });
-
-  // -------------------------------------------------------------------------
-  // 3. Multiple API failures handled gracefully
-  // -------------------------------------------------------------------------
-  it('multiple API failures on Dashboard do not crash the page', async () => {
-    // Override multiple endpoints to return 500
-    server.use(
-      http.get('*/api/projects', ({ request }) => {
-        const url = new URL(request.url);
-        if (url.pathname !== '/api/projects') return;
-        return HttpResponse.json(
-          { error: { code: 'INTERNAL_ERROR', message: 'Server error' } },
-          { status: 500 },
-        );
-      }),
-      http.get('*/api/tasks', ({ request }) => {
-        const url = new URL(request.url);
-        if (url.pathname !== '/api/tasks') return;
-        return HttpResponse.json(
-          { error: { code: 'INTERNAL_ERROR', message: 'Server error' } },
-          { status: 500 },
-        );
-      }),
       http.get('*/api/k8s/clusters', ({ request }) => {
         const url = new URL(request.url);
         if (url.pathname !== '/api/k8s/clusters') return;
         return HttpResponse.json(
-          { error: { code: 'INTERNAL_ERROR', message: 'Server error' } },
+          { error: { code: 'INTERNAL_SERVER_ERROR', message: 'boom' } },
           { status: 500 },
         );
       }),
-      http.get('*/api/stacks/templates', ({ request }) => {
-        const url = new URL(request.url);
-        if (!url.pathname.endsWith('/templates')) return;
-        return HttpResponse.json(
-          { error: { code: 'INTERNAL_ERROR', message: 'Server error' } },
-          { status: 500 },
-        );
-      }),
-      http.get('*/api/drift/summary', () => {
-        return HttpResponse.json(
-          { error: { code: 'INTERNAL_ERROR', message: 'Server error' } },
-          { status: 500 },
-        );
-      }),
-
     );
 
-    render(<Dashboard />);
+    render(<CommandCenter />);
 
-    // Dashboard should still render its greeting even when all APIs fail
     await waitFor(
-      () => {
-        const greeting = screen.queryByText(/good (morning|afternoon|evening)/i);
-        expect(greeting).toBeInTheDocument();
-      },
-      { timeout: 3000 },
+      () => expect(screen.getByRole('button', { name: /retry|try again/i })).toBeInTheDocument(),
+      { timeout: 5000 },
     );
   });
 
   // -------------------------------------------------------------------------
-  // 4. Network timeout handled
+  // 3. The backend not answering at all
   // -------------------------------------------------------------------------
-  it('network timeout shows loading state and does not crash', async () => {
-    // Override with a very long delay to simulate a timeout
+  it('surfaces a network failure the same way as a 500', async () => {
     server.use(
-      http.get('*/api/projects', async () => {
-        await new Promise((r) => setTimeout(r, 60_000));
-        return HttpResponse.json({ projects: [], total: 0 });
+      http.get('*/api/k8s/clusters', ({ request }) => {
+        const url = new URL(request.url);
+        if (url.pathname !== '/api/k8s/clusters') return;
+        return HttpResponse.error();
       }),
     );
 
-    render(<Projects />);
+    render(<CommandCenter />);
 
-    // Loading skeletons should appear while the request is pending
-    const skeletons = document.querySelectorAll(
-      '[class*="animate-pulse"], [class*="skeleton"]',
+    await waitFor(
+      () => expect(screen.getByRole('button', { name: /retry|try again/i })).toBeInTheDocument(),
+      { timeout: 5000 },
     );
-    expect(skeletons.length).toBeGreaterThan(0);
-
-    // Page title should still be rendered (page is not blank/crashed)
-    expect(screen.getByText('Projects')).toBeInTheDocument();
   });
 });

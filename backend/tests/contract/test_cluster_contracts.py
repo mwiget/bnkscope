@@ -127,7 +127,7 @@ class TestClusterConnectionTestContract:
     """POST /api/k8s/clusters/{id}/test returns shape matching ClusterConnectionTestResponse."""
 
     def test_connection_test_response_shape(
-        self, client, admin_headers, sample_user, sample_project, db, mock_k8s_test_connection
+        self, client, admin_headers, sample_user, db, mock_k8s_test_connection
     ):
         """L1+L2: Response parses through schema, required fields present.
 
@@ -144,7 +144,6 @@ class TestClusterConnectionTestContract:
             region="ap-southeast-1",
             status="active",
             version="1.28",
-            project_id=sample_project.id,
         )
         db.add(cluster)
         db.commit()

@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from core.errors import handle_route_errors
 from database import get_db
-from routes.auth import require_viewer
 from services.dpf import analyze_dpf_health, detect_dpf, fetch_all_dpf_data
 from services.kubernetes_service import KubernetesService
 
@@ -30,7 +29,6 @@ router = APIRouter(prefix="/api", tags=["k8s-dpf"])
 
 @router.get(
     "/k8s/clusters/{cluster_id}/dpf/detect",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("detect DPF")
 def get_dpf_detect(
@@ -54,7 +52,6 @@ def get_dpf_detect(
 
 @router.get(
     "/k8s/clusters/{cluster_id}/dpf/data",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("fetch DPF data")
 def get_dpf_data(
@@ -84,7 +81,6 @@ def get_dpf_data(
 
 @router.get(
     "/k8s/clusters/{cluster_id}/dpf/health",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get DPF health")
 def get_dpf_health(

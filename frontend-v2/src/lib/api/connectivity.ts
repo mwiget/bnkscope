@@ -13,7 +13,6 @@ import {
   type EventSourceMessage,
 } from '@microsoft/fetch-event-source';
 import { apiClient } from './client';
-import { STORAGE_KEYS } from '../storage-keys';
 
 export type ReachabilityStateValue = 'unknown' | 'reachable' | 'unreachable';
 
@@ -85,7 +84,6 @@ export function watchConnectivity({
         // Keep the connection alive when the tab is hidden — the whole point
         // is the user comes back to a screen that's already up to date.
         openWhenHidden: true,
-        headers: authHeader(),
         onmessage(ev: EventSourceMessage) {
           if (!ev.data) return;
           try {
@@ -106,9 +104,4 @@ export function watchConnectivity({
 
   void start();
   return () => controller.abort();
-}
-
-function authHeader(): Record<string, string> {
-  const token = localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
-  return token ? { Authorization: `Bearer ${token}` } : {};
 }

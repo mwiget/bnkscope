@@ -47,11 +47,11 @@ if [[ -z "${ISSUE_ID}" || -z "${TITLE}" ]]; then
 fi
 
 # Canonical repo URL for ADR links — derived from this checkout's origin so
-# forks and internal mirrors produce correct links. Override with BNKFORGE_REPO_URL.
-REPO_URL="${BNKFORGE_REPO_URL:-$(git remote get-url origin 2>/dev/null || true)}"
+# forks and internal mirrors produce correct links. Override with BNKSCOPE_REPO_URL.
+REPO_URL="${BNKSCOPE_REPO_URL:-$(git remote get-url origin 2>/dev/null || true)}"
 REPO_URL="${REPO_URL%.git}"
 REPO_URL="${REPO_URL/git@github.com:/https://github.com/}"
-REPO_URL="${REPO_URL:-https://github.com/f5devcentral/bnk-forge}"
+REPO_URL="${REPO_URL:-https://github.com/mwiget/bnkscope}"
 
 # Sanitize title to lowercase slug
 SLUG=$(echo "${TITLE}" | tr '[:upper:]' '[:lower:]' | tr ' _' '-' | sed 's/[^a-z0-9-]//g')

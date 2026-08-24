@@ -22,13 +22,18 @@ describe('Header', () => {
   it('renders page title based on current route', () => {
     render(<Header />);
 
-    expect(screen.getByText('Command Center')).toBeInTheDocument();
+    expect(screen.getByText('Overview')).toBeInTheDocument();
   });
 
-  it('renders breadcrumb for current section', () => {
+  it('renders no breadcrumb trail', () => {
+    // Phase 6 dropped it: the trail named the bnk-forge section a page belonged
+    // to (Build / Operate / Configure), and with four flat lenses there is no
+    // hierarchy left to describe.
     render(<Header />);
 
-    expect(screen.getByText('Observe')).toBeInTheDocument();
+    for (const section of ['Observe', 'Build', 'Operate', 'Configure', 'Home']) {
+      expect(screen.queryByText(section)).not.toBeInTheDocument();
+    }
   });
 
   it('renders search button with keyboard shortcut', () => {

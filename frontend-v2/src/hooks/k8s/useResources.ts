@@ -4,13 +4,7 @@ import { notify } from '@/lib/notify';
 import { queryKeys } from '@/lib/queryKeys';
 import type { ParseApiErrorContext } from '@/lib/error-handler';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
-import type { HugePagesDeployRequest, NodeReadinessProbeRequest } from '@/types';
-import type { components } from '@/types/api-generated';
-
-type ProxyTranslateRequest = components['schemas']['ProxyTranslateRequest'];
-type CisTranslateRequest = components['schemas']['CisTranslateRequest'];
-export type ProxyTranslateResponse = components['schemas']['ProxyTranslateResponse'];
-export type ProxyTranslateUnmapped = components['schemas']['ProxyTranslateUnmapped'];
+import type { HugePagesDeployRequest } from '@/types';
 
 // ========================================================================
 // Resource Management (Phase 5)
@@ -186,19 +180,6 @@ export function useClusterScanResult(clusterId: number | null) {
 // Adaptive Module Selection
 // ========================================================================
 
-export function useAdaptiveModulePlan() {
-  const queryClient = useQueryClient();
-
-  return useAppMutation({
-    mutationFn: ({ clusterId, templateSlug, modulePaths, sizingProfile }: { clusterId: number; templateSlug?: string; modulePaths?: string[]; sizingProfile?: string }) =>
-      api.getAdaptiveModulePlan(clusterId, templateSlug, modulePaths, sizingProfile),
-    onSuccess: (_data, { clusterId, templateSlug }) => {
-      queryClient.setQueryData(['k8s', 'clusters', clusterId, 'adaptive-modules', templateSlug || 'default'], _data);
-      notify.success('Deployment plan generated', undefined, { category: 'cluster' });
-    },
-  });
-}
-
 // ========================================================================
 // Recommendation Actions
 // ========================================================================
@@ -226,32 +207,6 @@ export function useDeployHugePages() {
 // Node Readiness Probe (issue #387 part A — detection only)
 // ========================================================================
 
-/**
- * On-demand, privileged CNI-plugin + core_pattern probe. NOT part of the
- * cluster scan cache — always dispatches a fresh Job (the whole point is to
- * inspect current host state).
- */
-export function useProbeNodeReadiness() {
-  return useAppMutation({
-    mutationFn: ({
-      clusterId,
-      payload,
-    }: {
-      clusterId: number;
-      payload?: NodeReadinessProbeRequest;
-    }) => api.probeNodeReadiness(clusterId, payload),
-    onSuccess: (data) => {
-      if (data.all_ready) {
-        notify.success('All nodes are BNK-ready', undefined, { category: 'cluster' });
-      } else {
-        notify.warning('Some nodes are not BNK-ready — see per-node detail', undefined, {
-          category: 'cluster',
-        });
-      }
-    },
-  });
-}
-
 // ========================================================================
 // Proxy Translation (D-021 P2)
 // ========================================================================
@@ -262,23 +217,6 @@ export function useProbeNodeReadiness() {
  * Read-only — the endpoint performs LIST/GET only on the cluster. The
  * returned YAML is for user inspection/copy; no cluster apply occurs.
  */
-export function useTranslateProxy() {
-  return useAppMutation({
-    mutationFn: ({
-      clusterId,
-      payload,
-    }: {
-      clusterId: number;
-      payload: ProxyTranslateRequest;
-    }) => api.translateProxy(clusterId, payload),
-    // No success notification — the caller shows the manifest inline
-  });
-}
-
-// ========================================================================
-// CIS Translation (D-023 P3)
-// ========================================================================
-
 /**
  * Preview BNK Gateway API equivalent of CIS VirtualServer/TransportServer CRs.
  *
@@ -286,15 +224,3 @@ export function useTranslateProxy() {
  * CIS translator.  Policy refs route to unmapped[] (escalation: BNK security
  * CRD kind unverified).  No cluster mutations.
  */
-export function useTranslateCis() {
-  return useAppMutation({
-    mutationFn: ({
-      clusterId,
-      payload,
-    }: {
-      clusterId: number;
-      payload: CisTranslateRequest;
-    }) => api.translateCis(clusterId, payload),
-    // No success notification — the caller shows the manifest inline
-  });
-}

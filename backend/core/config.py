@@ -8,7 +8,6 @@ This file is for infrastructure/bootstrap settings only.
 """
 import logging
 import os
-import secrets
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -68,59 +67,53 @@ class Settings(BaseSettings):
     """Application settings with validation"""
 
     # Application
-    APP_NAME: str = "bnk-forge"
+    APP_NAME: str = "bnkscope"
     VERSION: str = _read_version_file()
     ENVIRONMENT: str = "development"  # development, staging, production
 
-    # Security - CORS
-    # Default is wildcard for easier local/container dev.
-    # In production, set ALLOWED_ORIGINS explicitly to trusted domains.
-    ALLOWED_ORIGINS: str = "*"
+    # Security - CORS.
+    #
+    # Empty by default, and that is the correct value for the shipped product:
+    # the browser never talks to this API cross-origin. The UI uses relative
+    # paths (`lib/api/client.ts` has no baseURL) and nginx proxies `/api/` to
+    # here, so every request the app makes is same-origin and CORS never
+    # applies to it.
+    #
+    # What CORS *would* do is let any other page the operator has open talk to
+    # this API — which has no authentication, and serves an archive of every
+    # kubeconfig and cloud credential plus the key that decrypts them
+    # (`POST /api/system/backup`). The bind address is the access control, and
+    # a wildcard here hands it to every site in the browser.
+    #
+    # Set it only to run a dev server against a container backend, e.g.
+    # ALLOWED_ORIGINS=http://localhost:5173 for `vite dev`.
+    ALLOWED_ORIGINS: str = ""
 
     @property
     def cors_origins(self) -> list[str]:
-        """Parse ALLOWED_ORIGINS into list"""
-        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
+        """Parse ALLOWED_ORIGINS into a list, dropping blanks.
 
-    # API Configuration
-    API_HOST: str = "0.0.0.0"
+        An empty list means no CORS middleware at all — see `main.py`. That is
+        not the same as `["*"]`, which allows everyone.
+        """
+        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+
+    # API Configuration.
+    # bnkscope has no authentication (Phase 3) — it is a local single-user
+    # tool and the bind address IS the access control. See backend/Dockerfile.
+    API_HOST: str = "127.0.0.1"
     API_PORT: int = 8000
 
-    # Database
-    DATABASE_URL: str = "postgresql://bnkforge:bnkforge_dev_password@postgres:5432/bnkforge"
+    # Database. SQLite in a single file under the state volume — bnkscope is a
+    # single-process, single-user tool (Phase 4), so Postgres bought nothing but
+    # a second container to run. Override for a different path or engine.
+    DATABASE_URL: str = "sqlite:////app/data/bnkscope.db"
 
     # Paths
-    LOGS_DIR: str = "/tmp/bnk-forge-logs"
+    LOGS_DIR: str = "/tmp/bnkscope-logs"
 
-    # Authentication
-    REQUIRE_AUTH: bool = True  # JWT auth enforced on all API routes
-    JWT_SECRET_KEY: str | None = None
+    # Encryption key for kubeconfigs and cloud credentials at rest.
     ENCRYPTION_KEY: str | None = None
-
-    # Seed credentials — distinct vars so admin rotation never affects MCP
-    DEFAULT_ADMIN_PASSWORD: str = "changeme"
-    MCP_SERVICE_USERNAME: str = "mcp"
-    MCP_SERVICE_PASSWORD: str = "mcp-service-changeme"
-
-    # Benchmark agent auth flag.
-    # When False (default): register/ingest/WS are open (preserves the documented curl flow).
-    # When True: register + ingest require a valid bearer token; WS validates ?token= and
-    # checks the agent_id claim matches the path. The built-in forge-agent always sends a
-    # token so flipping this flag on is a no-op for it.
-    BENCHMARK_AGENT_AUTH_REQUIRED: bool = False
-
-    # External URL that remote benchmark agents use to reach Forge.
-    # Must be set before SSH-provisioning a managed agent host.
-    # Example: https://forge.example.com  (no trailing slash)
-    # The provisioner writes this as FORGE_URL in the agent's EnvironmentFile.
-    FORGE_EXTERNAL_URL: str = ""
-
-    # Redis
-    REDIS_URL: str | None = None
-
-    # Celery
-    CELERY_BROKER_URL: str | None = None
-    CELERY_RESULT_BACKEND: str | None = None
 
     # LLM gateway observability — in-cluster Loki that carries the
     # per-request llm-gateway log stream. Queries are proxied through the
@@ -130,16 +123,6 @@ class Settings(BaseSettings):
     LOKI_PORT: int = 3100
     LOKI_SCHEME: Literal["http", "https"] = "http"
 
-    # Discovery — two tiers because each probe that goes via jumphost
-    # multiplies the session load on that single jumphost. Direct probes
-    # (no jumphost) parallelise much higher.
-    DISCOVERY_MAX_PARALLEL_DIRECT: int = 100
-    DISCOVERY_MAX_PARALLEL_VIA_JUMPHOST: int = 10
-    # Back-compat / kill-switch. When set, overrides both of the above.
-    DISCOVERY_MAX_PARALLEL: int | None = None
-
-    # SEC-006/BE-007: Track whether keys were explicitly provided vs auto-generated
-    _jwt_key_auto_generated: bool = False
     _encryption_key_auto_generated: bool = False
 
     class Config:
@@ -148,16 +131,6 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-
-        # BE-007: Handle JWT_SECRET_KEY — persist to file so restarts reuse the same key
-        if self.JWT_SECRET_KEY is None:
-            key, auto = _persist_or_load_key("jwt_secret.key", lambda: secrets.token_hex(32))
-            self.JWT_SECRET_KEY = key
-            self._jwt_key_auto_generated = auto
-            if self.ENVIRONMENT == "development":
-                logger.info("Using auto-generated JWT_SECRET_KEY (persisted to /app/keys/)")
-        else:
-            self._jwt_key_auto_generated = False
 
         # BE-007: Handle ENCRYPTION_KEY — persist to file so encrypted data survives restarts
         # NOTE: ENCRYPTION_KEY must be a valid Fernet key (44-byte base64-encoded)
@@ -183,24 +156,17 @@ class Settings(BaseSettings):
         issues = []
 
         # SEC-006: Auto-generated keys are not acceptable in production
-        if self._jwt_key_auto_generated:
-            issues.append(
-                "JWT_SECRET_KEY was not explicitly set — set it as an environment variable"
-            )
-
         if self._encryption_key_auto_generated:
             issues.append(
                 "ENCRYPTION_KEY was not explicitly set — set it as an environment variable"
             )
 
+        # A wildcard is refused outright at startup (see main.py); this keeps
+        # the production checklist honest about why.
         if "*" in self.ALLOWED_ORIGINS:
             issues.append(
-                "ALLOWED_ORIGINS contains '*' (wildcard) — set specific origins"
-            )
-
-        if "localhost" in self.ALLOWED_ORIGINS and self.ENVIRONMENT == "production":
-            issues.append(
-                "ALLOWED_ORIGINS contains 'localhost' — use your actual domain/IP"
+                "ALLOWED_ORIGINS contains '*' (wildcard) — this API has no "
+                "authentication; name the origins or leave it empty"
             )
 
         if issues:
@@ -211,7 +177,6 @@ class Settings(BaseSettings):
                 logger.error(f"  ✗ {issue}")
             logger.error("")
             logger.error("To fix: set these as environment variables in docker-compose.yml.")
-            logger.error("  JWT_SECRET_KEY=$(python3 -c \"import secrets; print(secrets.token_hex(32))\")")
             logger.error("  ENCRYPTION_KEY=$(python3 -c \"import secrets; print(secrets.token_hex(16))\")")
             logger.error("See: docs/DEPLOYMENT.md")
             logger.error("=" * 60)

@@ -109,11 +109,13 @@ describe('useRouteAnnouncer', () => {
     expect(region!.className).toBe('sr-only');
   });
 
-  it('announces known route titles', async () => {
+  it('announces a route by the same name the sidebar shows', async () => {
+    // The title map is derived from NAV_SHORTCUTS, so what a screen reader
+    // hears is what a sighted user reads -- 'Clusters', not 'Kubernetes'.
     vi.useFakeTimers();
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
-      React.createElement(MemoryRouter, { initialEntries: ['/projects'] }, children);
+      React.createElement(MemoryRouter, { initialEntries: ['/kubernetes'] }, children);
 
     renderHook(() => useRouteAnnouncer(), { wrapper });
 
@@ -122,16 +124,20 @@ describe('useRouteAnnouncer', () => {
     });
 
     const region = document.getElementById('route-announcer');
-    expect(region!.textContent).toBe('Navigated to Projects');
+    expect(region!.textContent).toBe('Navigated to Clusters');
 
     vi.useRealTimers();
   });
 
-  it('announces dynamic project detail routes', async () => {
+  it('announces the nested route that has no nav entry of its own', async () => {
     vi.useFakeTimers();
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
-      React.createElement(MemoryRouter, { initialEntries: ['/projects/42'] }, children);
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ['/observability/ai-gateway/logs'] },
+        children,
+      );
 
     renderHook(() => useRouteAnnouncer(), { wrapper });
 
@@ -140,7 +146,7 @@ describe('useRouteAnnouncer', () => {
     });
 
     const region = document.getElementById('route-announcer');
-    expect(region!.textContent).toBe('Navigated to Project Detail');
+    expect(region!.textContent).toBe('Navigated to AI Gateway Logs');
 
     vi.useRealTimers();
   });
@@ -207,7 +213,7 @@ describe('useScrollToTop', () => {
     document.body.appendChild(mainEl);
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
-      React.createElement(MemoryRouter, { initialEntries: ['/projects'] }, children);
+      React.createElement(MemoryRouter, { initialEntries: ['/kubernetes'] }, children);
 
     renderHook(() => useScrollToTop(), { wrapper });
 

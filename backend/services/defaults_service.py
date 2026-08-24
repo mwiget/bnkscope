@@ -18,11 +18,30 @@ from models import ApplicationSetting
 
 logger = logging.getLogger(__name__)
 
-# Canonical upstream repository. Forks and internal mirrors (e.g. a GitLab
-# mirror behind a corporate network) override this with BNKFORGE_REPO_URL so
-# builds and version checks point at their own remote. The DB setting
-# `system.update_repo_url` overrides both at runtime.
-DEFAULT_REPO_URL = os.environ.get("BNKFORGE_REPO_URL", "https://github.com/f5devcentral/bnk-forge")
+# Canonical upstream repository — where the update check looks for a newer
+# VERSION. It used to point at f5devcentral/bnk-forge, so "an update is
+# available" was answered by a different product's releases, one this tool
+# shares no version line with.
+#
+# Forks and internal mirrors (e.g. a GitLab mirror behind a corporate network)
+# override this with BNKSCOPE_REPO_URL so builds and version checks point at
+# their own remote. The DB setting `system.update_repo_url` overrides both at
+# runtime.
+DEFAULT_REPO_URL = os.environ.get(
+    "BNKSCOPE_REPO_URL", "https://github.com/mwiget/bnkscope"
+)
+
+#: Values that were once the default and are now wrong, keyed by setting. A
+#: default is seeded once, so changing it here does nothing to a database that
+#: already has a row — an install created before the fork would go on asking
+#: bnk-forge whether bnkscope has an update, and be told yes, forever.
+#: Rewritten on startup unless the operator has set something of their own.
+SUPERSEDED_VALUES: dict[str, tuple[str, ...]] = {
+    "system.update_repo_url": (
+        "https://github.com/f5devcentral/bnk-forge",
+        "https://github.com/f5devcentral/bnk-forge.git",
+    ),
+}
 
 # ============================================================================
 # Default Definitions
@@ -32,63 +51,6 @@ DEFAULT_REPO_URL = os.environ.get("BNKFORGE_REPO_URL", "https://github.com/f5dev
 # Users can change them via System > Defaults in the UI.
 
 SYSTEM_DEFAULTS = {
-    # Module Library
-    "module_library.git_url": {
-        "value": "https://github.com/JLCode-tech/bnk-forge-modules.git",
-        "value_type": "string",
-        "description": "Git repository URL for module library",
-        "category": "module_library",
-    },
-    "module_library.git_ref": {
-        "value": "release/2.2",
-        "value_type": "string",
-        "description": "Git branch or tag for module library",
-        "category": "module_library",
-    },
-    "module_library.git_token": {
-        "value": "",  # Optional - only for private repos
-        "value_type": "string",
-        "description": "Personal Access Token for private repositories",
-        "category": "module_library",
-        "is_encrypted": True,
-        "optional": True,
-    },
-
-    # Blueprint Catalog
-    "blueprint_library.git_url": {
-        "value": "",
-        "value_type": "string",
-        "description": "Optional Git repository URL for default blueprint catalog source",
-        "category": "blueprint_library",
-        "optional": True,
-    },
-    "blueprint_library.git_ref": {
-        "value": "main",
-        "value_type": "string",
-        "description": "Git branch or tag for default blueprint catalog source",
-        "category": "blueprint_library",
-        "optional": True,
-    },
-
-    # BNK Defaults
-    "bnk.far_pull_secret_default": {
-        "value": "",
-        "value_type": "string",
-        "description": "Optional global FAR pull secret (base64 Docker config JSON) used when project/stack cne_pull_secret is not set",
-        "category": "bnk",
-        "is_encrypted": True,
-        "optional": True,
-    },
-
-    # Container Supply Chain
-    "container.registry_host_allowlist": {
-        "value": "ghcr.io,quay.io,docker.io,registry.k8s.io",
-        "value_type": "string",
-        "description": "Comma-separated allowlist of registry hosts permitted in artifact manifests (bnkforge.artifact.json)",
-        "category": "container",
-        "optional": True,
-    },
-
     # System Update Source
     "system.update_repo_url": {
         "value": DEFAULT_REPO_URL,
@@ -98,65 +60,12 @@ SYSTEM_DEFAULTS = {
         "optional": True,
     },
 
-    # Project Defaults
-    "project.default_type": {
-        "value": "cloud-aws",
-        "value_type": "string",
-        "description": "Default project type for new projects (cloud-aws, cloud-azure, cloud-gcp, cloud-ibm, kubernetes)",
-        "category": "project",
-        "optional": True,
-    },
-
     # Cloud Provider Default Regions
     "cloud.aws.default_region": {
         "value": "us-east-1",
         "value_type": "string",
-        "description": "Default AWS region for new projects and templates",
+        "description": "Fallback AWS region when a cluster and its stored credentials name none",
         "category": "cloud",
-    },
-    "cloud.azure.default_region": {
-        "value": "eastus",
-        "value_type": "string",
-        "description": "Default Azure region for new projects and templates",
-        "category": "cloud",
-    },
-    "cloud.gcp.default_region": {
-        "value": "us-central1",
-        "value_type": "string",
-        "description": "Default GCP region for new projects and templates",
-        "category": "cloud",
-    },
-    "cloud.ibm.default_region": {
-        "value": "us-south",
-        "value_type": "string",
-        "description": "Default IBM Cloud region for new projects and templates",
-        "category": "cloud",
-    },
-
-    # OpenTofu Timeouts (seconds)
-    "opentofu.timeout.init": {
-        "value": "300",
-        "value_type": "int",
-        "description": "Timeout for tofu init command (seconds)",
-        "category": "opentofu",
-    },
-    "opentofu.timeout.plan": {
-        "value": "600",
-        "value_type": "int",
-        "description": "Timeout for tofu plan command (seconds)",
-        "category": "opentofu",
-    },
-    "opentofu.timeout.apply": {
-        "value": "1800",
-        "value_type": "int",
-        "description": "Timeout for tofu apply command (seconds)",
-        "category": "opentofu",
-    },
-    "opentofu.timeout.destroy": {
-        "value": "1800",
-        "value_type": "int",
-        "description": "Timeout for tofu destroy command (seconds)",
-        "category": "opentofu",
     },
 
     # Execution Settings
@@ -173,7 +82,6 @@ SYSTEM_DEFAULTS = {
         "category": "execution",
     },
 }
-
 
 def get_default(db: Session, key: str) -> Any:
     """
@@ -208,7 +116,6 @@ def get_default(db: Session, key: str) -> Any:
 
     return _convert_value(stored_value, value_type)
 
-
 def _convert_value(value: str, value_type: str) -> Any:
     """Convert string value to appropriate Python type."""
     if not value:
@@ -223,7 +130,6 @@ def _convert_value(value: str, value_type: str) -> Any:
         import json
         return json.loads(value)
     return value
-
 
 def get_all_defaults(db: Session) -> dict[str, Any]:
     """
@@ -273,7 +179,6 @@ def get_all_defaults(db: Session) -> dict[str, Any]:
         }
 
     return result
-
 
 def set_default(db: Session, key: str, value: Any) -> bool:
     """
@@ -325,7 +230,6 @@ def set_default(db: Session, key: str, value: Any) -> bool:
     db.flush()
     return True
 
-
 def set_defaults_batch(db: Session, updates: dict[str, Any]) -> dict[str, bool]:
     """
     Set multiple defaults at once.
@@ -342,7 +246,6 @@ def set_defaults_batch(db: Session, updates: dict[str, Any]) -> dict[str, bool]:
         results[key] = set_default(db, key, value)
     return results
 
-
 def seed_defaults(db: Session) -> int:
     """
     Seed default settings into database on first run.
@@ -357,6 +260,7 @@ def seed_defaults(db: Session) -> int:
         Number of settings seeded
     """
     seeded = 0
+    corrected = 0
 
     for key, definition in SYSTEM_DEFAULTS.items():
         existing = db.query(ApplicationSetting).filter(
@@ -375,14 +279,27 @@ def seed_defaults(db: Session) -> int:
             db.add(setting)
             seeded += 1
             logger.debug(f"Seeded default: {key}")
+        elif existing.value in SUPERSEDED_VALUES.get(key, ()):
+            # Not a user's choice — a stale default from before the fork.
+            logger.info(
+                "Replacing superseded default for %s: %s -> %s",
+                key,
+                existing.value,
+                definition["value"],
+            )
+            existing.value = definition["value"]
+            existing.description = definition["description"]
+            corrected += 1
 
-    if seeded > 0:
+    if seeded or corrected:
         # ENG-006: Startup seed manages its own transaction
         db.commit()
-        logger.info(f"Seeded {seeded} system defaults")
+        if seeded:
+            logger.info(f"Seeded {seeded} system defaults")
+        if corrected:
+            logger.info(f"Corrected {corrected} superseded default(s)")
 
     return seeded
-
 
 def check_required_configured(db: Session) -> dict[str, Any]:
     """

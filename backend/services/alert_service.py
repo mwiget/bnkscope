@@ -2,7 +2,7 @@
 Alert dispatch service for BNK-Forge.
 
 Handles sending alerts to configured channels (webhook, Slack, MS Teams)
-when health changes, drift is detected, or deployments complete.
+when a cluster's health severity changes.
 
 Usage:
     from services.alert_service import fire_alert
@@ -13,7 +13,6 @@ Usage:
         severity="critical",
         title="TMM pods unhealthy",
         message="3 of 7 TMM pods are not ready on cluster SG-AI-Lab",
-        project_id=1,
         cluster_id=2,
         extra={"component": "tmm", "healthy": 4, "total": 7},
     )
@@ -31,13 +30,13 @@ from models.enums import AlertStatus
 
 logger = logging.getLogger(__name__)
 
-# Valid event types
+# Valid event types.
+#
+# Only health_change is ever fired (jobs/health_monitor). The deploy_* trio and
+# drift_detected belonged to the provisioning pipeline; keeping them here meant
+# the settings UI offered channel filters that could never match.
 EVENT_TYPES = {
     "health_change",
-    "drift_detected",
-    "deploy_success",
-    "deploy_failed",
-    "deploy_started",
 }
 
 # Severity levels
@@ -50,7 +49,6 @@ def fire_alert(
     severity: str,
     title: str,
     message: str = "",
-    project_id: int | None = None,
     cluster_id: int | None = None,
     extra: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
@@ -71,9 +69,6 @@ def fire_alert(
         if channel.event_types and event_type not in channel.event_types:
             continue
 
-        # Check project filter
-        if channel.project_ids and project_id and project_id not in channel.project_ids:
-            continue
 
         # Check cluster filter
         if channel.cluster_ids and cluster_id and cluster_id not in channel.cluster_ids:
@@ -90,7 +85,6 @@ def fire_alert(
                     severity=severity,
                     title=title,
                     message=message,
-                    project_id=project_id,
                     cluster_id=cluster_id,
                     status=AlertStatus.RATE_LIMITED,
                 )
@@ -99,7 +93,7 @@ def fire_alert(
                 continue
 
         # Build payload
-        payload = _build_payload(channel, event_type, severity, title, message, project_id, cluster_id, extra)
+        payload = _build_payload(channel, event_type, severity, title, message, cluster_id, extra)
 
         # Send
         result = _dispatch_to_channel(channel, payload)
@@ -111,7 +105,6 @@ def fire_alert(
             severity=severity,
             title=title,
             message=message,
-            project_id=project_id,
             cluster_id=cluster_id,
             payload=payload,
             status=AlertStatus.SENT if result["success"] else AlertStatus.FAILED,
@@ -155,7 +148,6 @@ def _build_payload(
     severity: str,
     title: str,
     message: str,
-    project_id: int | None,
     cluster_id: int | None,
     extra: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -176,7 +168,6 @@ def _build_payload(
             "title": title,
             "message": message,
             "timestamp": timestamp,
-            "project_id": project_id,
             "cluster_id": cluster_id,
             "data": extra or {},
         }
@@ -311,7 +302,6 @@ def test_channel(db: Session, channel_id: int) -> dict[str, Any]:
         severity="info",
         title="BNK-Forge Test Alert",
         message=f"This is a test alert from BNK-Forge sent to channel '{channel.name}'. If you see this, the channel is configured correctly.",
-        project_id=None,
         cluster_id=None,
         extra={"test": True, "channel_type": channel.channel_type},
     )

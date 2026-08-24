@@ -19,7 +19,7 @@ from services.alert_service import test_channel as send_test_channel
 
 def _make_channel(db, *, name="test-channel", channel_type="webhook",
                   enabled=True, url="https://hooks.example.com/alert",
-                  event_types=None, project_ids=None, cluster_ids=None,
+                  event_types=None, cluster_ids=None,
                   min_interval_seconds=0, last_fired_at=None, headers=None,
                   **kwargs):
     """Create an AlertChannel directly in the DB."""
@@ -29,7 +29,6 @@ def _make_channel(db, *, name="test-channel", channel_type="webhook",
         enabled=enabled,
         url=url,
         event_types=event_types or [],
-        project_ids=project_ids or [],
         cluster_ids=cluster_ids or [],
         min_interval_seconds=min_interval_seconds,
         last_fired_at=last_fired_at,
@@ -108,14 +107,6 @@ class TestFireAlertChannelMatching:
             results = fire_alert(db, "drift_detected", "warning", "Drift", "msg")
         assert len(results) == 1
         assert results[0]["status"] == "sent"
-
-    def test_project_filter_excludes_non_matching(self, db):
-        _make_channel(db, project_ids=[10, 20])
-        with _mock_httpx_success():
-            results = fire_alert(
-                db, "health_change", "critical", "Alert", "msg", project_id=99
-            )
-        assert results == []
 
     def test_cluster_filter_excludes_non_matching(self, db):
         _make_channel(db, cluster_ids=[1, 2])

@@ -393,7 +393,7 @@ function SetupCertManagerFlow({ clusterId, setupData }: SetupFlowProps) {
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-primary mt-0.5">4.</span>
-                Create a client certificate for BNK-Forge to authenticate with the CWC API
+                Create a client certificate for bnkscope to authenticate with the CWC API
               </li>
             </ul>
           </div>

@@ -11,8 +11,10 @@ import userEvent from '@testing-library/user-event';
 import { ResourceCreateDialog } from '../ResourceCreateDialog';
 
 // Mock Monaco editor — same pattern as ResourceEditDialog and YamlEditor tests
-vi.mock('@monaco-editor/react', () => ({
-  Editor: ({ value, onChange }: { value: string; onChange?: (v: string) => void }) => (
+// Monaco itself is behind a dynamic import now (Phase 6 took it out of the
+// initial payload), so the seam to stub is the wrapper, not the library.
+vi.mock('../MonacoEditor', () => ({
+  MonacoEditor: ({ value, onChange }: { value: string; onChange?: (v: string) => void }) => (
     <textarea
       data-testid="mock-editor"
       value={value}
@@ -106,6 +108,43 @@ describe('ResourceCreateDialog', () => {
   });
 
   // ─── YAML Templates ────────────────────────────────────────────────
+
+  describe('f5spkegress template shape (#105)', () => {
+    // The topology / egress views read snatType / egressSnatpool /
+    // pseudoCNIConfig (backend _build_egress). The template used to emit the
+    // old snatPoolRef / routes shape, so a resource created here rendered
+    // blank. Parse the emitted YAML -- with the REAL js-yaml, since this file
+    // mocks it -- and assert the fields the backend consumes.
+    async function realParse(text: string): Promise<Record<string, unknown>> {
+      const actual = await vi.importActual<typeof import('js-yaml')>('js-yaml');
+      return actual.load(text) as Record<string, unknown>;
+    }
+
+    it('emits the current shape that the egress views read', async () => {
+      render(<ResourceCreateDialog {...defaultProps} resourceType="f5spkegress" namespace="dyn" />);
+      const doc = await realParse(getEditorValue());
+      const spec = doc.spec as Record<string, unknown>;
+
+      expect(doc.kind).toBe('F5SPKEgress');
+      // New shape present ...
+      expect(spec.snatType).toBe('SRC_TRANS_SNATPOOL');
+      expect(spec.egressSnatpool).toBe('my-snatpool');
+      const cni = spec.pseudoCNIConfig as Record<string, unknown>;
+      expect(cni).toBeTruthy();
+      expect(cni.namespaces).toEqual(['dyn']);
+      expect((cni.vxlan as Record<string, unknown>).tmmInterfaceName).toBeTruthy();
+      // ... and the stale shape gone.
+      expect(spec.snatPoolRef).toBeUndefined();
+      expect(spec.routes).toBeUndefined();
+    });
+
+    it('namespace substitution reaches pseudoCNIConfig.namespaces', async () => {
+      render(<ResourceCreateDialog {...defaultProps} resourceType="f5spkegress" namespace="dynamo-system" />);
+      const doc = await realParse(getEditorValue());
+      const spec = doc.spec as { pseudoCNIConfig: { namespaces: string[] } };
+      expect(spec.pseudoCNIConfig.namespaces).toEqual(['dynamo-system']);
+    });
+  });
 
   describe('YAML templates', () => {
     it('generates pod template by default', () => {

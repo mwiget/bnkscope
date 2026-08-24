@@ -25,6 +25,9 @@ interface F5BNKSidebarProps {
   onSelectResourceType: (type: string) => void;
   /** Discovery-merged category list; falls back to static bnkResourceCategories. */
   categories?: BnkCategory[];
+  /** Below `lg` the tree is a drawer; these drive it. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function F5BNKSidebar({
@@ -32,6 +35,8 @@ export function F5BNKSidebar({
   selectedResourceType,
   onSelectResourceType,
   categories,
+  open,
+  onOpenChange,
 }: F5BNKSidebarProps) {
   const resolvedCategories = categories ?? bnkResourceCategories;
 
@@ -52,6 +57,8 @@ export function F5BNKSidebar({
 
   return (
     <ResourceCategorySidebar
+      open={open}
+      onOpenChange={onOpenChange}
       aria-label="F5 BNK resources"
       hideGroupHeaders
       groups={groups}

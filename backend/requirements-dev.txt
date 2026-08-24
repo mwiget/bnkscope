@@ -21,6 +21,5 @@ sqlalchemy[mypy]>=2.0      # sqlalchemy.ext.mypy.plugin
 # Type stubs for third-party packages
 types-PyYAML>=6.0
 types-paramiko>=3.0
-types-redis>=4.0
 types-requests>=2.31
 boto3-stubs[essential]>=1.35

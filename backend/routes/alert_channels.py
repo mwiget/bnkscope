@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from core.errors import BadRequestError, NotFoundError
 from database import get_db
 from models import AlertChannel, AlertHistory
-from routes.auth import require_operator, require_viewer
 from services.alert_service import test_channel
 
 logger = logging.getLogger(__name__)
@@ -35,7 +34,6 @@ class AlertChannelCreate(BaseModel):
     email_to: list[str] | None = None
     email_from: str | None = None
     event_types: list[str] | None = Field(default_factory=list)
-    project_ids: list[int] | None = Field(default_factory=list)
     cluster_ids: list[int] | None = Field(default_factory=list)
     min_interval_seconds: int = 60
     description: str | None = None
@@ -51,7 +49,6 @@ class AlertChannelUpdate(BaseModel):
     email_to: list[str] | None = None
     email_from: str | None = None
     event_types: list[str] | None = None
-    project_ids: list[int] | None = None
     cluster_ids: list[int] | None = None
     min_interval_seconds: int | None = None
     description: str | None = None
@@ -67,7 +64,6 @@ def _serialize_channel(channel: AlertChannel) -> dict:
         "url": channel.url,
         "headers": channel.headers,
         "event_types": channel.event_types or [],
-        "project_ids": channel.project_ids or [],
         "cluster_ids": channel.cluster_ids or [],
         "min_interval_seconds": channel.min_interval_seconds,
         "description": channel.description,
@@ -86,7 +82,7 @@ def _serialize_channel(channel: AlertChannel) -> dict:
 # CRUD Endpoints
 # ============================================================
 
-@router.get("", dependencies=[Depends(require_viewer)])
+@router.get("")
 def list_alert_channels(
     enabled: bool | None = Query(None),
     channel_type: str | None = Query(None),
@@ -103,7 +99,7 @@ def list_alert_channels(
     return [_serialize_channel(c) for c in channels]
 
 
-@router.get("/{channel_id}", dependencies=[Depends(require_viewer)])
+@router.get("/{channel_id}")
 def get_alert_channel(channel_id: int, db: Session = Depends(get_db)):
     """Get a single alert channel with recent history."""
     channel = db.query(AlertChannel).filter(AlertChannel.id == channel_id).first()
@@ -132,7 +128,7 @@ def get_alert_channel(channel_id: int, db: Session = Depends(get_db)):
     return result
 
 
-@router.post("", dependencies=[Depends(require_operator)])
+@router.post("")
 def create_alert_channel(
     data: AlertChannelCreate,
     request: Request,
@@ -146,16 +142,8 @@ def create_alert_channel(
     if data.channel_type in ("webhook", "slack", "msteams") and not data.url:
         raise BadRequestError(f"URL is required for {data.channel_type} channels")
 
-    # Extract username from JWT
-    username = "system"
-    try:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            from services.auth_service import decode_token
-            payload = decode_token(auth_header.split(" ", 1)[1])
-            username = payload.get("sub", "system")
-    except Exception:
-        pass
+    # bnkscope is single-user and local; every action is attributed to "local".
+    username = "local"
 
     channel = AlertChannel(
         name=data.name,
@@ -167,7 +155,6 @@ def create_alert_channel(
         email_to=data.email_to,
         email_from=data.email_from,
         event_types=data.event_types or [],
-        project_ids=data.project_ids or [],
         cluster_ids=data.cluster_ids or [],
         min_interval_seconds=data.min_interval_seconds,
         description=data.description,
@@ -181,7 +168,7 @@ def create_alert_channel(
     return _serialize_channel(channel)
 
 
-@router.put("/{channel_id}", dependencies=[Depends(require_operator)])
+@router.put("/{channel_id}")
 def update_alert_channel(
     channel_id: int,
     data: AlertChannelUpdate,
@@ -204,7 +191,7 @@ def update_alert_channel(
     return _serialize_channel(channel)
 
 
-@router.delete("/{channel_id}", dependencies=[Depends(require_operator)])
+@router.delete("/{channel_id}")
 def delete_alert_channel(channel_id: int, db: Session = Depends(get_db)):
     """Delete an alert channel and its history."""
     channel = db.query(AlertChannel).filter(AlertChannel.id == channel_id).first()
@@ -219,7 +206,7 @@ def delete_alert_channel(channel_id: int, db: Session = Depends(get_db)):
     return {"success": True, "message": f"Alert channel '{name}' deleted"}
 
 
-@router.post("/{channel_id}/test", dependencies=[Depends(require_operator)])
+@router.post("/{channel_id}/test")
 def test_alert_channel(channel_id: int, db: Session = Depends(get_db)):
     """Send a test alert to verify channel configuration."""
     channel = db.query(AlertChannel).filter(AlertChannel.id == channel_id).first()
@@ -246,7 +233,7 @@ def test_alert_channel(channel_id: int, db: Session = Depends(get_db)):
         }
 
 
-@router.post("/{channel_id}/toggle", dependencies=[Depends(require_operator)])
+@router.post("/{channel_id}/toggle")
 def toggle_alert_channel(channel_id: int, db: Session = Depends(get_db)):
     """Toggle an alert channel enabled/disabled."""
     channel = db.query(AlertChannel).filter(AlertChannel.id == channel_id).first()
@@ -266,7 +253,7 @@ def toggle_alert_channel(channel_id: int, db: Session = Depends(get_db)):
 # Alert History Endpoints
 # ============================================================
 
-@router.get("/history/recent", dependencies=[Depends(require_viewer)])
+@router.get("/history/recent")
 def get_recent_alerts(
     limit: int = Query(20, ge=1, le=100),
     event_type: str | None = Query(None),
@@ -294,7 +281,7 @@ def get_recent_alerts(
     } for h in history]
 
 
-@router.get("/{channel_id}/history", dependencies=[Depends(require_viewer)])
+@router.get("/{channel_id}/history")
 def get_channel_history(
     channel_id: int,
     limit: int = Query(50, ge=1, le=200),
@@ -325,7 +312,6 @@ def get_channel_history(
             "severity": h.severity,
             "title": h.title,
             "message": h.message,
-            "project_id": h.project_id,
             "cluster_id": h.cluster_id,
             "status": h.status,
             "http_status_code": h.http_status_code,

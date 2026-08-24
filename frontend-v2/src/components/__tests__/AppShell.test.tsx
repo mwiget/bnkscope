@@ -8,7 +8,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { render } from '@/test/test-utils';
 import { act } from '@testing-library/react';
-import { useAuthStore } from '@/stores/authStore';
 import type { User } from '@/types';
 
 // Mock all the hooks that AppShell uses
@@ -58,9 +57,6 @@ const appShellPromise = import('@/components/layout/AppShell');
 
 describe('AppShell', () => {
   beforeEach(() => {
-    act(() => {
-      useAuthStore.getState().login('token', mockAdmin);
-    });
   });
 
   it('renders skip navigation link', async () => {
@@ -92,10 +88,11 @@ describe('AppShell', () => {
     expect(await screen.findByTestId('outlet')).toBeInTheDocument();
   }, 30_000);
 
-  it('renders BNK Forge branding in sidebar', async () => {
+  it('renders bnkscope branding in sidebar', async () => {
     const { AppShell } = await appShellPromise;
     render(<AppShell />);
 
-    expect(await screen.findByText('BNK Forge')).toBeInTheDocument();
+    // Scoped to the span: the inlined mark carries its own <title>bnkscope</title>.
+    expect(await screen.findByText('bnkscope', { selector: 'span' })).toBeInTheDocument();
   }, 30_000);
 });

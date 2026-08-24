@@ -96,14 +96,6 @@ export const DISPLAY_LIMITS = {
 } as const;
 
 /**
- * Character limits for text truncation
- */
-export const TEXT_LIMITS = {
-  /** Module description truncation - 60 characters */
-  DESCRIPTION_SHORT: 60,
-} as const;
-
-/**
  * Polling/refetch intervals for React Query (milliseconds)
  * Controls how frequently queries automatically refetch in the background
  */
@@ -130,34 +122,3 @@ export const POLL_INTERVALS = {
   LAZY: 3 * 60 * 1000,
 } as const;
 
-/**
- * Drift detection schedule intervals (seconds)
- * Controls how frequently drift checks run
- */
-export const DRIFT_SCHEDULE_INTERVALS = {
-  /** 5 minutes - Very frequent checking */
-  FIVE_MIN: '300',
-
-  /** 30 minutes - Frequent checking */
-  THIRTY_MIN: '1800',
-
-  /** 2 hours - Standard checking */
-  TWO_HOURS: '7200',
-
-  /** 12 hours - Infrequent checking */
-  TWELVE_HOURS: '43200',
-
-  /** 24 hours - Daily checking */
-  TWENTYFOUR_HOURS: '86400',
-} as const;
-
-/**
- * Human-readable labels for drift schedule intervals
- */
-export const DRIFT_SCHEDULE_LABELS: Record<string, string> = {
-  '300': '5 minutes',
-  '1800': '30 minutes',
-  '7200': '2 hours',
-  '43200': '12 hours',
-  '86400': '24 hours',
-} as const;

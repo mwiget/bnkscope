@@ -21,6 +21,13 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 #   Linux  → network_mode: host (services bind directly to host ports)
 #   macOS  → bridge networking with port mappings (docker-compose.local.yml overlay)
 #
+# Grafana's admin password is a required variable in docker-compose.yml — it
+# fails closed rather than shipping a default that is also in git. `bnkscope up`
+# generates and persists one; a bare `make` target reads that, and falls back to
+# a fresh random value so a direct compose call cannot resurrect a known
+# password by accident.
+export BNKSCOPE_GRAFANA_PASSWORD ?= $(shell cat $(HOME)/.config/bnkscope/grafana-admin-password 2>/dev/null || python3 -c 'import secrets; print(secrets.token_urlsafe(18))')
+#
 # SAFETY: Running bridge networking on Linux creates iptables rules that can
 # kill SSH connections permanently when net.bridge.bridge-nf-call-iptables = 1
 # (the default on most distros). Requires BMC/IPMI reset to recover.
@@ -42,26 +49,71 @@ endif
 # GitHub Actions sets CI=true automatically. These variables control output
 # format differences. The actual commands are identical in both contexts.
 
+# Frontend commands run one of two ways. `FRONTEND_RUN` takes a single quoted
+# command in both, so a target is written once:
+#
+#     $(FRONTEND_RUN) 'npx eslint .'
+#
+# Which way is decided by where node_modules actually is. `make` installs it
+# into the tree; `scripts/bnkscope-verify-frontend.sh` keeps it in the
+# `bnkscope-node` docker volume and mounts it over an **empty**
+# `frontend-v2/node_modules`. That empty directory satisfies a directory
+# prerequisite while providing no binaries, which is how every frontend target
+# came to fail with `eslint: not found` while the verify script passed. So the
+# test is for an installed binary, not for the directory.
+FRONTEND_NODE_IMAGE := node:20-alpine
+FRONTEND_NODE_VOLUME := bnkscope-node
+
+# Same idea for shellcheck, decided on the binary rather than the layout:
+# GitHub's runners ship it, most workstations do not, and a linter that is
+# skipped because it is missing is a linter nobody runs. Read-only, so the
+# container may stay root without leaving anything behind.
+ifeq ($(shell command -v shellcheck 2>/dev/null),)
+  SHELLCHECK := docker run --rm -v "$(CURDIR):/mnt" -w /mnt koalaman/shellcheck:stable
+else
+  SHELLCHECK := shellcheck
+endif
+
 ifdef CI
   # CI: XML artifacts for GitHub Actions upload. SUITE is set per-target below.
   PYTEST_COV_REPORT  = --cov-report=xml:coverage-$(SUITE).xml
   PYTEST_JUNIT       = --junitxml=junit-$(SUITE).xml
   BACKEND_VENV       :=
   BACKEND_VENV_ROOT  :=
-  OPERATOR_VENV      :=
   BACKEND_PREREQ     :=
-  OPERATOR_PREREQ    :=
   FRONTEND_PREREQ    :=
+  FRONTEND_RUN       := cd frontend-v2 && sh -c
+  FRONTEND_BUILD_CMD := npm run build
+  FRONTEND_COVER_CMD := npm run test:coverage
 else
   # Local: terminal output, venv activation
   PYTEST_COV_REPORT  := --cov-report=term-missing
   PYTEST_JUNIT       :=
   BACKEND_VENV       := source .venv/bin/activate &&
   BACKEND_VENV_ROOT  := source backend/.venv/bin/activate &&
-  OPERATOR_VENV      := source .venv/bin/activate &&
   BACKEND_PREREQ     := | backend/.venv/bin/activate
-  OPERATOR_PREREQ    := | bnk-operator/.venv/bin/activate
+ifeq ($(wildcard frontend-v2/node_modules/.bin/eslint),)
+  # Deps are in the docker volume (or not installed yet). `frontend-deps` puts
+  # them there; nothing is installed into the tree.
+  FRONTEND_PREREQ    := | frontend-deps
+  # NPM_CONFIG_UPDATE_NOTIFIER: npx prints an "update npm" banner on every run,
+  # and pre-push shows each suite's last three lines — without this the banner
+  # is all three of them and the test summary is what scrolls away.
+  FRONTEND_RUN       := docker run --rm -e NPM_CONFIG_UPDATE_NOTIFIER=false \
+                          -v "$(CURDIR)/frontend-v2:/app" \
+                          -v $(FRONTEND_NODE_VOLUME):/app/node_modules \
+                          -w /app $(FRONTEND_NODE_IMAGE) sh -c
+  # The container runs as root, so anything it writes into the mounted tree
+  # lands root-owned in the operator's checkout. Neither of these needs its
+  # output kept, so both write inside the container instead.
+  FRONTEND_BUILD_CMD := npx tsc && npx vite build --outDir /tmp/dist --emptyOutDir
+  FRONTEND_COVER_CMD := npx vitest run --coverage --coverage.reportsDirectory=/tmp/coverage
+else
   FRONTEND_PREREQ    := | frontend-v2/node_modules
+  FRONTEND_RUN       := cd frontend-v2 && sh -c
+  FRONTEND_BUILD_CMD := npm run build
+  FRONTEND_COVER_CMD := npm run test:coverage
+endif
 endif
 
 PYTEST_BASE = python -m pytest
@@ -70,28 +122,18 @@ PYTEST_BASE = python -m pytest
 # coverage threshold is enforced by `make coverage-backend`.
 PYTEST_COV  = --cov --cov-fail-under=0
 
-# ─── awsbnkctl CLI binary (cli-bnkctl engine) ────────────────────────────────
-# The celery worker shells out to a pinned awsbnkctl release binary that is
-# bind-mounted at ./bin/awsbnkctl (see docker-compose.yml x-worker-volumes).
-# `make fetch-awsbnkctl` downloads + checksum-verifies the pinned linux/amd64
-# release instead of requiring a hand-run `go build` on the host.
-AWSBNKCTL_VERSION ?= 0.9.0-rc1
-AWSBNKCTL_REPO    ?= JLCode-tech/awsbnkctl
-AWSBNKCTL_BIN     := bin/awsbnkctl
-AWSBNKCTL_STAMP   := bin/.awsbnkctl-$(AWSBNKCTL_VERSION).stamp
-
 .PHONY: install update status logs \
         test test-backend test-backend-unit test-backend-component test-backend-legacy test-frontend \
-        test-proxy test-operator test-db test-contracts test-e2e test-e2e-tier1 test-e2e-tier2 \
-        test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
+        test-contracts \
+        test-integration test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
         lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
-        dev-setup security-audit docker-check docker-verify docker-validate \
+        dev-setup security-audit docker-check docker-verify docker-validate frontend-deps \
+        openapi openapi-types openapi-check openapi-types-check api-docs api-docs-check \
         openapi openapi-types openapi-check openapi-types-check typecheck-backend typecheck-frontend \
-        build build-backend build-frontend build-worker build-agent build-all \
-        fetch-awsbnkctl \
+        build build-retry build-backend build-frontend build-all \
         up down restart deploy deploy-backend deploy-frontend upgrade-safe \
-        clean clean-docker check-disk setup-cleanup-cron check-migrations \
-        test-upgrade dist push-images push-customer-build buildx-setup publish-signed help
+        clean clean-docker check-disk setup-cleanup-cron ensure-host-dirs \
+        test-upgrade push-images buildx-setup publish-signed help
 
 # ─── Quick Start Commands ────────────────────────────────────────────────────
 #
@@ -110,15 +152,15 @@ install: _install-clean _install-override _install-build _install-start _install
 _install-clean:
 	@echo ""
 	@echo "========================================="
-	@echo "  BNK Forge — First-Time Installation"
+	@echo "  bnkscope — First-Time Installation"
 	@echo "========================================="
 	@echo ""
 	@echo "Stopping and removing existing containers..."
 	@docker compose down 2>/dev/null || true
 	@echo "Removing existing volumes..."
-	@docker volume ls -q | grep bnk-forge | xargs docker volume rm 2>/dev/null || echo "  No volumes to remove"
+	@docker volume ls -q | grep bnkscope | xargs docker volume rm 2>/dev/null || echo "  No volumes to remove"
 	@echo "Removing existing images..."
-	@docker images | grep bnk-forge | awk '{print $$1":"$$2}' | xargs docker rmi 2>/dev/null || echo "  No images to remove"
+	@docker images | grep bnkscope | awk '{print $$1":"$$2}' | xargs docker rmi 2>/dev/null || echo "  No images to remove"
 
 _install-override:
 	@echo ""
@@ -140,47 +182,32 @@ _install-override:
 
 _install-build:
 	@echo ""
-	@echo "Building all images (first build: ~3 min, cached: ~30s)..."
+	@echo "Building images (first build: ~3 min, cached: ~30s)..."
 	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build
 
-_install-start: ensure-artifact-network
-	@echo ""
-	@echo "Starting infrastructure (postgres, redis)..."
-	@docker compose up -d postgres redis
-	@echo "  Waiting for database..."
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do \
-	  if docker compose exec -T postgres pg_isready -U bnkforge > /dev/null 2>&1; then \
-	    echo "  ✓ Database ready"; \
-	    break; \
-	  fi; \
-	  sleep 1; \
-	done
+# The database is a SQLite file the backend creates on the data volume, and
+# the schema comes from the ORM models at startup — there is no server to wait
+# for and no migration to run. Both volumes are pre-created here only so the
+# container's non-root user owns them: Docker creates a bind-less volume as
+# root, and the backend cannot write its key file into a root-owned directory.
+_install-start: ensure-host-dirs
 	@echo ""
 	@echo "Fixing volume permissions..."
 	@PROJECT=$$(basename "$(CURDIR)"); \
-	for v in bnk-forge-data bnk-forge-keys state_data helm_cache helm_config helm_charts workspace_data; do \
+	for v in bnkscope-data bnkscope-keys; do \
 	  docker volume create \
 	    --label com.docker.compose.project=$${PROJECT} \
 	    --label com.docker.compose.volume=$${v} \
 	    "$${PROJECT}_$${v}" >/dev/null; \
 	done; \
 	docker run --rm \
-	  -v "$${PROJECT}_bnk-forge-data:/app/projects" \
-	  -v "$${PROJECT}_bnk-forge-keys:/app/keys" \
-	  -v "$${PROJECT}_state_data:/app/state" \
-	  -v "$${PROJECT}_helm_cache:/home/bnkforge/.cache/helm" \
-	  -v "$${PROJECT}_helm_config:/home/bnkforge/.config/helm" \
-	  -v "$${PROJECT}_helm_charts:/app/helm_charts" \
-	  -v "$${PROJECT}_workspace_data:/app/workspaces" \
-	  alpine:latest sh -c " \
-	    mkdir -p /app/projects /app/keys /app/state /app/helm_charts /app/workspaces \
-	      /home/bnkforge/.cache/helm /home/bnkforge/.config/helm && \
-	    chown -R 1000:1000 /app/projects /app/keys /app/state /app/helm_charts \
-	      /app/workspaces /home/bnkforge" \
+	  -v "$${PROJECT}_bnkscope-data:/app/data" \
+	  -v "$${PROJECT}_bnkscope-keys:/app/keys" \
+	  alpine:latest sh -c "chown -R 1000:1000 /app/data /app/keys" \
 	  2>/dev/null && echo "  ✓ Volume permissions configured" \
 	  || echo "  ⚠  Could not pre-configure permissions"
 	@echo ""
-	@echo "Starting all services..."
+	@echo "Starting services..."
 	@docker compose up -d
 	@echo ""
 	$(call wait-healthy,12,5)
@@ -189,35 +216,26 @@ _install-info:
 	@echo ""
 	@docker compose ps
 	@echo ""
-	@HOST_IP=$$(ip route get 1 2>/dev/null | awk '{print $$7; exit}' \
-	  || hostname -I 2>/dev/null | awk '{print $$1}' \
-	  || echo "localhost"); \
-	if [ -z "$$HOST_IP" ] || [ "$$HOST_IP" = "127.0.0.1" ]; then HOST_IP="localhost"; fi; \
-	echo "========================================="; \
-	echo "  ✅ Installation complete!"; \
-	echo ""; \
-	echo "  Version: $$(cat VERSION 2>/dev/null || echo 'unknown')"; \
-	echo ""; \
-	if [ "$$HOST_IP" = "localhost" ]; then \
-	  echo "  Open: https://localhost:8443"; \
-	else \
-	  echo "  Open: https://$$HOST_IP:8443"; \
-	  echo "        (accept the self-signed certificate warning)"; \
-	fi; \
-	echo ""; \
-	echo "  Login: admin  (initial password: DEFAULT_ADMIN_PASSWORD, default 'changeme' — change on first login)"; \
-	echo ""; \
-	echo "  Next steps:"; \
-	echo "    1. Change your password on first login"; \
-	echo "    2. Browse deployable blueprints in Build → Catalog"; \
-	echo "    3. Create your first project in Build → Projects"; \
-	echo "========================================="
+	@echo "========================================="
+	@echo "  ✅ Installation complete!"
+	@echo ""
+	@echo "  Version: $$(cat VERSION 2>/dev/null || echo 'unknown')"
+	@echo ""
+	@echo "  Open: http://localhost:8080"
+	@echo ""
+	@echo "  There is no login — bnkscope is a local tool and binds"
+	@echo "  the API to 127.0.0.1 (see docker-compose.yml)."
+	@echo ""
+	@echo "  Next steps:"
+	@echo "    1. Your kube contexts are discovered automatically"
+	@echo "    2. Add any cluster not in ~/.kube/config from Clusters → Add"
+	@echo "========================================="
 
 # Pull latest code, rebuild, and restart (non-destructive — keeps all data)
 update:
 	@echo ""
 	@echo "========================================="
-	@echo "  BNK Forge — Update"
+	@echo "  bnkscope — Update"
 	@echo "========================================="
 	@echo ""
 	@./upgrade.sh
@@ -226,7 +244,7 @@ update:
 status:
 	@echo ""
 	@echo "========================================="
-	@echo "  BNK Forge — Status"
+	@echo "  bnkscope — Status"
 	@echo "========================================="
 	@echo ""
 	@echo "Version: $$(cat VERSION 2>/dev/null || echo 'unknown')"
@@ -246,12 +264,27 @@ status:
 # Only use `make build-clean` when requirements.txt or tool versions change.
 #
 
-# Build all app images — backend API, workers, beat, frontend
+# Build both app images — backend API and frontend
 # OPT-002: Single docker compose build parallelizes independent stages via BuildKit
 build:
 	@echo ""
 	@echo "=== Building all app images (parallel) ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build backend celery-worker celery-beat frontend forge-agent
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build backend frontend
+	@echo ""
+	@echo "========================================="
+	@echo "  Build complete (cached)"
+	@echo "========================================="
+
+# Same as `build`, but retries on transient download failures. Use this for
+# from-scratch builds on DLP-managed workstations: the github.com tool
+# downloads use Docker `ADD` (see docs/adr/D-035), which has no built-in retry,
+# so a transient CDN/TLS blip aborts the whole build. BuildKit's layer cache
+# makes each retry cheap (only the failed layer re-runs). Tune with
+# RETRY_ATTEMPTS / RETRY_DELAY, e.g. `make build-retry RETRY_ATTEMPTS=5`.
+build-retry:
+	@echo ""
+	@echo "=== Building all app images (parallel, with retry) ==="
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 ./scripts/retry.sh -- docker compose build backend frontend
 	@echo ""
 	@echo "========================================="
 	@echo "  Build complete (cached)"
@@ -261,61 +294,15 @@ build:
 build-backend:
 	@echo ""
 	@echo "=== Building backend (API) ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build backend
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(COMPOSE) build backend
 	@echo "  ✓ Backend image built"
 
 # Build just the frontend image
 build-frontend:
 	@echo ""
 	@echo "=== Building frontend ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build frontend
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(COMPOSE) build frontend
 	@echo "  ✓ Frontend image built"
-
-# Fetch the pinned awsbnkctl release binary (linux/amd64) for the worker mount.
-# Idempotent: a version stamp file short-circuits re-download. Override the
-# version with `make fetch-awsbnkctl AWSBNKCTL_VERSION=x.y.z`.
-fetch-awsbnkctl: $(AWSBNKCTL_STAMP)
-
-$(AWSBNKCTL_STAMP):
-	@echo ""
-	@echo "=== Fetching awsbnkctl $(AWSBNKCTL_VERSION) (linux/amd64) ==="
-	@command -v gh >/dev/null 2>&1 || { echo "  ✗ GitHub CLI (gh) is required to download the release"; exit 1; }
-	@mkdir -p bin
-	@tmp="$$(mktemp -d)"; \
-	asset="awsbnkctl_$(AWSBNKCTL_VERSION)_linux_amd64.tar.gz"; \
-	echo "  Downloading $$asset + checksums.txt"; \
-	gh release download "v$(AWSBNKCTL_VERSION)" --repo "$(AWSBNKCTL_REPO)" \
-	  --pattern "$$asset" --pattern "checksums.txt" --dir "$$tmp" --clobber || { rm -rf "$$tmp"; exit 1; }; \
-	echo "  Verifying checksum"; \
-	( cd "$$tmp" && grep " $$asset$$" checksums.txt | shasum -a 256 -c - ) || { echo "  ✗ checksum mismatch"; rm -rf "$$tmp"; exit 1; }; \
-	echo "  Extracting awsbnkctl -> $(AWSBNKCTL_BIN)"; \
-	tar -xzf "$$tmp/$$asset" -C "$$tmp" awsbnkctl || { rm -rf "$$tmp"; exit 1; }; \
-	install -m 0755 "$$tmp/awsbnkctl" "$(AWSBNKCTL_BIN)"; \
-	rm -rf "$$tmp"
-	@rm -f bin/.awsbnkctl-*.stamp
-	@touch "$(AWSBNKCTL_STAMP)"
-	@echo "  ✓ awsbnkctl $(AWSBNKCTL_VERSION) ready at $(AWSBNKCTL_BIN)"
-
-# Build worker image (REQUIRED for any backend code change — workers run tasks/services)
-# fetch-awsbnkctl is opt-in, not a hard prerequisite: it needs `gh` authenticated against
-# AWSBNKCTL_REPO (a personal namespace today), so it must not block backend builds/deploys
-# for contributors not touching the cli-bnkctl engine. We still attempt it automatically
-# (non-fatal) so it "just works" for anyone who does have access; on failure we warn and
-# continue the worker build without the binary — the cli-bnkctl engine will fail-soft at
-# deploy time (see cli_bnkctl_module_seeder binary-presence gate) rather than blocking here.
-build-worker:
-	@$(MAKE) fetch-awsbnkctl || echo "  ⚠ Skipping awsbnkctl fetch ($(AWSBNKCTL_REPO) unavailable — install/auth 'gh' to enable the cli-bnkctl engine). Run 'make fetch-awsbnkctl' manually once you have access."
-	@echo ""
-	@echo "=== Building worker (includes CLI tools — slower) ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build celery-worker
-	@echo "  ✓ Worker image built"
-
-# Build the built-in benchmark agent image
-build-agent:
-	@echo ""
-	@echo "=== Building forge-agent (built-in benchmark agent) ==="
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build forge-agent
-	@echo "  ✓ forge-agent image built"
 
 # Build MCP server image
 build-mcp:
@@ -324,7 +311,7 @@ build-mcp:
 	BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose build mcp
 	@echo "  ✓ MCP server image built"
 
-# Build ALL images (backend API + worker + beat + frontend + proxy + mcp + agent)
+# Build ALL images (backend API + frontend + the optional MCP profile)
 build-all:
 	@echo ""
 	@echo "=== Building ALL images ==="
@@ -357,7 +344,7 @@ define wait-healthy
 	  fi; \
 	  if [ "$$i" = "$(1)" ]; then \
 	    echo "  ⚠  Backend did not become healthy within $$(( $(1) * $(2) ))s"; \
-	    echo "  Check logs: docker logs bnk-forge-backend"; \
+	    echo "  Check logs: docker logs bnkscope-backend"; \
 	  else \
 	    echo "  Waiting... ($$i/$(1))"; \
 	  fi; \
@@ -366,35 +353,9 @@ define wait-healthy
 endef
 
 # Deploy everything: build, restart, verify health
-# NOTE: No explicit service list — starts ALL services in the compose file.
-# On macOS the proxy's nginx.local.conf references upstreams by Docker DNS name
-# (e.g. "mcp"), and nginx crashes at startup if the upstream container doesn't
-# exist on the network. Starting everything avoids this.
-# The dedicated bridge network the container-image engine attaches artifact
-# steps to. It must be created explicitly: no bnk-forge service joins it (they
-# can't — under host networking a service cannot also join a bridge network),
-# and `docker compose up` does NOT create a declared network that no service
-# references. Without this, every artifact step dies with "network not found".
-ARTIFACT_NETWORK ?= bnk-forge-artifacts
-# Docker's auto-assigned pool (172.17.0.0/16+, typically landing on
-# 172.18.0.0/16) can collide with a host's VPN/management routes, cutting off
-# connectivity mid-deploy. No single hardcoded subnet is safe everywhere (a
-# fixed 10.200.0.0/24 default also collided on a field site), so the subnet
-# is resolved by scripts/artifact_network.sh: explicit ARTIFACT_NETWORK_SUBNET
-# (or "auto" to defer to Docker's default-address-pools) wins; otherwise it
-# auto-detects a free subnet from ARTIFACT_NETWORK_SUBNET_CANDIDATES against
-# the host's routes and existing docker networks. Both vars may also be set
-# in a .env file in the repo root. See issue #422.
-ARTIFACT_NETWORK_SUBNET ?=
-ARTIFACT_NETWORK_SUBNET_CANDIDATES ?=
-
-ensure-artifact-network:
-	@export ARTIFACT_NETWORK="$(ARTIFACT_NETWORK)"; \
-	if [ -n "$(ARTIFACT_NETWORK_SUBNET)" ]; then export ARTIFACT_NETWORK_SUBNET="$(ARTIFACT_NETWORK_SUBNET)"; fi; \
-	if [ -n "$(ARTIFACT_NETWORK_SUBNET_CANDIDATES)" ]; then export ARTIFACT_NETWORK_SUBNET_CANDIDATES="$(ARTIFACT_NETWORK_SUBNET_CANDIDATES)"; fi; \
-	bash scripts/artifact_network.sh ensure
-
-deploy: build ensure-artifact-network
+# NOTE: No explicit service list — starts ALL services in the compose file
+# (the mcp service is behind a profile, so it only joins when asked for).
+deploy: build ensure-host-dirs
 	@echo ""
 	@echo "=== Restarting containers ==="
 	$(COMPOSE) up -d --force-recreate
@@ -415,11 +376,11 @@ endif
 	@echo "  Recommended next step: make mcp-readiness"
 	@echo "========================================="
 
-# Deploy just backend (API + workers + beat) — most common for backend code changes
-deploy-backend: build-backend build-worker ensure-artifact-network
+# Deploy just the backend — most common for backend code changes
+deploy-backend: build-backend ensure-host-dirs
 	@echo ""
-	@echo "=== Restarting backend containers ==="
-	$(COMPOSE) up -d --force-recreate backend celery-worker celery-worker-2 celery-beat
+	@echo "=== Restarting the backend container ==="
+	$(COMPOSE) up -d --force-recreate backend
 	@echo ""
 	date
 	@echo ""
@@ -448,24 +409,39 @@ test-upgrade:
 shellcheck:
 	@echo ""
 	@echo "=== ShellCheck: linting shell scripts ==="
-	@shellcheck --severity=warning upgrade.sh scripts/*.sh
+	@$(SHELLCHECK) --severity=warning bnkscope upgrade.sh scripts/*.sh
 
 # Convenience: start/stop/restart all (platform-aware)
-up: ensure-artifact-network
-	$(COMPOSE) up -d
+# Docker creates a missing bind-mount source as a root-owned directory in the
+# user's home. The backend mounts ~/.kube, ~/.aws and ~/.config/gcloud
+# read-only (it reads the operator's own clusters and credentials from them),
+# and not everyone has all three -- so create them here, as the user, before
+# compose gets the chance to create them as root.
+ensure-host-dirs:
+	@mkdir -p "$${HOME}/.kube" "$${HOME}/.aws" "$${HOME}/.config/gcloud" "$${HOME}/.config/tmmscope"
+
+# The lifecycle targets defer to ./bnkscope rather than driving compose.
+#
+# `$(COMPOSE) up -d` looked equivalent and was not: compose interpolates
+# `${BNKSCOPE_GRAFANA_PASSWORD:?...}` on every invocation, so it failed before
+# starting anything, and it also skipped port negotiation, the UI bind, the
+# telemetry profile and the host-directory creation that the CLI does. The CLI
+# is the supported entry point; there is no second implementation of it here.
+up:
+	@./bnkscope up
 
 down:
-	$(COMPOSE) down
+	@./bnkscope down
 
 restart:
-	$(COMPOSE) restart
+	@./bnkscope down && ./bnkscope up
 
 logs:
-	$(COMPOSE) logs -f --tail 50
+	@./bnkscope logs
 
 # ─── Default: run all tests ─────────────────────────────────────────────────
 
-test: lint test-backend test-frontend test-proxy test-operator test-db
+test: lint test-backend test-frontend
 	@echo ""
 	@echo "========================================="
 	@echo "  All tests passed"
@@ -473,29 +449,17 @@ test: lint test-backend test-frontend test-proxy test-operator test-db
 
 # ─── Individual test suites ──────────────────────────────────────────────────
 
+test-backend: SUITE = backend
 test-backend: $(BACKEND_PREREQ)
 	@echo ""
 	@echo "=== Backend Tests ==="
 	@cd backend && $(BACKEND_VENV) \
-	  python -m pytest tests/ --tb=short -q
+	  $(PYTEST_BASE) tests/ --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
 test-frontend: $(FRONTEND_PREREQ)
 	@echo ""
 	@echo "=== Frontend Tests ==="
-	@cd frontend-v2 && npm test -- --run
-
-test-proxy: SUITE = proxy
-test-proxy: $(BACKEND_PREREQ)
-	@echo ""
-	@echo "=== Proxy Config Tests ==="
-	@cd backend && $(BACKEND_VENV) \
-	  $(PYTEST_BASE) tests/test_proxy_config.py --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
-
-test-operator: $(OPERATOR_PREREQ)
-	@echo ""
-	@echo "=== Operator Tests ==="
-	@cd bnk-operator && $(OPERATOR_VENV) \
-	  python -m pytest tests/ --tb=short -q
+	@$(FRONTEND_RUN) 'npx vitest run'
 
 test-mcp:
 	@echo ""
@@ -536,13 +500,6 @@ mcp-recreate:
 	@$(COMPOSE) up -d --force-recreate --no-deps mcp
 	@$(COMPOSE) ps mcp
 
-test-db: SUITE = db-migration
-test-db: $(BACKEND_PREREQ)
-	@echo ""
-	@echo "=== DB Migration Tests ==="
-	@cd backend && $(BACKEND_VENV) \
-	  $(PYTEST_BASE) tests/test_migrations.py --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
-
 test-backend-unit: SUITE = unit
 test-backend-unit: $(BACKEND_PREREQ)
 	@echo ""
@@ -564,24 +521,26 @@ test-contracts: $(BACKEND_PREREQ)
 	@cd backend && $(BACKEND_VENV) \
 	  $(PYTEST_BASE) tests/contract/ -v --tb=short $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
 
-test-integration-full: SUITE = integration
+# Exact complement of test-integration-full: together they cover every test in
+# tests/integration/. The selector is spelled out rather than inherited from
+# pyproject's addopts (-m 'not full') on purpose -- that implicit coupling is
+# what let the two targets stop being complements without anyone noticing
+# (#130). Change one selector, change the other.
+test-integration: SUITE = integration
+test-integration: $(BACKEND_PREREQ)
+	@echo ""
+	@echo "=== Integration Tests (non-full marker set) ==="
+	@cd backend && $(BACKEND_VENV) \
+	  $(PYTEST_BASE) tests/integration/ -m 'not full' --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
+
+# SUITE is integration-full, not integration: the artifact filenames are derived
+# from it, and CI now runs both targets in one job.
+test-integration-full: SUITE = integration-full
 test-integration-full: $(BACKEND_PREREQ)
 	@echo ""
 	@echo "=== Full-Mode Integration Tests (requires running Docker stack) ==="
 	@cd backend && $(BACKEND_VENV) \
 	  $(PYTEST_BASE) tests/integration/ -m full --tb=short -q $(PYTEST_COV) $(PYTEST_COV_REPORT) $(PYTEST_JUNIT)
-
-test-e2e: test-e2e-tier1
-
-test-e2e-tier1:
-	@echo ""
-	@echo "=== E2E Tier 1 Tests (requires running stack, ~5 min) ==="
-	@cd tests/e2e && npx playwright test
-
-test-e2e-tier2:
-	@echo ""
-	@echo "=== E2E Tier 2 Tests (requires running stack + AWS creds, ~30-60 min) ==="
-	@cd tests/e2e && E2E_TIER=2 npx playwright test tests/tier2/
 
 # ─── Linting ─────────────────────────────────────────────────────────────────
 
@@ -598,7 +557,7 @@ lint-backend: $(BACKEND_PREREQ)
 lint-frontend: $(FRONTEND_PREREQ)
 	@echo ""
 	@echo "=== Frontend Lint (eslint) ==="
-	@cd frontend-v2 && set -o pipefail && npm run lint 2>&1 | tail -30
+	@set -o pipefail && $(FRONTEND_RUN) 'npx eslint .' 2>&1 | tail -30
 
 # ─── Coverage ────────────────────────────────────────────────────────────────
 
@@ -612,10 +571,10 @@ coverage-backend: | backend/.venv/bin/activate
 	@cd backend && source .venv/bin/activate && \
 	  python -m pytest tests/ --cov=. --cov-report=term-missing --cov-fail-under=40 --tb=short -q
 
-coverage-frontend: | frontend-v2/node_modules
+coverage-frontend: $(FRONTEND_PREREQ)
 	@echo ""
 	@echo "=== Frontend Coverage ==="
-	@cd frontend-v2 && npm run test:coverage
+	@$(FRONTEND_RUN) '$(FRONTEND_COVER_CMD)'
 
 # ─── Pre-Push & Push (local checks → push → verify CI) ──────────────────────
 
@@ -628,7 +587,7 @@ typecheck-backend: $(BACKEND_PREREQ)
 typecheck-frontend: $(FRONTEND_PREREQ)
 	@echo ""
 	@echo "=== TypeScript Type Check (tsc --noEmit) ==="
-	@cd frontend-v2 && npx tsc --noEmit
+	@$(FRONTEND_RUN) 'npx tsc --noEmit'
 
 test-backend-legacy: SUITE = legacy
 test-backend-legacy: $(BACKEND_PREREQ)
@@ -644,18 +603,12 @@ test-backend-legacy: $(BACKEND_PREREQ)
 
 build-frontend-check: $(FRONTEND_PREREQ)
 	@echo ""
-	@echo "=== Frontend Build Check (npm run build) ==="
-	@cd frontend-v2 && npm run build > /dev/null 2>&1 && echo "  Build succeeded ✓"
-
-# ── Migration chain validator ────────────────────────────────────────────────
-# Pure AST parsing — no DB, no venv, no alembic import. Runs in <1s.
-check-migrations:
-	@echo "=== Migration Chain Validator ==="
-	@python3 scripts/check-migrations.py
+	@echo "=== Frontend Build Check ==="
+	@$(FRONTEND_RUN) '$(FRONTEND_BUILD_CMD)' > /dev/null 2>&1 && echo "  Build succeeded ✓"
 
 # ── Quick check (~15s): lint + types + contracts ────────────────────────────
 # Run before every commit. Catches most CI failures instantly.
-quick-check: lint typecheck-backend openapi-types-check check-migrations
+quick-check: lint typecheck-backend openapi-types-check api-docs-check
 	@echo ""
 	@echo "========================================="
 	@echo "  Quick check passed (~15s)"
@@ -672,20 +625,14 @@ pre-push: quick-check
 	( set -o pipefail; make test-backend-component 2>&1 | tail -3 ) & pid2=$$!; \
 	( set -o pipefail; make test-backend-legacy 2>&1 | tail -3 ) & pid3=$$!; \
 	( set -o pipefail; make test-frontend 2>&1 | tail -3 ) & pid4=$$!; \
-	( set -o pipefail; make test-operator 2>&1 | tail -3 ) & pid5=$$!; \
-	( set -o pipefail; make test-proxy 2>&1 | tail -3 ) & pid6=$$!; \
-	( set -o pipefail; make test-db 2>&1 | tail -3 ) & pid7=$$!; \
-	( set -o pipefail; make typecheck-frontend 2>&1 | tail -3 ) & pid8=$$!; \
-	( set -o pipefail; make test-contracts 2>&1 | tail -3 ) & pid9=$$!; \
+	( set -o pipefail; make typecheck-frontend 2>&1 | tail -3 ) & pid5=$$!; \
+	( set -o pipefail; make test-contracts 2>&1 | tail -3 ) & pid6=$$!; \
 	wait $$pid1 || failed="$$failed backend-unit"; \
 	wait $$pid2 || failed="$$failed backend-component"; \
 	wait $$pid3 || failed="$$failed backend-legacy"; \
 	wait $$pid4 || failed="$$failed frontend"; \
-	wait $$pid5 || failed="$$failed operator"; \
-	wait $$pid6 || failed="$$failed proxy"; \
-	wait $$pid7 || failed="$$failed db-migrations"; \
-	wait $$pid8 || failed="$$failed tsc"; \
-	wait $$pid9 || failed="$$failed contracts"; \
+	wait $$pid5 || failed="$$failed tsc"; \
+	wait $$pid6 || failed="$$failed contracts"; \
 	if [ -n "$$failed" ]; then \
 	  echo ""; \
 	  echo "========================================="; \
@@ -725,39 +672,32 @@ push: pre-push
 #   make test-docker              — run all containerized tests
 #   make test-backend-docker      — backend pytest in python:3.11 container
 #   make test-frontend-docker     — frontend vitest in node:20 container
-#   make test-operator-docker     — operator pytest in python:3.12 container
 #   make lint-backend-docker      — ruff in container
 #
 # Source is bind-mounted so edits take effect immediately (no rebuild).
 
-BACKEND_TEST_IMAGE  := bnk-forge-backend-test
-OPERATOR_TEST_IMAGE := bnk-forge-operator-test
+BACKEND_TEST_IMAGE  := bnkscope-backend-test
 FRONTEND_RUN_IMAGE  := node:20-slim
 DOCKER_RUN_FLAGS    := --rm -v $(CURDIR):/repo -w /repo
 
-.PHONY: test-docker test-backend-docker test-frontend-docker test-operator-docker \
+.PHONY: test-docker test-backend-docker test-frontend-docker \
         lint-backend-docker build-test-images
 
-test-docker: lint-backend-docker test-backend-docker test-frontend-docker test-operator-docker
+test-docker: lint-backend-docker test-backend-docker test-frontend-docker
 	@echo ""
 	@echo "========================================="
 	@echo "  All containerized tests passed"
 	@echo "========================================="
 
-build-test-images: .stamp/backend-test-image .stamp/operator-test-image
+build-test-images: .stamp/backend-test-image
 
-.stamp/backend-test-image: backend/Dockerfile backend/requirements.txt backend/requirements-dev.txt
+# VERSION is a prerequisite because the image now COPYs it — without this a
+# version bump leaves a stale test image reporting the old number.
+.stamp/backend-test-image: backend/Dockerfile backend/requirements.txt backend/requirements-dev.txt VERSION
 	@mkdir -p .stamp
 	@echo ""
 	@echo "=== Building backend test image ($(BACKEND_TEST_IMAGE)) ==="
-	docker build --target test -t $(BACKEND_TEST_IMAGE) backend/
-	@touch $@
-
-.stamp/operator-test-image: bnk-operator/Dockerfile bnk-operator/requirements.txt bnk-operator/requirements-dev.txt
-	@mkdir -p .stamp
-	@echo ""
-	@echo "=== Building operator test image ($(OPERATOR_TEST_IMAGE)) ==="
-	docker build --target test -t $(OPERATOR_TEST_IMAGE) bnk-operator/
+	docker build --target test -f backend/Dockerfile -t $(BACKEND_TEST_IMAGE) .
 	@touch $@
 
 test-backend-docker: .stamp/backend-test-image
@@ -772,19 +712,13 @@ lint-backend-docker: .stamp/backend-test-image
 	docker run $(DOCKER_RUN_FLAGS) -w /repo/backend $(BACKEND_TEST_IMAGE) \
 	  python -m ruff check . --config pyproject.toml
 
-test-operator-docker: .stamp/operator-test-image
-	@echo ""
-	@echo "=== Operator Tests (docker) ==="
-	docker run $(DOCKER_RUN_FLAGS) -w /repo/bnk-operator $(OPERATOR_TEST_IMAGE) \
-	  python -m pytest tests/ --tb=short -q
-
 # Frontend: use stock node image + named volume for node_modules cache.
 # First run does npm ci (~30s), subsequent runs reuse the volume (~0s).
 test-frontend-docker:
 	@echo ""
 	@echo "=== Frontend Tests (docker) ==="
 	docker run $(DOCKER_RUN_FLAGS) \
-	  -v bnk-forge-fe-node_modules:/repo/frontend-v2/node_modules \
+	  -v bnkscope-fe-node_modules:/repo/frontend-v2/node_modules \
 	  -w /repo/frontend-v2 $(FRONTEND_RUN_IMAGE) \
 	  sh -c '[ -f node_modules/.package-lock.json ] || npm ci; npm test -- --run'
 
@@ -793,11 +727,10 @@ test-frontend-docker:
 # lint/test targets. File targets are idempotent — re-running is a no-op once
 # the stamps exist. Delete the target path to force a rebuild.
 
-dev-setup: backend/.venv/bin/activate bnk-operator/.venv/bin/activate frontend-v2/node_modules
+dev-setup: backend/.venv/bin/activate frontend-v2/node_modules
 	@echo ""
 	@echo "=== Dev environment ready ==="
 	@echo "  backend/.venv        ✓"
-	@echo "  bnk-operator/.venv   ✓"
 	@echo "  frontend-v2/node_modules ✓"
 
 backend/.venv/bin/activate: backend/requirements.txt backend/requirements-dev.txt
@@ -808,20 +741,22 @@ backend/.venv/bin/activate: backend/requirements.txt backend/requirements-dev.tx
 	  .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
 	@touch $@
 
-bnk-operator/.venv/bin/activate: bnk-operator/requirements.txt bnk-operator/requirements-dev.txt
-	@echo ""
-	@echo "=== Creating bnk-operator/.venv ==="
-	@cd bnk-operator && python3 -m venv .venv && \
-	  source .venv/bin/activate && \
-	  pip install --upgrade pip && \
-	  pip install -r requirements.txt -r requirements-dev.txt
-	@touch $@
-
 frontend-v2/node_modules: frontend-v2/package.json frontend-v2/package-lock.json
 	@echo ""
 	@echo "=== Installing frontend-v2 dependencies ==="
 	@cd frontend-v2 && npm ci
 	@touch $@
+
+# Same dependencies, in the docker volume the verify scripts share. Cheap to
+# re-check (one container start) and it is the only thing that makes the
+# volume self-installing, so a fresh clone needs no separate bootstrap step.
+frontend-deps:
+	@docker volume create $(FRONTEND_NODE_VOLUME) >/dev/null
+	@docker run --rm -v "$(CURDIR)/frontend-v2:/app" \
+	  -v $(FRONTEND_NODE_VOLUME):/app/node_modules -w /app $(FRONTEND_NODE_IMAGE) \
+	  sh -c '[ -x node_modules/.bin/eslint ] || { \
+	    echo "=== Installing frontend-v2 dependencies (docker volume) ==="; \
+	    npm ci --no-audit --no-fund; }'
 
 # ─── Git Hooks ───────────────────────────────────────────────────────────────
 
@@ -832,12 +767,12 @@ install-hooks:
 	@cp .githooks/pre-push .git/hooks/pre-push
 	@chmod +x .git/hooks/pre-commit .git/hooks/pre-push
 	@echo "Git hooks installed:"
-	@echo "  pre-commit: lint + migration chain check on every commit (~5-10s)"
-	@echo "  pre-push:   migration chain check + lint + unit + component + frontend tests (~2-3m)"
+	@echo "  pre-commit: lint on every commit (~5-10s)"
+	@echo "  pre-push:   lint + unit + component + frontend tests (~2-3m)"
 
 setup-hooks: ## Configure git to use project hooks (.githooks/)
 	git config core.hooksPath .githooks
-	@echo "Git hooks installed — pre-commit and pre-push migration checks active"
+	@echo "Git hooks installed — pre-commit and pre-push checks active"
 
 # ─── OpenAPI & Type Generation ───────────────────────────────────────────────
 
@@ -850,6 +785,16 @@ openapi-types: openapi $(FRONTEND_PREREQ)
 	@echo ""
 	@echo "=== Generating TypeScript types from OpenAPI spec ==="
 	@cd frontend-v2 && npx openapi-typescript ../backend/openapi.json -o src/types/api-generated.ts
+
+api-docs: openapi
+	@echo ""
+	@echo "=== Generating docs/API_REFERENCE.md ==="
+	@$(BACKEND_VENV_ROOT) python scripts/gen-api-reference.py
+
+api-docs-check: $(BACKEND_PREREQ)
+	@echo ""
+	@echo "=== Checking API_REFERENCE.md freshness ==="
+	@$(BACKEND_VENV_ROOT) python scripts/gen-api-reference.py --check
 
 openapi-check: $(BACKEND_PREREQ)
 	@echo ""
@@ -881,7 +826,7 @@ help:
 	@echo "    macOS  → bridge networking via Docker Desktop (port mappings)"
 	@echo ""
 	@echo "Getting Started"
-	@echo "  make dev-setup             Create backend/bnk-operator venvs + install frontend deps (for local tests/lint)"
+	@echo "  make dev-setup             Create backend venv + install frontend deps (for local tests/lint)"
 	@echo "  make install               First-time server setup (builds everything from scratch)"
 	@echo "  make update                Pull latest + rebuild + restart (keeps all data)"
 	@echo "  make status                Show container health and versions"
@@ -890,10 +835,9 @@ help:
 	@echo "  make build                 Build all app images in parallel (~30s cached, ~3min first time)"
 	@echo "  make build-backend         Build backend API image only"
 	@echo "  make build-frontend        Build frontend image only"
-	@echo "  make build-worker          Build worker image (includes CLI tools — slower)"
-	@echo "  make build-all             Build ALL images (api + worker + beat + frontend + proxy)"
+	@echo "  make build-all             Build ALL images (api + frontend + mcp)"
 	@echo "  make build-clean           Force rebuild without cache (only for deps/tool changes)"
-	@echo "  make docker-verify         Verify worker CLI tools + MCP module in built images"
+	@echo "  make docker-verify         Verify baked VERSION + MCP module in built images"
 	@echo "  make docker-validate       Full Docker validation (build + size + tool verification)"
 	@echo ""
 	@echo "Deploy (platform-aware)"
@@ -909,11 +853,10 @@ help:
 	@echo "  make shellcheck            Lint all shell scripts with ShellCheck"
 	@echo ""
 	@echo "Testing"
-	@echo "  make test                  Run all tests (lint + backend + frontend + proxy + operator + db)"
+	@echo "  make test                  Run all tests (lint + backend + frontend)"
 	@echo "  make test-docker           Run all tests inside containers (no local venv/node needed)"
 	@echo "  make test-backend-docker   Backend pytest in python:3.11 container"
 	@echo "  make test-frontend-docker  Frontend vitest in node:20 container"
-	@echo "  make test-operator-docker  Operator pytest in python:3.12 container"
 	@echo "  make lint-backend-docker   Ruff in python:3.11 container"
 	@echo "  make test-backend          Run backend tests only (pytest)"
 	@echo "  make test-backend-unit     Run backend unit tests only (tests/unit/)"
@@ -921,13 +864,9 @@ help:
 	@echo "  make test-backend-legacy   Run backend legacy tests (flat test_*.py files)"
 	@echo "  make test-frontend         Run frontend tests only (vitest)"
 	@echo "  make build-frontend-check  Verify frontend builds successfully"
-	@echo "  make test-proxy            Run proxy config validation tests"
-	@echo "  make test-operator         Run operator tests only (pytest)"
 	@echo "  make test-contracts        Run golden contract tests (response shape verification)"
-	@echo "  make test-db               Run DB migration validation tests"
+	@echo "  make test-integration    Run integration tests (default marker set)"
 	@echo "  make test-integration-full Run full-mode integration tests (requires Docker stack)"
-	@echo "  make test-e2e              Run Tier 1 E2E tests (requires running stack)"
-	@echo "  make test-e2e-tier2        Run Tier 2 E2E tests (requires stack + AWS creds)"
 	@echo ""
 	@echo "Linting & Type Checking"
 	@echo "  make lint                  Run all linters (ruff + eslint)"
@@ -958,8 +897,6 @@ help:
 	@echo "Distribution & Registry (Multi-Arch)"
 	@echo "  make buildx-setup          Set up multi-arch builder with QEMU (one-time)"
 	@echo "  make push-images           Build + push multi-arch images (amd64 + arm64)"
-	@echo "  make push-customer-build   Build+push arm64 customer-build images (SHA tag + rolling 'customer-build' tag)"
-	@echo "  make dist                  Build distributable tarball (dist/bnk-forge-VERSION.tar.gz)"
 	@echo ""
 	@echo "Disk & Cleanup"
 	@echo "  make check-disk            Check disk space (warns if > 70%, fails if > 85%)"
@@ -967,79 +904,6 @@ help:
 	@echo "  make setup-cleanup-cron    Install weekly cleanup cron job (Sunday 2 AM)"
 	@echo ""
 	@echo "  make help                  Show this help"
-
-# ─── Distribution & Registry ─────────────────────────────────────────────────
-#
-# Build a distributable tarball and/or push images to a container registry.
-# End users install from the tarball without needing source code.
-#
-#   make dist          — build dist/bnk-forge-VERSION.tar.gz
-#   make push-images   — tag + push all images to BNK_FORGE_REGISTRY
-#
-
-# Build distributable install package (no source code needed by end users)
-# No 'build' prerequisite: the tarball bundles no images (recipients pull from
-# the registry), so rebuilding images here would be wasted work.
-dist:
-	@echo ""
-	@echo "========================================="
-	@echo "  BNK Forge — Building Distribution Package"
-	@echo "========================================="
-	@VERSION=$$(cat VERSION); \
-	echo "  Version: $$VERSION"; \
-	echo ""; \
-	echo "=== Updating dist/VERSION ==="; \
-	cp VERSION dist/VERSION; \
-	echo "=== Updating dist/nginx configs ==="; \
-	cp proxy/nginx.local.conf dist/nginx/proxy.local.conf; \
-	cp frontend-v2/nginx.local.conf dist/nginx/frontend.local.conf; \
-	echo "=== Bundling install guide ==="; \
-	cp user-pack/install-guide.html dist/install-guide.html; \
-	echo "=== Creating tarball ==="; \
-	TMPDIR=$$(mktemp -d); \
-	cp -R dist "$$TMPDIR/bnk-forge-$${VERSION}"; \
-	rm -f "$$TMPDIR/bnk-forge-$${VERSION}/bnk-forge-"*.tar.gz; \
-	tar -czf "dist/bnk-forge-$${VERSION}.tar.gz" -C "$$TMPDIR" "bnk-forge-$${VERSION}"; \
-	rm -rf "$$TMPDIR"; \
-	echo ""; \
-	echo "  ✓ Created: dist/bnk-forge-$${VERSION}.tar.gz"; \
-	echo ""; \
-	ls -lh "dist/bnk-forge-$${VERSION}.tar.gz"; \
-	echo ""; \
-	echo "  To publish:"; \
-	echo "    1. Push images:  make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org"; \
-	echo "    2. Upload:       gh release create v$${VERSION} dist/bnk-forge-$${VERSION}.tar.gz"
-
-# ── Multi-arch image build + push ────────────────────────────────────────────
-#
-# Builds linux/amd64 + linux/arm64 images and pushes multi-arch manifests.
-# Uses docker buildx to cross-compile. Each registry tag is a manifest list
-# that Docker automatically resolves to the correct platform on pull.
-#
-# Usage:
-#   make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org
-#   make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org PLATFORMS=linux/amd64
-#
-# Prerequisites:
-#   - docker buildx (included in Docker Desktop; on Linux: docker buildx install)
-#   - QEMU for cross-platform builds: make buildx-setup
-#   - Authenticated to the target registry: docker login ghcr.io
-#
-
-# Platforms to build for (override with: make push-images PLATFORMS=linux/amd64)
-PLATFORMS ?= linux/amd64,linux/arm64
-
-# Platforms for the customer-build test loop (override for a multi-arch release: CB_PLATFORMS="linux/amd64,linux/arm64")
-CB_PLATFORMS ?= linux/arm64
-
-# Buildx builder name
-BUILDX_BUILDER ?= bnk-forge-multiarch
-
-# Builder for the arm64 customer-build test loop. desktop-linux is Docker Desktop's
-# built-in builder (native arm64, healthy emulation) — avoids the QEMU reset footgun.
-CB_BUILDER ?= desktop-linux
-
-# Create/bootstrap the buildx builder with QEMU support
 buildx-setup:
 	@echo ""
 	@echo "========================================="
@@ -1073,17 +937,17 @@ buildx-setup:
 	@docker buildx inspect $(BUILDX_BUILDER) --bootstrap 2>/dev/null | grep -oP 'linux/\w+' | sort -u | sed 's/^/    /'
 
 # Push multi-arch images to a container registry
-# Usage: make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org
+# Usage: make push-images BNKSCOPE_REGISTRY=ghcr.io/your-org
 push-images:
 	@echo ""
 	@echo "========================================="
-	@echo "  BNK Forge — Multi-Arch Push to Registry"
+	@echo "  bnkscope — Multi-Arch Push to Registry"
 	@echo "========================================="
-	@if [ -z "$${BNK_FORGE_REGISTRY:-}" ]; then \
-	  echo "ERROR: BNK_FORGE_REGISTRY is not set."; \
+	@if [ -z "$${BNKSCOPE_REGISTRY:-}" ]; then \
+	  echo "ERROR: BNKSCOPE_REGISTRY is not set."; \
 	  echo ""; \
-	  echo "Usage: make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org"; \
-	  echo "       make push-images BNK_FORGE_REGISTRY=ghcr.io/your-org PLATFORMS=linux/amd64"; \
+	  echo "Usage: make push-images BNKSCOPE_REGISTRY=ghcr.io/your-org"; \
+	  echo "       make push-images BNKSCOPE_REGISTRY=ghcr.io/your-org PLATFORMS=linux/amd64"; \
 	  exit 1; \
 	fi
 	@if ! docker buildx inspect $(BUILDX_BUILDER) > /dev/null 2>&1; then \
@@ -1093,7 +957,7 @@ push-images:
 	  exit 1; \
 	fi
 	@VERSION=$$(cat VERSION); \
-	REGISTRY=$${BNK_FORGE_REGISTRY}; \
+	REGISTRY=$${BNKSCOPE_REGISTRY}; \
 	echo "  Registry:  $$REGISTRY"; \
 	echo "  Version:   $$VERSION"; \
 	echo "  Platforms: $(PLATFORMS)"; \
@@ -1112,82 +976,16 @@ push-images:
 	echo "  Verify manifests:"; \
 	echo "    docker manifest inspect $${REGISTRY}/bnk-forge-api:$${VERSION}"; \
 	echo "========================================="
-
-# Push customer-build images: SHA-pinned immutable tag + rolling 'customer-build' tag
-# Usage: make push-customer-build BNK_FORGE_REGISTRY=ghcr.io/your-org
-push-customer-build:
-	@echo ""
-	@echo "========================================="
-	@echo "  BNK Forge — Customer-Build Publish"
-	@echo "========================================="
-	@if [ -z "$${BNK_FORGE_REGISTRY:-}" ]; then \
-	  echo "ERROR: BNK_FORGE_REGISTRY is not set."; \
-	  echo ""; \
-	  echo "Usage: make push-customer-build BNK_FORGE_REGISTRY=ghcr.io/your-org"; \
-	  exit 1; \
-	fi
-	@if ! docker buildx inspect $(CB_BUILDER) > /dev/null 2>&1; then \
-	  echo ""; \
-	  echo "ERROR: Buildx builder '$(CB_BUILDER)' not found."; \
-	  echo "Run first: make buildx-setup"; \
-	  exit 1; \
-	fi
-	@BASE=$$(cat VERSION); \
-	SHA=$$(git rev-parse --short HEAD); \
-	FULLTAG=$${BASE}-cb.$${SHA}; \
-	REGISTRY=$${BNK_FORGE_REGISTRY}; \
-	echo "  Registry:      $$REGISTRY"; \
-	echo "  Base version:  $$BASE"; \
-	echo "  Commit:        $$SHA"; \
-	echo "  Immutable tag: $$FULLTAG"; \
-	echo "  Rolling tag:   customer-build"; \
-	echo "  Platforms:     $(CB_PLATFORMS)"; \
-	echo ""; \
-	echo "=== Building + pushing customer-build images (docker buildx bake) ==="; \
-	REGISTRY=$$REGISTRY VERSION=$$FULLTAG ROLLING_TAG=customer-build PLATFORMS=$(CB_PLATFORMS) \
-	  docker buildx bake --builder $(CB_BUILDER) --push && \
-	echo ""; \
-	echo "========================================="; \
-	echo "  ✅ Pushed to $$REGISTRY"; \
-	echo "    Immutable: $${REGISTRY}/bnk-forge-api:$${FULLTAG}   (+ worker/beat/frontend/proxy/mcp)"; \
-	echo "    Rolling:   $${REGISTRY}/bnk-forge-api:customer-build"; \
-	echo "    Platforms: $(CB_PLATFORMS)"; \
-	echo ""; \
-	echo "    To deploy newest in dist .env:"; \
-	echo "      BNK_FORGE_REGISTRY=$$REGISTRY"; \
-	echo "      BNK_FORGE_VERSION=customer-build"; \
-	echo "    Or pin this exact build:"; \
-	echo "      BNK_FORGE_VERSION=$${FULLTAG}"; \
-	echo "========================================="
-
-# Multi-arch customer-build publish: identical to push-customer-build but emits a
-# combined linux/amd64 + linux/arm64 manifest list. Routes through the docker-container
-# builder ($(BUILDX_BUILDER)) because the default 'docker' driver cannot push manifest lists.
-# Docker Desktop already ships amd64/arm64 binfmt emulation — do NOT run 'make buildx-setup'
-# (its QEMU --reset wipes Docker Desktop's binfmt handlers). One-time builder create:
-#   docker buildx create --name $(BUILDX_BUILDER) --driver docker-container --bootstrap
-# Usage: make push-customer-build-multiarch BNK_FORGE_REGISTRY=ghcr.io/your-org
-push-customer-build-multiarch:
-	@$(MAKE) push-customer-build \
-	  CB_PLATFORMS=linux/amd64,linux/arm64 \
-	  CB_BUILDER=$(BUILDX_BUILDER)
-
-# Keyless cosign signing + SBOM + provenance for all published images.
-# Run AFTER `make push-images` (images must already be in the registry).
-# Dry-run by default — prints what would be signed without touching the registry.
-# Usage:
-#   make publish-signed BNK_FORGE_REGISTRY=ghcr.io/your-org               # dry-run
-#   make publish-signed BNK_FORGE_REGISTRY=ghcr.io/your-org SIGN_EXECUTE=1 # sign for real
 publish-signed:
-	@if [ -z "$${BNK_FORGE_REGISTRY:-}" ]; then \
-	  echo "ERROR: BNK_FORGE_REGISTRY is not set."; \
-	  echo "Usage: make publish-signed BNK_FORGE_REGISTRY=ghcr.io/your-org"; \
+	@if [ -z "$${BNKSCOPE_REGISTRY:-}" ]; then \
+	  echo "ERROR: BNKSCOPE_REGISTRY is not set."; \
+	  echo "Usage: make publish-signed BNKSCOPE_REGISTRY=ghcr.io/your-org"; \
 	  exit 1; \
 	fi
 	@if [ "$${SIGN_EXECUTE:-0}" = "1" ]; then \
-	  BNK_FORGE_REGISTRY=$${BNK_FORGE_REGISTRY} DRY_RUN=0 bash scripts/publish-signed-images.sh --execute; \
+	  BNKSCOPE_REGISTRY=$${BNKSCOPE_REGISTRY} DRY_RUN=0 bash scripts/publish-signed-images.sh --execute; \
 	else \
-	  BNK_FORGE_REGISTRY=$${BNK_FORGE_REGISTRY} bash scripts/publish-signed-images.sh --dry-run; \
+	  BNKSCOPE_REGISTRY=$${BNKSCOPE_REGISTRY} bash scripts/publish-signed-images.sh --dry-run; \
 	fi
 
 # Verify Docker images have expected tools and modules (catches COPY/install regressions)
@@ -1196,28 +994,25 @@ docker-verify:
 	@echo ""
 	@echo "=== Docker Image Verification ==="
 	@echo ""
-	@echo "--- Worker CLI tools ---"
+	@echo "--- Version baked into the image ---"
+	@expected=$$(cat VERSION); \
+	failed=0; \
+	for img in bnkscope-api; do \
+	  actual=$$(docker run --rm --entrypoint "" $$img:latest cat /app/VERSION 2>/dev/null || echo ""); \
+	  if [ "$$actual" = "$$expected" ]; then \
+	    echo "  OK    $$img reports $$actual"; \
+	  else \
+	    echo "  FAIL  $$img reports '$$actual', expected '$$expected'"; \
+	    echo "        settings.VERSION falls back to 0.0.0 when /app/VERSION is absent,"; \
+	    echo "        which surfaces on /api, the OpenAPI title and X-BNK-Forge-Version."; \
+	    failed=1; \
+	  fi; \
+	done; \
+	[ $$failed -eq 0 ] || exit 1
+	@echo ""
 	@failed=0; \
-	check_tool() { \
-	    local tool=$$1 cmd=$$2; \
-	    if docker run --rm --entrypoint "" bnk-forge-worker:latest bash -c "$$cmd" > /dev/null 2>&1; then \
-	      echo "  OK    $$tool"; \
-	    else \
-	      echo "  FAIL  $$tool"; \
-	      failed=1; \
-	    fi; \
-	  }; \
-	  check_tool "tofu"    "tofu version"; \
-	  check_tool "helm"    "helm version"; \
-	  check_tool "kubectl" "kubectl version --client"; \
-	  check_tool "aws"     "aws --version"; \
-	  check_tool "docker"  "docker --version"; \
-	  check_tool "git"     "git --version"; \
-	  check_tool "jq"      "jq --version"; \
-	  check_tool "bash-sh" "[ -L /bin/sh ] && readlink /bin/sh | grep -q bash"; \
-	  echo ""; \
 	  echo "--- MCP server module ---"; \
-	  if docker run --rm bnk-forge-mcp:latest python -c "import bnk_forge_mcp.server; print('OK')" > /dev/null 2>&1; then \
+	  if docker run --rm bnkscope-mcp:latest python -c "import bnk_forge_mcp.server; print('OK')" > /dev/null 2>&1; then \
 	    echo "  OK    bnk_forge_mcp.server"; \
 	  else \
 	    echo "  FAIL  bnk_forge_mcp.server"; \
@@ -1245,9 +1040,6 @@ security-audit:
 	@echo "--- Python: backend ---"
 	@pip-audit -r backend/requirements.txt --progress-spinner=off $(PIP_AUDIT_DEFER)
 	@echo ""
-	@echo "--- Python: bnk-operator ---"
-	@pip-audit -r bnk-operator/requirements.txt --progress-spinner=off
-	@echo ""
 	@echo "--- Python: mcp-server (pyproject.toml) ---"
 	# PYSEC-2026-196 is the build-env pip itself (pip<26.1.2), not a project dependency.
 	# PYSEC-2026-3447 is the build-env setuptools (<83.0.0), not a project dependency.
@@ -1269,11 +1061,9 @@ docker-check:
 	@echo "=== Docker Check (BuildKit lint) ==="
 	@failed=0; \
 	  for target_spec in \
-	    "backend/Dockerfile:backend" \
-	    "frontend-v2/Dockerfile:frontend-v2" \
-	    "proxy/Dockerfile:proxy" \
-	    "mcp-server/Dockerfile:mcp-server" \
-	    "bnk-operator/Dockerfile:bnk-operator"; do \
+	    "backend/Dockerfile:." \
+	    "frontend-v2/Dockerfile:." \
+	    "mcp-server/Dockerfile:mcp-server"; do \
 	    dockerfile=$${target_spec%%:*}; \
 	    ctx=$${target_spec##*:}; \
 	    echo "  Checking $$dockerfile ..."; \

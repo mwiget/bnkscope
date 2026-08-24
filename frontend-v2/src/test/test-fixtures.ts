@@ -679,27 +679,20 @@ export const mockDriftStats = {
 // System / Health
 // ============================================================================
 
+// Mirrors SystemHealthResponse: a `services` map plus a timestamp. Redis and
+// Celery are absent because Phase 4 moved that work in-process — the backend
+// reports on itself and the database, and nothing else.
 export const mockSystemHealth = {
-  status: 'healthy',
-  version: '2.10.49',
-  uptime_seconds: 86400,
-  database: { status: 'healthy', latency_ms: 2 },
-  redis: { status: 'healthy', latency_ms: 1 },
-  celery: { status: 'healthy', workers: 2 },
+  services: {
+    backend: { status: 'healthy', response_time_ms: 0.5 },
+    database: { status: 'healthy', response_time_ms: 2.1 },
+  },
+  timestamp: '2026-08-23T00:00:00Z',
+  maintenance_mode: false,
 };
 
 export const mockSystemDefaults = {
   project: { default_type: { value: 'cloud-aws' } },
-};
-
-export const mockQueueMetrics = {
-  queues: [
-    { name: 'default', pending: 3, active: 1, reserved: 0 },
-    { name: 'k8s', pending: 0, active: 0, reserved: 0 },
-  ],
-  total_pending: 3,
-  total_active: 1,
-  workers: 2,
 };
 
 export const mockPerformanceMetrics = {
@@ -733,22 +726,23 @@ export const mockDatabaseStats = {
   table_count: 14,
   total_rows: 15000,
   tables: [
-    { name: 'tasks', rows: 5000, size_kb: 2048 },
-    { name: 'projects', rows: 10, size_kb: 32 },
-    { name: 'project_modules', rows: 25, size_kb: 64 },
+    { name: 'kubernetes_clusters', rows: 3, size_kb: 64 },
+    { name: 'notifications', rows: 120, size_kb: 96 },
+    { name: 'application_settings', rows: 40, size_kb: 32 },
   ],
 };
 
 export const mockContainerStatus = {
   containers: [
-    { service: 'backend', container_name: 'bnk-forge-backend', status: 'running', state: 'healthy' },
-    { service: 'frontend', container_name: 'bnk-forge-frontend', status: 'running', state: 'healthy' },
-    { service: 'postgres', container_name: 'bnk-forge-postgres', status: 'running', state: 'healthy' },
-    { service: 'redis', container_name: 'bnk-forge-redis', status: 'running', state: 'healthy' },
-    { service: 'celery-worker', container_name: 'bnk-forge-celery-worker', status: 'running', state: 'healthy' },
-    { service: 'proxy', container_name: 'bnk-forge-proxy', status: 'running', state: 'healthy' },
+    { service: 'backend', container_name: 'bnkscope-backend', status: 'running', state: 'healthy' },
+    { service: 'frontend', container_name: 'bnkscope-frontend', status: 'running', state: 'healthy' },
+    { service: 'mcp', container_name: 'bnkscope-mcp', status: 'running', state: 'healthy' },
+    { service: 'prometheus', container_name: 'bnkscope-prometheus', status: 'running', state: 'healthy' },
+    { service: 'grafana', container_name: 'bnkscope-grafana', status: 'running', state: 'healthy' },
+    { service: 'loki', container_name: 'bnkscope-loki', status: 'running', state: 'healthy' },
+    { service: 'alloy', container_name: 'bnkscope-alloy', status: 'running', state: 'healthy' },
   ],
-  total: 6,
+  total: 7,
 };
 
 export const mockSystemVersion = {
@@ -822,9 +816,9 @@ export const mockAlertHistory = [
     id: 1,
     channel_id: 1,
     channel_name: 'Slack #ops',
-    event_type: 'drift_detected',
+    event_type: 'health_change',
     severity: 'warning',
-    message: 'Drift detected in vpc module',
+    message: 'Health WARNING: scope',
     sent_at: '2026-02-18T08:00:00Z',
     success: true,
   },

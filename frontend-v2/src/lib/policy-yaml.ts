@@ -153,15 +153,6 @@ export function extractResourceType(yamlDoc: string): string | null {
   return match ? match[1].toLowerCase() : null;
 }
 
-/**
- * Extract the resource name from a YAML document.
- */
-export function extractResourceName(yamlDoc: string): string | null {
-  // Match "name:" under "metadata:" section
-  const metaMatch = yamlDoc.match(/metadata:\s*\n\s+name:\s*(\S+)/m);
-  return metaMatch ? metaMatch[1] : null;
-}
-
 // ---------------------------------------------------------------------------
 // Rule Templates
 // ---------------------------------------------------------------------------

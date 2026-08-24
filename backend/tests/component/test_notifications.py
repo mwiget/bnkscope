@@ -414,7 +414,7 @@ class TestRetentionTask:
         """Users with more than MAX_PER_USER notifications have oldest deleted."""
         from sqlalchemy import func
 
-        from tasks.notification_retention_task import MAX_PER_USER
+        from jobs.notification_retention import MAX_PER_USER
 
         # Insert MAX_PER_USER + 5 notifications for one user
         for i in range(MAX_PER_USER + 5):

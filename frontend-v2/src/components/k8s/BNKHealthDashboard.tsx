@@ -21,8 +21,6 @@ import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useF5BNKHealth } from '@/hooks/useK8s';
-import { useClusterDriftStatus } from '@/hooks/useDrift';
-import { LicenseStatusCard } from '@/components/k8s/LicenseStatusCard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { HealthDetailCard } from '@/components/health/HealthDetailCard';
@@ -35,13 +33,11 @@ import {
   AlertTriangle,
   XCircle,
   Loader2,
-  GitCompareArrows,
 } from 'lucide-react';
 import type {
   HealthSeverity,
   HealthPodDetail,
   HealthRemediationAction,
-  ClusterDriftStatus,
 } from '@/types';
 import { SEVERITY_CONFIG, getSeverityConfig, compareSeverity } from '@/lib/health-severity';
 import { ErrorState } from '@/components/ui/error-state';
@@ -133,7 +129,6 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
   } = useF5BNKHealth(clusterId, namespace ? { namespace } : undefined, {
     pollingEnabled: true,
   });
-  const { data: driftStatus } = useClusterDriftStatus(clusterId);
 
   // Dialog state for View Logs
   const [logsDialogOpen, setLogsDialogOpen] = useState(false);
@@ -425,12 +420,8 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
       </div>
 
       {/* License Status Card — K8S-UX-010 */}
-      <LicenseStatusCard clusterId={clusterId} />
 
       {/* Drift Status Banner */}
-      {driftStatus && driftStatus.total_modules > 0 && (
-        <DriftStatusBanner driftStatus={driftStatus} />
-      )}
 
       {/* Health Detail Cards Grid — sorted by severity */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -480,68 +471,3 @@ export function BNKHealthDashboard({ clusterId, namespace }: BNKHealthDashboardP
 
 // ---- Drift Status Banner ----
 
-function DriftStatusBanner({ driftStatus }: { driftStatus: ClusterDriftStatus }) {
-  const hasDrift = driftStatus.modules_with_drift > 0;
-  const allUnchecked = driftStatus.overall_status === 'unchecked';
-
-  const bannerConfig = hasDrift
-    ? { bg: 'bg-warning/10', border: 'border-warning/30', icon: AlertTriangle, color: 'text-warning', badgeVariant: 'warning' as const, label: 'Drift Detected' }
-    : allUnchecked
-    ? { bg: 'bg-muted', border: 'border-border', icon: GitCompareArrows, color: 'text-muted-foreground', badgeVariant: 'muted' as const, label: 'Not Checked' }
-    : { bg: 'bg-success/10', border: 'border-success/30', icon: CheckCircle2, color: 'text-success', badgeVariant: 'success' as const, label: 'No Drift' };
-
-  const Icon = bannerConfig.icon;
-
-  return (
-    <div className={cn(
-      'rounded-lg border p-4',
-      bannerConfig.bg,
-      bannerConfig.border,
-    )}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Icon className={cn('h-5 w-5', bannerConfig.color)} />
-          <div>
-            <h3 className="font-semibold text-sm flex items-center gap-2">
-              Configuration Drift
-              <Badge variant={bannerConfig.badgeVariant} className="text-xs">
-                {bannerConfig.label}
-              </Badge>
-            </h3>
-            <p className="text-xs mt-0.5 text-muted-foreground">
-              {hasDrift
-                ? `${driftStatus.modules_with_drift} of ${driftStatus.total_modules} module(s) drifted from desired state`
-                : allUnchecked
-                ? `${driftStatus.total_modules} module(s) — enable drift detection in project settings`
-                : `${driftStatus.modules_ok} of ${driftStatus.total_modules} module(s) match desired state`}
-              {driftStatus.modules_unchecked > 0 && !allUnchecked && (
-                <> · {driftStatus.modules_unchecked} unchecked</>
-              )}
-            </p>
-          </div>
-        </div>
-        {!driftStatus.drift_enabled && (
-          <Badge variant="outline" className="text-xs">
-            Scheduled checks disabled
-          </Badge>
-        )}
-      </div>
-
-      {/* Show drifted modules */}
-      {hasDrift && driftStatus.module_statuses
-        .filter(m => m.status === 'drift')
-        .map(m => (
-          <div key={m.module_id} className="flex items-center justify-between mt-2 pl-8 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-3 w-3 text-warning" />
-              <span className="font-medium">{m.module_name}</span>
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                {m.engine_type === 'kubernetes' ? 'K8s' : m.engine_type === 'container' ? 'Container' : 'OpenTofu'}
-              </Badge>
-            </div>
-            <span className="text-muted-foreground truncate max-w-[300px]">{m.drift_summary}</span>
-          </div>
-        ))}
-    </div>
-  );
-}

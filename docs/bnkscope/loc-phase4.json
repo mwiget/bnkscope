@@ -1,0 +1,58 @@
+{
+  "KEEP bnk-tmm": {
+    "src": 14470,
+    "test": 374
+  },
+  "KEEP k8s-core": {
+    "src": 12893,
+    "test": 2745
+  },
+  "KEEP observ": {
+    "src": 4472,
+    "test": 767
+  },
+  "KEEP system": {
+    "src": 5422,
+    "test": 0
+  },
+  "OTHER": {
+    "src": 52876,
+    "test": 43580
+  },
+  "RM auth/users": {
+    "src": 6050,
+    "test": 3608
+  },
+  "RM cloud/ssh": {
+    "src": 116,
+    "test": 195
+  },
+  "RM discovery": {
+    "src": 5942,
+    "test": 2518
+  },
+  "RM dpu/bm": {
+    "src": 3842,
+    "test": 1187
+  },
+  "RM fleet/oper": {
+    "src": 297,
+    "test": 0
+  },
+  "RM modules": {
+    "src": 4299,
+    "test": 628
+  },
+  "RM projects": {
+    "src": 56,
+    "test": 132
+  },
+  "RM snapshots": {
+    "src": 1040,
+    "test": 491
+  },
+  "RM tasks/queue": {
+    "src": 2427,
+    "test": 1697
+  }
+}

@@ -1,155 +1,111 @@
-"""
-BC-023: Component tests for WebSocketManager and RedisSubscriber.
+"""WebSocketManager and the thread-to-loop broadcast bridge.
 
-All Redis/WebSocket I/O is mocked.
+The Redis pub/sub layer these used to exercise went in Phase 4: producers are
+in-process now, so they hand messages to the manager directly. What still needs
+covering is the manager's connection bookkeeping and ``broadcast_sync``, which
+is the seam a background thread uses to reach the event loop.
 """
 
 import asyncio
-import json
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.websocket_service import (
-    RedisSubscriber,
-    WebSocketManager,
-    publish_task_update,
-)
+from services import websocket_service
+from services.websocket_service import WebSocketManager, broadcast_sync
 
-# ── WebSocketManager ─────────────────────────────────────────────────
+
+def _fake_ws() -> MagicMock:
+    ws = MagicMock()
+    ws.accept = AsyncMock()
+    ws.send_json = AsyncMock()
+    return ws
+
 
 class TestWebSocketManager:
     @pytest.mark.asyncio
-    async def test_connect(self):
+    async def test_connect_accepts_and_registers(self):
         mgr = WebSocketManager()
-        ws = AsyncMock()
+        ws = _fake_ws()
         await mgr.connect(ws)
-        assert ws in mgr.active_connections
-        ws.accept.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_disconnect(self):
+        ws.accept.assert_awaited_once()
+        assert ws in mgr.active_connections
+
+    def test_disconnect_is_idempotent(self):
         mgr = WebSocketManager()
-        ws = AsyncMock()
-        await mgr.connect(ws)
+        ws = _fake_ws()
+        mgr.active_connections.append(ws)
+
         mgr.disconnect(ws)
+        mgr.disconnect(ws)  # must not raise
         assert ws not in mgr.active_connections
 
     @pytest.mark.asyncio
-    async def test_disconnect_not_connected(self):
+    async def test_broadcast_reaches_every_client(self):
         mgr = WebSocketManager()
-        ws = AsyncMock()
-        mgr.disconnect(ws)  # No error
-        assert len(mgr.active_connections) == 0
+        a, b = _fake_ws(), _fake_ws()
+        mgr.active_connections.extend([a, b])
+
+        await mgr.broadcast({"type": "hello"})
+
+        a.send_json.assert_awaited_once_with({"type": "hello"})
+        b.send_json.assert_awaited_once_with({"type": "hello"})
 
     @pytest.mark.asyncio
-    async def test_broadcast(self):
+    async def test_broadcast_drops_a_dead_client_and_keeps_going(self):
+        """One broken socket must not stop the others receiving the message."""
         mgr = WebSocketManager()
-        ws1 = AsyncMock()
-        ws2 = AsyncMock()
-        await mgr.connect(ws1)
-        await mgr.connect(ws2)
+        dead, alive = _fake_ws(), _fake_ws()
+        dead.send_json.side_effect = RuntimeError("socket closed")
+        mgr.active_connections.extend([dead, alive])
 
-        msg = {"type": "task_update", "task_id": 1}
-        await mgr.broadcast(msg)
+        await mgr.broadcast({"type": "hello"})
 
-        ws1.send_json.assert_awaited_once_with(msg)
-        ws2.send_json.assert_awaited_once_with(msg)
+        alive.send_json.assert_awaited_once()
+        assert dead not in mgr.active_connections
+        assert alive in mgr.active_connections
 
     @pytest.mark.asyncio
-    async def test_broadcast_removes_failed_connections(self):
-        mgr = WebSocketManager()
-        ws_ok = AsyncMock()
-        ws_bad = AsyncMock()
-        ws_bad.send_json.side_effect = Exception("connection closed")
-
-        await mgr.connect(ws_ok)
-        await mgr.connect(ws_bad)
-        assert len(mgr.active_connections) == 2
-
-        await mgr.broadcast({"type": "test"})
-
-        # Bad connection should be removed
-        assert ws_bad not in mgr.active_connections
-        assert ws_ok in mgr.active_connections
+    async def test_broadcast_with_no_clients_is_a_noop(self):
+        await WebSocketManager().broadcast({"type": "hello"})  # must not raise
 
     @pytest.mark.asyncio
-    async def test_broadcast_empty_connections(self):
+    async def test_send_ping_shape(self):
         mgr = WebSocketManager()
-        # Should not raise
-        await mgr.broadcast({"type": "test"})
+        ws = _fake_ws()
+        mgr.active_connections.append(ws)
 
-    @pytest.mark.asyncio
-    async def test_send_ping(self):
-        mgr = WebSocketManager()
-        ws = AsyncMock()
-        await mgr.connect(ws)
         await mgr.send_ping()
-        ws.send_json.assert_awaited_once()
-        call_args = ws.send_json.call_args[0][0]
-        assert call_args["type"] == "ping"
-        assert "timestamp" in call_args
+
+        sent = ws.send_json.await_args.args[0]
+        assert sent["type"] == "ping"
+        assert sent["timestamp"]
 
 
-# ── RedisSubscriber ──────────────────────────────────────────────────
+class TestBroadcastSync:
+    """The bridge background threads use to reach the loop."""
 
-class TestRedisSubscriber:
-    def test_init(self):
-        sub = RedisSubscriber("redis://localhost:6379/0", "test-channel")
-        assert sub.redis_url == "redis://localhost:6379/0"
-        assert sub.channel == "test-channel"
+    def test_drops_the_message_when_no_loop_is_bound(self, monkeypatch):
+        monkeypatch.setattr(websocket_service, "_loop", None)
+        broadcast_sync({"type": "system_upgrade"})  # must not raise
+
+    def test_drops_the_message_when_the_loop_is_not_running(self, monkeypatch):
+        loop = MagicMock()
+        loop.is_running.return_value = False
+        monkeypatch.setattr(websocket_service, "_loop", loop)
+
+        broadcast_sync({"type": "system_upgrade"})  # must not raise
 
     @pytest.mark.asyncio
-    async def test_listen_not_connected_raises(self):
-        sub = RedisSubscriber("redis://localhost:6379/0", "test-channel")
-        with pytest.raises(RuntimeError, match="Not connected"):
-            await sub.listen()
+    async def test_delivers_onto_a_running_loop(self, monkeypatch):
+        mgr = WebSocketManager()
+        ws = _fake_ws()
+        mgr.active_connections.append(ws)
+        monkeypatch.setattr(websocket_service, "ws_manager", mgr)
+        websocket_service.bind_event_loop(asyncio.get_running_loop())
 
+        await asyncio.to_thread(broadcast_sync, {"type": "system_upgrade", "line": "hi"})
+        await asyncio.sleep(0.05)  # let the scheduled coroutine run
 
-# ── publish_task_update ──────────────────────────────────────────────
-
-class TestPublishTaskUpdate:
-    @patch("services.websocket_service.get_sync_redis_client")
-    def test_publish_basic(self, mock_get_client):
-        mock_redis = MagicMock()
-        mock_get_client.return_value = mock_redis
-
-        publish_task_update(
-            task_id=1, status="completed", project_id=10,
-            module_id=5, task_type="apply",
-        )
-
-        mock_redis.publish.assert_called_once()
-        channel, data = mock_redis.publish.call_args[0]
-        assert channel == "bnk-forge:task-updates"
-        parsed = json.loads(data)
-        assert parsed["task_id"] == 1
-        assert parsed["status"] == "completed"
-
-    @patch("services.websocket_service.get_sync_redis_client")
-    def test_publish_with_optional_fields(self, mock_get_client):
-        mock_redis = MagicMock()
-        mock_get_client.return_value = mock_redis
-
-        publish_task_update(
-            task_id=2, status="failed", project_id=10,
-            exit_code=1, error="something failed", duration_seconds=5.5,
-            metadata={"key": "val"},
-        )
-
-        _, data = mock_redis.publish.call_args[0]
-        parsed = json.loads(data)
-        assert parsed["exit_code"] == 1
-        assert parsed["error"] == "something failed"
-        assert parsed["duration_seconds"] == 5.5
-        assert parsed["metadata"] == {"key": "val"}
-
-    @patch("services.websocket_service.get_sync_redis_client")
-    def test_publish_handles_redis_error(self, mock_get_client):
-        mock_redis = MagicMock()
-        mock_redis.publish.side_effect = Exception("Redis down")
-        mock_get_client.return_value = mock_redis
-
-        # Should not raise — errors are logged and suppressed
-        publish_task_update(task_id=3, status="completed", project_id=10)
+        ws.send_json.assert_awaited_once_with({"type": "system_upgrade", "line": "hi"})

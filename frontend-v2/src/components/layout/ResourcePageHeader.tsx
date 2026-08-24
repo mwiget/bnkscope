@@ -9,8 +9,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Search, RefreshCw, LayoutGrid } from 'lucide-react';
+import { Search, RefreshCw } from 'lucide-react';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useIsShort } from '@/hooks/useMediaQuery';
 
 interface Cluster {
   id: number;
@@ -18,25 +19,23 @@ interface Cluster {
   status?: string;
 }
 
-interface Project {
-  id: number;
-  name: string;
-}
-
 interface ResourcePageHeaderProps {
   title?: string;
   subtitle?: React.ReactNode;
-  projects?: Project[];
-  selectedProjectId?: number | null;
-  onProjectChange?: (id: number) => void;
   clusters: Cluster[];
   selectedClusterId: number | null;
   onClusterChange: (id: number) => void;
-  namespaces: { name: string }[] | string[];
-  selectedNamespace: string;
-  onNamespaceChange: (ns: string) => void;
-  searchQuery: string;
-  onSearchChange: (query: string) => void;
+  // Namespace and search are optional: not every page that needs a cluster
+  // picker also filters by namespace or by text. TMM Live embeds a dashboard
+  // that carries its own controls, so it passes neither, and rendering an
+  // inert namespace dropdown next to it would be furniture.
+  /** Rendered first in the control row — the category-drawer trigger. */
+  leading?: React.ReactNode;
+  namespaces?: { name: string }[] | string[];
+  selectedNamespace?: string;
+  onNamespaceChange?: (ns: string) => void;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
   onRefresh?: () => void;
   isRefreshing?: boolean;
   children?: React.ReactNode;
@@ -46,9 +45,7 @@ interface ResourcePageHeaderProps {
 export function ResourcePageHeader({
   title,
   subtitle,
-  projects,
-  selectedProjectId,
-  onProjectChange,
+  leading,
   clusters,
   selectedClusterId,
   onClusterChange,
@@ -76,15 +73,23 @@ export function ResourcePageHeader({
   ]);
 
   // Normalize namespaces to strings
-  const namespaceList = namespaces.map(ns => typeof ns === 'string' ? ns : ns.name);
+  const namespaceList = (namespaces ?? []).map(ns => typeof ns === 'string' ? ns : ns.name);
+  const showNamespaces = !!onNamespaceChange;
+  const showSearch = !!onSearchChange;
+  const short = useIsShort();
 
   return (
     <div className={cn(
-      'border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75 px-6 py-4 flex flex-col gap-4 sticky top-0 z-20',
+      'sticky top-0 z-20 flex flex-col border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75',
+      // Vertical space is the scarce resource on a short viewport: an iPhone in
+      // landscape is 393px tall and this header was taking 240px of it.
+      short ? 'gap-2 px-4 py-2' : 'gap-4 px-6 py-4',
       className
     )}>
-      {/* Bold page title */}
-      {title && (
+      {/* Page title. Dropped on a short viewport — the app header already
+          names the page, so h1 + subtitle is 68px of duplication in the one
+          place where 68px is most of what the content has left. */}
+      {title && !short && (
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">{title}</h1>
           {subtitle && (
@@ -93,42 +98,21 @@ export function ResourcePageHeader({
         </div>
       )}
 
-      {/* Selector + search + actions row */}
-      <div className="flex items-center gap-3 flex-wrap">
-        {/* Optional Project Selector */}
-        {projects && onProjectChange && (
-          <div className="flex items-center gap-2">
-            <Select
-              value={selectedProjectId?.toString() || ''}
-              onValueChange={(value) => onProjectChange(parseInt(value))}
-            >
-              <SelectTrigger className="w-[180px] h-9">
-                <div className="flex items-center gap-2 min-w-0">
-                  <LayoutGrid className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                  <span className="min-w-0 flex-1 truncate text-left">
-                    <SelectValue placeholder="Select Project" />
-                  </span>
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={project.id.toString()}>
-                    {project.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <span className="text-lg font-light text-muted-foreground/50">/</span>
-          </div>
-        )}
+      {/* Selector + search + actions row.
+          `flex-wrap` was already here, but every child had a fixed pixel width,
+          so it wrapped into a tall stack of full-width controls rather than
+          fitting. The widths are now capped by the viewport. */}
+      <div className="flex items-center gap-2 md:gap-3 flex-wrap">
+        {/* Opens the page's category drawer. Renders below `lg` only. */}
+        {leading}
 
         {/* Cluster Selector */}
         <Select
           value={selectedClusterId?.toString() || ''}
           onValueChange={(value) => onClusterChange(parseInt(value))}
-          disabled={!clusters.length || (projects && !selectedProjectId)}
+          disabled={!clusters.length}
         >
-          <SelectTrigger className="w-[200px] h-9">
+          <SelectTrigger className="h-9 w-[46vw] max-w-[200px] sm:w-[200px]">
             <SelectValue placeholder="Select Cluster" />
           </SelectTrigger>
           <SelectContent>
@@ -150,15 +134,20 @@ export function ResourcePageHeader({
           </SelectContent>
         </Select>
 
-        <span className="text-lg font-light text-muted-foreground/50">/</span>
+        {/* The separator only reads as one when the two selects are on the
+            same line, which below `sm` they are not. */}
+        {showNamespaces && (
+          <span className="hidden text-lg font-light text-muted-foreground/50 sm:inline">/</span>
+        )}
 
         {/* Namespace Selector */}
+        {showNamespaces && (
         <Select
           value={selectedNamespace}
           onValueChange={onNamespaceChange}
           disabled={!selectedClusterId}
         >
-          <SelectTrigger className="w-[180px] h-9 font-medium">
+          <SelectTrigger className="h-9 w-[46vw] max-w-[180px] font-medium sm:w-[180px]">
              <span className="truncate">
                 {selectedNamespace === 'all' ? 'All Namespaces' : selectedNamespace}
              </span>
@@ -180,19 +169,24 @@ export function ResourcePageHeader({
             ))}
           </SelectContent>
         </Select>
+        )}
 
         {/* Search Input */}
-        <div className="flex-1 relative min-w-[200px]">
+        {showSearch ? (
+        <div className="relative w-full min-w-0 flex-1 sm:w-auto sm:min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             ref={searchInputRef}
             placeholder="Search... (/)"
             aria-label="Search resources"
             value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
+            onChange={(e) => onSearchChange?.(e.target.value)}
             className="pl-9 h-9 transition-all focus:w-full"
           />
         </div>
+        ) : (
+          <div className="flex-1" />
+        )}
 
         {/* Actions Area */}
         <div className="flex items-center gap-2">

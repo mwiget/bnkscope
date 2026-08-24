@@ -1,13 +1,8 @@
 import { z } from 'zod';
 
 const CHANNEL_TYPES = ['webhook', 'slack', 'msteams', 'email'] as const;
-const EVENT_TYPES = [
-  'health_change',
-  'drift_detected',
-  'deploy_success',
-  'deploy_failed',
-  'deploy_started',
-] as const;
+// Only the events bnkscope can raise -- see AlertEventType in types/alerts.
+const EVENT_TYPES = ['health_change'] as const;
 
 export const alertChannelSchema = z
   .object({

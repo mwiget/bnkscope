@@ -16,7 +16,7 @@ class TestClusterCreate:
     """POST /api/projects/{pid}/k8s/clusters."""
 
     @patch("routes.k8s.clusters.ClusterManagementService")
-    def test_create_cluster(self, mock_svc_cls, client, admin_headers, sample_user, sample_project):
+    def test_create_cluster(self, mock_svc_cls, client, admin_headers, sample_user):
         """Admin can create a cluster via the service."""
         mock_svc = MagicMock()
         mock_svc.create_cluster.return_value = {
@@ -30,7 +30,7 @@ class TestClusterCreate:
         mock_svc_cls.return_value = mock_svc
 
         response = client.post(
-            f"/api/projects/{sample_project.id}/k8s/clusters",
+            "/api/k8s/clusters",
             json={
                 "name": "test-cluster",
                 "kubeconfig": "YXBpVmVyc2lvbjogdjEK",  # base64 dummy
@@ -46,14 +46,14 @@ class TestClusterCreate:
         mock_svc.create_cluster.assert_called_once()
 
     @patch("routes.k8s.clusters.ClusterManagementService")
-    def test_create_cluster_operator_allowed(self, mock_svc_cls, client, operator_headers, all_test_users, sample_project):
+    def test_create_cluster_operator_allowed(self, mock_svc_cls, client, operator_headers, all_test_users):
         """Operator can create clusters."""
         mock_svc = MagicMock()
         mock_svc.create_cluster.return_value = {"id": 2, "name": "op-cluster"}
         mock_svc_cls.return_value = mock_svc
 
         response = client.post(
-            f"/api/projects/{sample_project.id}/k8s/clusters",
+            "/api/k8s/clusters",
             json={
                 "name": "op-cluster",
                 "kubeconfig": "YXBpVmVyc2lvbjogdjEK",
@@ -62,26 +62,13 @@ class TestClusterCreate:
         )
         assert response.status_code == 200
 
-    def test_viewer_cannot_create(self, client, viewer_headers, all_test_users, sample_project):
-        """Viewer cannot create clusters — returns 403."""
-        response = client.post(
-            f"/api/projects/{sample_project.id}/k8s/clusters",
-            json={
-                "name": "viewer-cluster",
-                "kubeconfig": "YXBpVmVyc2lvbjogdjEK",
-            },
-            headers=viewer_headers,
-        )
-        assert response.status_code == 403
-
-
 class TestClusterList:
     """GET /api/k8s/clusters."""
 
     @patch("routes.k8s.clusters.ClusterManagementService")
-    def test_list_clusters(self, mock_svc_cls, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster):
+    def test_list_clusters(self, mock_svc_cls, client, viewer_headers, all_test_users, make_k8s_cluster):
         """Viewer can list all clusters."""
-        cluster = make_k8s_cluster(project=sample_project, name="list-cluster-1")
+        cluster = make_k8s_cluster(name="list-cluster-1")
         mock_svc = MagicMock()
         mock_svc.list_all_clusters.return_value = {
             "clusters": [
@@ -98,19 +85,13 @@ class TestClusterList:
         assert isinstance(data["clusters"], list)
         assert len(data["clusters"]) >= 1
 
-    def test_list_clusters_unauthenticated(self, client):
-        """Unauthenticated request returns 401."""
-        response = client.get("/api/k8s/clusters")
-        assert response.status_code == 401
-
-
 class TestClusterDetail:
     """GET /api/k8s/clusters/{id}."""
 
     @patch("routes.k8s.clusters.ClusterManagementService")
-    def test_get_cluster_details(self, mock_svc_cls, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster):
+    def test_get_cluster_details(self, mock_svc_cls, client, viewer_headers, all_test_users, make_k8s_cluster):
         """Viewer can get cluster details."""
-        cluster = make_k8s_cluster(project=sample_project, name="detail-cluster")
+        cluster = make_k8s_cluster(name="detail-cluster")
         mock_svc = MagicMock()
         mock_svc.get_cluster_details.return_value = {
             "id": cluster.id,
@@ -144,9 +125,9 @@ class TestClusterUpdate:
     """PUT /api/k8s/clusters/{id}."""
 
     @patch("routes.k8s.clusters.ClusterManagementService")
-    def test_update_cluster(self, mock_svc_cls, client, admin_headers, sample_user, sample_project, make_k8s_cluster):
+    def test_update_cluster(self, mock_svc_cls, client, admin_headers, sample_user, make_k8s_cluster):
         """Admin can update cluster configuration."""
-        cluster = make_k8s_cluster(project=sample_project, name="update-cluster")
+        cluster = make_k8s_cluster(name="update-cluster")
         mock_svc = MagicMock()
         mock_svc.update_cluster.return_value = {
             "id": cluster.id,
@@ -165,24 +146,13 @@ class TestClusterUpdate:
         assert data["name"] == "updated-cluster"
         mock_svc.update_cluster.assert_called_once()
 
-    def test_viewer_cannot_update(self, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster):
-        """Viewer cannot update clusters — returns 403."""
-        cluster = make_k8s_cluster(project=sample_project)
-        response = client.put(
-            f"/api/k8s/clusters/{cluster.id}",
-            json={"name": "hacked"},
-            headers=viewer_headers,
-        )
-        assert response.status_code == 403
-
-
 class TestClusterDelete:
     """DELETE /api/k8s/clusters/{id}."""
 
     @patch("routes.k8s.clusters.ClusterManagementService")
-    def test_delete_cluster(self, mock_svc_cls, client, admin_headers, sample_user, sample_project, make_k8s_cluster):
+    def test_delete_cluster(self, mock_svc_cls, client, admin_headers, sample_user, make_k8s_cluster):
         """Admin can delete a cluster."""
-        cluster = make_k8s_cluster(project=sample_project, name="delete-cluster")
+        cluster = make_k8s_cluster(name="delete-cluster")
         mock_svc = MagicMock()
         mock_svc.delete_cluster.return_value = {"success": True, "message": "Cluster deleted"}
         mock_svc_cls.return_value = mock_svc
@@ -193,20 +163,13 @@ class TestClusterDelete:
         assert data["success"] is True
         mock_svc.delete_cluster.assert_called_once_with(cluster.id)
 
-    def test_viewer_cannot_delete(self, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster):
-        """Viewer cannot delete clusters — returns 403."""
-        cluster = make_k8s_cluster(project=sample_project)
-        response = client.delete(f"/api/k8s/clusters/{cluster.id}", headers=viewer_headers)
-        assert response.status_code == 403
-
-
 class TestClusterTestConnection:
     """POST /api/k8s/clusters/{id}/test."""
 
     @patch("routes.k8s.clusters.KubernetesService")
-    def test_test_connection(self, mock_k8s_svc_cls, client, admin_headers, sample_user, sample_project, make_k8s_cluster):
+    def test_test_connection(self, mock_k8s_svc_cls, client, admin_headers, sample_user, make_k8s_cluster):
         """Operator/admin can test cluster connection."""
-        cluster = make_k8s_cluster(project=sample_project, name="conn-test-cluster")
+        cluster = make_k8s_cluster(name="conn-test-cluster")
         mock_svc = MagicMock()
         mock_svc.test_connection.return_value = {
             "success": True,
@@ -221,8 +184,3 @@ class TestClusterTestConnection:
         assert data["success"] is True
         mock_svc.test_connection.assert_called_once_with(cluster.id)
 
-    def test_viewer_cannot_test_connection(self, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster):
-        """Viewer cannot test cluster connection — returns 403."""
-        cluster = make_k8s_cluster(project=sample_project)
-        response = client.post(f"/api/k8s/clusters/{cluster.id}/test", headers=viewer_headers)
-        assert response.status_code == 403

@@ -9,50 +9,36 @@ fastapi==0.138.1
 uvicorn==0.34.0
 websockets==14.1
 pyyaml==6.0.2
-jinja2>=3.1.0
 python-multipart==0.0.31
 pydantic-settings==2.7.1
 
-# Database
+# Database — SQLite via the stdlib driver. Phase 4 dropped PostgreSQL (no
+# server for a single-user local tool) and Alembic with it: the schema is
+# created from the ORM models at startup, see backend/database.py.
 sqlalchemy==2.0.36
-psycopg2-binary==2.9.10
-alembic==1.14.1
 
-# Security — cryptography 48.x fixes GHSA-537c-gmf6-5ccf (also CVE-2024-26130, CVE-2023-49083, CVE-2026-34073)
-cryptography==48.0.1
-python-jose[cryptography]==3.5.0
+# Security — cryptography 50.x fixes PYSEC-2026-3552/3553/3554 (48.0.1 was affected;
+# 3553/3554 need >=49, 3552 needs >=50). Used for encrypting kubeconfigs and cloud
+# credentials at rest; bnkscope has no authentication of its own (Phase 3).
+cryptography==50.0.0
 PyJWT==2.13.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.2.1
-pyasn1==0.6.3
+pyasn1==0.6.4
 
-# Task queue
-celery==5.4.0
-redis==5.2.1
-
-# Scheduling
+# Scheduling — periodic jobs run in-process on APScheduler. The broker and
+# result backend they used to need went with Celery in Phase 4; see
+# backend/core/background.py for what replaced the worker pool. croniter went
+# with them: every job here is a fixed interval, not a cron expression.
 apscheduler==3.10.4
-croniter==5.0.1
 
-# Infrastructure tools
-python-hcl2==4.3.5
-gitpython==3.1.50
+# Cloud and cluster access
 boto3==1.36.4
 google-auth==2.38.0
-paramiko==5.0.0
 kubernetes==31.0.0
 kr8s==0.20.15
 
 # HTTP
 httpx==0.28.1
 requests==2.33.0
-
-# Templating (DPU bf.conf renderer — Phase 4)
-# 3.1.6 fixes CVE-2025-27516 (sandbox bypass via |attr filter).
-Jinja2==3.1.6
-
-# Rate limiting
-slowapi==0.1.9
 
 # Process metrics (CPU/RAM/network for self-monitoring endpoint)
 psutil==6.1.1

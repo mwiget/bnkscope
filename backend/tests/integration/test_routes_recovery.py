@@ -59,11 +59,6 @@ class TestRecoveryStatusEndpoint:
         assert data["vlans_failed"] is True
         assert data["platform_healthy"] is False
 
-    def test_status_requires_auth(self, client):
-        resp = client.get("/api/k8s/clusters/1/recovery/status")
-        assert resp.status_code == 401
-
-
 class TestCWCCertResyncEndpoint:
     """Tests for POST /api/k8s/clusters/{id}/recovery/cwc-certs."""
 
@@ -132,10 +127,6 @@ class TestCWCCertResyncEndpoint:
 
         assert data["success"] is False
         assert "not found" in data["message"].lower() or "timed out" in data["message"].lower()
-
-    def test_resync_requires_operator_auth(self, client, viewer_headers, all_test_users):
-        resp = client.post("/api/k8s/clusters/1/recovery/cwc-certs", headers=viewer_headers)
-        assert resp.status_code == 403
 
     @patch("routes.k8s.recovery._get_install_shape", return_value="helm")
     @patch("routes.k8s.recovery._detect_cwc_namespace", return_value="f5-cne-core")
@@ -252,21 +243,6 @@ class TestPlatformRestartEndpoint:
 
         assert data["success"] is True
         assert len(data["restarted"]) == 3
-
-    def test_restart_requires_operator_auth(self, client, viewer_headers, all_test_users):
-        resp = client.post(
-            "/api/k8s/clusters/1/recovery/platform-restart",
-            headers=viewer_headers,
-            json={"restart_controller": True, "restart_flo": False, "restart_tmm": False},
-        )
-        assert resp.status_code == 403
-
-    def test_restart_requires_auth(self, client):
-        resp = client.post(
-            "/api/k8s/clusters/1/recovery/platform-restart",
-            json={"restart_controller": True, "restart_flo": False, "restart_tmm": False},
-        )
-        assert resp.status_code == 401
 
     @patch("routes.k8s.recovery._detect_bnk_tenant_namespace", return_value="bnk-app1")
     @patch("routes.k8s.recovery.k8s_client")

@@ -53,7 +53,16 @@ export function ResourceViewTabs({
         className,
       )}
     >
-      <div role="tablist" aria-label={ariaLabel} className="flex w-full overflow-x-auto">
+      {/* `overflow-x-auto` was already here and never fired: `flex-1` on every
+          tab let them shrink instead of overflow, so on a phone they squashed
+          to ~78px each and `truncate` cut the labels to stubs — cut off, with
+          nothing to scroll. Below `sm` the tabs keep their natural width, the
+          row overflows, and touch-scrolling works. */}
+      <div
+        role="tablist"
+        aria-label={ariaLabel}
+        className="flex w-full overflow-x-auto overscroll-x-contain [scrollbar-width:thin]"
+      >
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = active === tab.key;
@@ -67,7 +76,10 @@ export function ResourceViewTabs({
               title={tab.title}
               onClick={() => !tab.disabled && onChange(tab.key)}
               className={cn(
-                'flex min-w-0 max-w-[16rem] flex-1 items-center justify-center gap-2 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors',
+                'flex items-center justify-center gap-2 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors',
+                // Natural width on a narrow screen so the row scrolls; share
+                // the width once there is enough of it to share.
+                'flex-none sm:min-w-0 sm:max-w-[16rem] sm:flex-1',
                 tab.disabled
                   ? 'cursor-not-allowed border-transparent text-muted-foreground/40'
                   : isActive
@@ -76,7 +88,7 @@ export function ResourceViewTabs({
               )}
             >
               {Icon && <Icon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />}
-              <span className="truncate">{tab.label}</span>
+              <span className="sm:truncate">{tab.label}</span>
               {tab.badge && <span className="flex-shrink-0">{tab.badge}</span>}
             </button>
           );

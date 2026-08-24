@@ -12,23 +12,14 @@ from schemas.k8s import (
     ClusterDetailResponse,
     ClusterListResponse,
     ClusterOperationResponse,
-    ClusterScanResponse,
     ClusterSummary,
     CreateMigrationRequest,
-    K8sResourceItem,
-    K8sResourceListResponse,
-    K8sResourceOperationResponse,
     NamespaceInfo,
     NamespaceListResponse,
     NodeCountResponse,
-    ResourceTypeInfo,
-    ResourceTypeListResponse,
-    TunnelListResponse,
-    TunnelStatus,
 )
 
 # ── Cluster schemas ──────────────────────────────────────────────────
-
 
 class TestClusterSummary:
     def test_minimal(self):
@@ -37,7 +28,6 @@ class TestClusterSummary:
         assert c.name == "dev-cluster"
         assert c.status == "active"  # default
         assert c.default_namespace == "default"
-        assert c.ssh_tunnel_enabled is False
 
     def test_full(self):
         c = ClusterSummary(
@@ -50,16 +40,29 @@ class TestClusterSummary:
             cloud_provider="aws",
             region="us-west-2",
             default_namespace="production",
-            project_id=5,
-            ssh_tunnel_enabled=True,
             node_count=10,
             created_at="2026-01-01T00:00:00",
             updated_at="2026-02-01T00:00:00",
         )
         assert c.cloud_provider == "aws"
         assert c.node_count == 10
-        assert c.ssh_tunnel_enabled is True
 
+    def test_project_and_ssh_fields_are_gone(self):
+        """Both concepts were removed (Phases 1-3); the schema outlived them.
+
+        Pydantic ignores unknown kwargs by default, so a stale field here is
+        silently accepted forever and keeps showing up in the generated
+        TypeScript. Assert they no longer exist.
+        """
+        for dead in (
+            "project_id",
+            "ssh_tunnel_enabled",
+            "ssh_remote_k8s_host",
+            "ssh_remote_k8s_port",
+            "ssh_credential_id",
+            "ssh_host_override",
+        ):
+            assert dead not in ClusterSummary.model_fields
 
 class TestClusterListResponse:
     def test_empty_list(self):
@@ -75,7 +78,6 @@ class TestClusterListResponse:
         )
         assert len(r.clusters) == 2
 
-
 class TestClusterDetailResponse:
     def test_full_detail(self):
         d = ClusterDetailResponse(
@@ -85,15 +87,11 @@ class TestClusterDetailResponse:
             api_server="https://k8s.example.com",
             version="1.28",
             status="active",
-            ssh_tunnel_enabled=True,
-            ssh_remote_k8s_host="10.0.0.5",
-            ssh_remote_k8s_port=6443,
-            ssh_credential_id=3,
+            region="us-west-2",
             meta_data={"provider": "aws", "tags": ["production"]},
         )
-        assert d.ssh_remote_k8s_host == "10.0.0.5"
+        assert d.region == "us-west-2"
         assert d.meta_data["provider"] == "aws"
-
 
 class TestClusterOperationResponse:
     def test_success(self):
@@ -104,7 +102,6 @@ class TestClusterOperationResponse:
     def test_without_cluster_id(self):
         r = ClusterOperationResponse(message="Deleted")
         assert r.cluster_id is None
-
 
 class TestClusterConnectionTestResponse:
     def test_success(self):
@@ -131,9 +128,7 @@ class TestClusterConnectionTestResponse:
         assert r.version is None
         assert r.status_code == 403
 
-
 # ── Namespace / Node schemas ─────────────────────────────────────────
-
 
 class TestNamespaceInfo:
     def test_minimal(self):
@@ -150,7 +145,6 @@ class TestNamespaceInfo:
         )
         assert n.labels["env"] == "prod"
 
-
 class TestNamespaceListResponse:
     def test_with_namespaces(self):
         r = NamespaceListResponse(
@@ -160,132 +154,14 @@ class TestNamespaceListResponse:
         assert len(r.namespaces) == 2
         assert r.cluster_id == 1
 
-
 class TestNodeCountResponse:
     def test_node_count(self):
         r = NodeCountResponse(node_count=5, cluster_id=1)
         assert r.node_count == 5
 
-
 # ── Resource schemas ─────────────────────────────────────────────────
 
-
-class TestK8sResourceItem:
-    def test_minimal(self):
-        r = K8sResourceItem(name="my-pod")
-        assert r.name == "my-pod"
-        assert r.namespace is None
-
-    def test_full(self):
-        r = K8sResourceItem(
-            name="nginx-deployment",
-            namespace="production",
-            kind="Deployment",
-            api_version="apps/v1",
-            status="Running",
-            age="5d",
-            labels={"app": "nginx"},
-            annotations={"deployment.kubernetes.io/revision": "3"},
-            conditions=[{"type": "Available", "status": "True"}],
-        )
-        assert r.kind == "Deployment"
-        assert r.labels["app"] == "nginx"
-        assert len(r.conditions) == 1
-
-
-class TestK8sResourceListResponse:
-    def test_response(self):
-        r = K8sResourceListResponse(
-            resources=[K8sResourceItem(name="pod1"), K8sResourceItem(name="pod2")],
-            resource_type="pods",
-            namespace="default",
-            cluster_id=1,
-        )
-        assert len(r.resources) == 2
-        assert r.resource_type == "pods"
-
-
-class TestK8sResourceOperationResponse:
-    def test_success(self):
-        r = K8sResourceOperationResponse(
-            message="Resource created",
-            resource_name="my-configmap",
-            namespace="default",
-        )
-        assert r.success is True
-        assert r.resource_name == "my-configmap"
-
-
 # ── Scan / Resource Type / Tunnel schemas ────────────────────────────
-
-
-class TestClusterScanResponse:
-    def test_success(self):
-        r = ClusterScanResponse(
-            success=True,
-            message="Scan complete",
-            scan_results={"deployments": 5, "services": 3},
-        )
-        assert r.scan_results["deployments"] == 5
-
-    def test_no_results(self):
-        r = ClusterScanResponse(success=True, message="No results")
-        assert r.scan_results is None
-
-
-class TestResourceTypeInfo:
-    def test_resource_type(self):
-        r = ResourceTypeInfo(
-            name="deployments",
-            api_version="apps/v1",
-            kind="Deployment",
-            namespaced=True,
-            verbs=["get", "list", "create", "delete"],
-        )
-        assert r.namespaced is True
-        assert "create" in r.verbs
-
-
-class TestResourceTypeListResponse:
-    def test_list(self):
-        r = ResourceTypeListResponse(
-            resource_types=[
-                ResourceTypeInfo(name="pods", api_version="v1", kind="Pod", namespaced=True),
-                ResourceTypeInfo(name="nodes", api_version="v1", kind="Node", namespaced=False),
-            ]
-        )
-        assert len(r.resource_types) == 2
-
-
-class TestTunnelStatus:
-    def test_active_tunnel(self):
-        t = TunnelStatus(
-            cluster_id=1,
-            cluster_name="prod",
-            active=True,
-            local_port=6443,
-            ssh_host="bastion.example.com",
-            uptime_seconds=3600.5,
-        )
-        assert t.active is True
-        assert t.local_port == 6443
-
-    def test_inactive_tunnel(self):
-        t = TunnelStatus(cluster_id=2)
-        assert t.active is False
-        assert t.local_port is None
-
-
-class TestTunnelListResponse:
-    def test_list(self):
-        r = TunnelListResponse(
-            tunnels=[
-                TunnelStatus(cluster_id=1, active=True, local_port=6443),
-                TunnelStatus(cluster_id=2, active=False),
-            ]
-        )
-        assert len(r.tunnels) == 2
-
 
 # ── CreateMigrationRequest — kubectl_resources validation (mwiget audit) ──────
 
@@ -293,7 +169,6 @@ MINIMAL_MIGRATION = {
     "source_descriptor": {"proxy_type": "cis-bigip", "class_name": "my-vs", "namespace": "default"},
     "combined_yaml": "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: test\n",
 }
-
 
 class TestCreateMigrationRequestKubectlResources:
     """Validate that kubectl_resources elements are safe 'kind/name [namespace]' strings.

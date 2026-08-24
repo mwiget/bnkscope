@@ -37,7 +37,17 @@ Object.defineProperty(window, 'localStorage', {
 
 function resetBnkSelectionStorage() {
   window.localStorage.removeItem(STORAGE_KEYS.BNK_PROJECT);
-  window.localStorage.removeItem(STORAGE_KEYS.BNK_CLUSTER);
+  // Every cluster key, not just this page's: the selection is shared now, and
+  // useSelectedCluster falls back to the superseded per-page keys, so a
+  // leftover from another suite would look like a real selection.
+  for (const key of [
+    STORAGE_KEYS.SELECTED_CLUSTER,
+    STORAGE_KEYS.K8S_CLUSTER,
+    STORAGE_KEYS.BNK_CLUSTER,
+    STORAGE_KEYS.CNF_CLUSTER,
+  ]) {
+    window.localStorage.removeItem(key);
+  }
   window.localStorage.removeItem('bnk-forge-bnk-initial-view');
 }
 
@@ -128,12 +138,19 @@ interface TestCluster {
   ssh_host_override: string | null;
   last_synced_at: string | null;
   created_at: string | null;
+  meta_data?: Record<string, unknown>;
 }
 
-function buildCluster(id: number, projectId: number, name: string): TestCluster {
+function buildCluster(
+  id: number,
+  projectId: number,
+  name: string,
+  meta_data?: Record<string, unknown>,
+): TestCluster {
   return {
     id,
     name,
+    ...(meta_data ? { meta_data } : {}),
     context: `${name}-ctx`,
     api_server: `https://${name}.example.local`,
     cloud_provider: null,
@@ -195,11 +212,6 @@ describe('F5BNK', () => {
     expect(pageContent).toBeInTheDocument();
   });
 
-  it('shows "No project selected" empty state when no project is chosen', () => {
-    render(<F5BNK />);
-    expect(screen.getByText('No project selected')).toBeInTheDocument();
-  });
-
   it('shows "No cluster selected" when project is set but no cluster', () => {
     window.localStorage.setItem('bnk-forge-bnk-project', '1');
     render(<F5BNK />);
@@ -221,22 +233,6 @@ describe('F5BNK', () => {
     expect(sidebarItem).toBeInTheDocument();
   });
 
-  it('auto-selects project when exactly one project exists and none is selected', async () => {
-    const singleProject = [{ id: 1, name: 'project-one' }];
-    const singleCluster = [buildCluster(101, 1, 'cluster-one')];
-    mockF5PageApis({
-      projects: singleProject,
-      allClusters: singleCluster,
-      clustersByProject: { 1: singleCluster },
-    });
-
-    render(<F5BNK />);
-
-    await waitFor(() => {
-      expect(window.localStorage.getItem(STORAGE_KEYS.BNK_PROJECT)).toBe('1');
-    });
-  });
-
   it('auto-selects cluster when exactly one cluster exists for the selected project', async () => {
     const singleProject = [{ id: 1, name: 'project-one' }];
     const singleCluster = [buildCluster(101, 1, 'cluster-one')];
@@ -249,48 +245,27 @@ describe('F5BNK', () => {
     render(<F5BNK />);
 
     await waitFor(() => {
-      expect(window.localStorage.getItem(STORAGE_KEYS.BNK_CLUSTER)).toBe('101');
+      expect(window.localStorage.getItem(STORAGE_KEYS.SELECTED_CLUSTER)).toBe('101');
     });
   });
 
-  it('does NOT auto-select when multiple projects exist', async () => {
-    const projects = [
-      { id: 1, name: 'project-one' },
-      { id: 2, name: 'project-two' },
-    ];
-    const singleCluster = [buildCluster(101, 1, 'cluster-one')];
+  it('says BNK does not run here on a DPF infrastructure cluster', async () => {
+    // Every panel on this page reads the K8s API of the selected cluster. On
+    // the DPF infra cluster they all come back empty, which renders as a wall
+    // of absent components — indistinguishable from a broken BNK install.
+    const dpf = [buildCluster(101, 1, 'infra', { has_dpf: true })];
     mockF5PageApis({
-      projects,
-      allClusters: singleCluster,
-      clustersByProject: { 1: singleCluster, 2: [] },
+      projects: [{ id: 1, name: 'p' }],
+      allClusters: dpf,
+      clustersByProject: { 1: dpf },
     });
 
     render(<F5BNK />);
 
     await waitFor(() => {
-      expect(screen.getByText('No project selected')).toBeInTheDocument();
+      expect(screen.getByText('BNK does not run on this cluster')).toBeInTheDocument();
     });
-    expect(window.localStorage.getItem(STORAGE_KEYS.BNK_PROJECT)).toBeFalsy();
+    expect(screen.getByText(/DPF infrastructure cluster/i)).toBeInTheDocument();
   });
 
-  it('does NOT auto-select when multiple clusters exist', async () => {
-    const singleProject = [{ id: 1, name: 'project-one' }];
-    const clusters = [
-      buildCluster(101, 1, 'cluster-one'),
-      buildCluster(102, 1, 'cluster-two'),
-    ];
-    mockF5PageApis({
-      projects: singleProject,
-      allClusters: clusters,
-      clustersByProject: { 1: clusters },
-    });
-
-    render(<F5BNK />);
-
-    await waitFor(() => {
-      expect(screen.getByText('No project selected')).toBeInTheDocument();
-    });
-    expect(window.localStorage.getItem(STORAGE_KEYS.BNK_PROJECT)).toBeFalsy();
-    expect(window.localStorage.getItem(STORAGE_KEYS.BNK_CLUSTER)).toBeFalsy();
-  });
 });

@@ -1,427 +1,288 @@
-# BNK Forge
+<img src="frontend-v2/public/icons/bnkscope.svg" width="96" align="right" alt="">
 
-**Deploy, operate, and monitor F5 BIG-IP Next for Kubernetes (BNK)** — from Day 1 deployment to Day 2 operations through a single pane of glass.
+# bnkscope
 
-![Version](https://img.shields.io/badge/Version-current_branch-blue)
-![Docker](https://img.shields.io/badge/Docker-Compose-blue)
-![React](https://img.shields.io/badge/React-18-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-Python-green)
-![Tests](https://img.shields.io/badge/Tests-CI%20validated-brightgreen)
+**Something is wrong with a BNK cluster. Find out what.**
+
+bnkscope is a local, single-user tool for troubleshooting and monitoring
+F5 BIG-IP Next for Kubernetes. It runs on your laptop, reads your own
+kubeconfig, and shows you the cluster.
+
+It does not deploy anything. It has no users, no roles, no pipeline, and no
+opinion about how your clusters got there.
+
+```bash
+git clone https://github.com/mwiget/bnkscope.git
+cd bnkscope
+./bnkscope up
+```
+
+Open the URL it prints. There is no login.
 
 ---
 
-## Quick Start
+## What happens next
 
-**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Docker Compose, and Git. That's it — all other tools are inside the container.
+bnkscope reads `~/.kube/config` on startup and probes every context in it.
+A cluster running **BNK** or the **NVIDIA DPF operator** registers itself —
+detected by pod labels, not namespace names, because on a real deployment the
+two live on different clusters and the namespaces vary by install shape.
+Everything else is listed with a one-click **Add**, or a plain reason it cannot
+be added: an unreadable cert path, an auth plugin bnkscope cannot run.
 
-### Prerequisite: the artifact runner network
+Then:
 
-BNK Forge's container-image engine runs each artifact step in its own container,
-attached to a dedicated bridge network named **`bnk-forge-artifacts`**. Create it
-once per host, picking any subnet that doesn't overlap your network:
-
-```bash
-docker network create --driver bridge --subnet 10.200.0.0/24 bnk-forge-artifacts
-```
-
-You only need this once per host. If the network already exists, Docker says so and
-you can ignore it.
-
-**Why a subnet at all.** Docker's auto-assigned pool (starting around
-`172.17.0.0/16`) can overlap a host's VPN or other routed networks, breaking
-connectivity mid-deploy — pinning one avoids that. The `make`/`install.sh` paths
-below don't hardcode a single default (a fixed `10.200.0.0/24` collided on one
-field site); instead they resolve the subnet, in order:
-
-1. **`ARTIFACT_NETWORK_SUBNET=<cidr>`** — use that subnet verbatim.
-2. **`ARTIFACT_NETWORK_SUBNET=auto`** — skip pinning and defer to Docker's
-   `default-address-pools`. Add a dedicated pool for this network in
-   `/etc/docker/daemon.json` (then restart docker):
-   ```json
-   { "default-address-pools": [ { "base": "192.168.200.0/20", "size": 24 } ] }
-   ```
-3. **Unset (default)** — auto-detect: try each subnet in
-   `ARTIFACT_NETWORK_SUBNET_CANDIDATES` (default `10.200.0.0/24
-   192.168.200.0/24 10.213.37.0/24 172.31.255.0/24`) and use the first one that
-   doesn't overlap the host's routes or an existing docker network. If none are
-   clean, it falls back to mode 2 with a warning.
-
-This only runs when the network doesn't exist yet — once created, its own
-subnet becomes a host route, so re-detecting on every `make deploy`/`upgrade`
-would treat it as a collision with itself and never settle. On an existing
-network these tools are a no-op, except: if you've pinned an explicit CIDR
-that no longer matches what's actually there, you'll get a one-time warning
-telling you how to recreate it.
-
-Both variables may also be set in a `.env` file in the repo root.
-
-**Why you have to do this by hand.** Docker Compose only creates networks that a
-service actually attaches to. No BNK Forge service attaches to this one — and on
-a Linux server none *can*, because the stack runs with `network_mode: host`, and
-a host-networked service may not also join a bridge network. So declaring it in
-`docker-compose.yml` would create nothing. The network exists purely for the
-*artifact* containers the engine launches, which is why it has to be created
-outside of Compose.
-
-**Why the network exists at all.** Artifact images are third-party code. Putting
-them on a network of their own keeps them off Docker's default bridge, where they
-would sit alongside every other container on the host. They still get normal
-outbound access, which they need to reach cloud control planes (e.g. `roksbnkctl`
-talking to IBM Cloud), so this costs you nothing functionally.
-
-If you skip it, everything else works — but any container-engine deployment fails
-with `network not found`.
-
-> The `make` targets below (`deploy`, `up`, `install`, `update`, `upgrade-safe`)
-> and `dist/install.sh` create this network for you, so if you use them you can
-> skip this step. They are a convenience, not a requirement — the command above is
-> all they run.
-
-### Laptop (macOS / Windows)
-
-```bash
-git clone https://github.com/f5devcentral/bnk-forge.git
-cd bnk-forge
-docker network create --driver bridge --subnet 10.200.0.0/24 bnk-forge-artifacts   # once per host; any free --subnet <cidr> works
-make deploy
-```
-
-Open **https://localhost** and accept the self-signed certificate warning.
-
-`make deploy` detects macOS/WSL and switches to bridge networking with published
-ports (`docker-compose.local.yml`); on a Linux server it uses host networking. You
-do not pick — it picks.
-
-### Windows + WSL2
-
-Everything above works from inside your WSL2 distro, with three differences worth
-knowing:
-
-1. **Docker must be exposed to the distro.** BNK Forge talks to Docker from inside
-   WSL, so enable Docker Desktop → *Settings → Resources → WSL Integration* for the
-   distro you clone into. Without it you get `The command 'docker' could not be
-   found in this WSL 2 distro`. Everything runs on Docker Desktop's daemon, which is
-   shared across distros — so create `bnk-forge-artifacts` **once**, not per distro.
-
-2. **Bridge networking, not host networking — this is automatic.** WSL2 reports
-   itself as Linux, but it runs Docker Desktop, so a `network_mode: host` container
-   binds inside the hidden `docker-desktop` distro rather than yours, and nothing
-   you start is reachable from Windows. The Makefile detects WSL (via `/proc/version`)
-   and applies the laptop overlay, publishing ports instead. Consequence: the workers
-   reach the Docker socket proxy by service DNS (`tcp://docker-socket-proxy:2375`)
-   rather than `tcp://127.0.0.1:2375` as on a server.
-
-3. **Reach it on published ports.** With the overlay, the stack publishes
-   `443`/`80` (proxy), `8080` (frontend), `8000` (backend API), and `8081` (MCP). Use
-   **https://localhost**; if port 443 isn't forwarded on your box, the frontend is
-   directly available at **http://localhost:8080** and the API at
-   **http://localhost:8000**.
-
-Artifact containers behave the same as on a server: they attach to
-`bnk-forge-artifacts` and mount their workspace from the named volume by subpath —
-which is the only thing that works on Docker Desktop, where a host-path bind does
-*not* share storage with the worker's named-volume mount.
-
-### Linux Server
-
-```bash
-ssh user@your-server
-git clone https://github.com/f5devcentral/bnk-forge.git
-cd bnk-forge
-docker network create --driver bridge --subnet 10.200.0.0/24 bnk-forge-artifacts   # once per host; any free --subnet <cidr> works
-make deploy
-# Access from browser: https://your-server-ip
-```
-
-For first-time destructive bootstrap only (wipes existing BNK Forge volumes), use `make install`.
-
-### Login
-
-| Field | Value |
-|-------|-------|
-| **Username** | `admin` |
-| **Password** | `changeme` |
-
-You'll be prompted to change the password on first login.
+| | |
+|---|---|
+| **Overview** | Is anything wrong right now, and where. Clusters sort by trouble, not by name. |
+| **Clusters** | Every resource on a cluster — pods, logs, exec, events, YAML. A **DPF** tab appears on a cluster running the NVIDIA DPF operator. |
+| **BNK Health** | TMM, gateways, traffic flow, and the `tmctl` / `configview` / `bdt_cli` diagnostics. |
+| **TMM Live** | Real-time TMM counters in Grafana. One click adds the exporter to a cluster's TMM pods. |
+| **Logs** | Every cluster's logs, 24h, searchable. Collected through the Kubernetes API — nothing installed. |
+| **CNF Resources** | F5 custom resources and the conditions they report. |
+| **AI Gateway** | LLM request analytics and logs. |
 
 ---
 
-## Git Workflow (Required)
+## Security posture: no authentication at all
 
-- `staging` is the shared day-to-day integration branch.
-- Create feature/work branches from `staging`.
-- Merge normal feature/work branches back into `staging`.
-- `main` is protected and release-only (promotion path: `staging -> main`).
+> **bnkscope has no login, no users, and no roles. Where it listens is the only
+> access control there is.**
 
-Example day-to-day flow:
+By default everything that matters is on loopback: the API on `127.0.0.1:8000`,
+and the UI — which proxies `/api` straight through to it — on `127.0.0.1:8080`.
+On a laptop, that is a coherent security model: nothing off the machine can
+connect.
 
-```bash
-git checkout staging
-git pull --ff-only
-git checkout -b feature/my-change
-# ...work...
-# open PR/merge target: staging
-```
+### `--listen` removes it
+
+`bnkscope up --listen 0.0.0.0` opens the UI to the network deliberately, and
+**nothing takes over from the bind address when it does.** There is no password
+to add and no token to configure. Anyone who can reach the port has, without
+authenticating:
+
+- **A shell in any pod** on any registered cluster, over `/ws/.../exec`
+- **Every credential bnkscope holds.** `POST /api/system/backup` returns the
+  database *and* the encryption key that decrypts it, wrapped with a passphrase
+  the caller chooses. That is every kubeconfig and every stored cloud
+  credential, in one request.
+- **Cluster surgery** — restart, drain, scale, delete, and `platform-restart`
+  on a live BNK cluster
+- 155 operations in total, of which 70 change something
+
+Traffic is plain HTTP, so all of it — and everything you type into a pod shell —
+crosses the network in the clear and can be read or modified in flight.
+
+### Only use it on a network you would trust with all of that
+
+Concretely, one of:
+
+- **A private lab or management network** you control end to end
+- **A VPN — Tailscale or WireGuard.** This is the recommended answer, and it is
+  the only one that covers *every* port below rather than just the UI. Bind to
+  the VPN interface: `bnkscope up --listen 100.x.y.z`
+- **An SSH tunnel**, leaving the bind at its loopback default:
+
+  ```sh
+  ssh -N -L 8080:localhost:8080 you@the-host
+  ```
+
+Do not put it on office wifi, a shared lab VLAN, or anything reachable from a
+guest network. There is no second line of defence.
+
+### The other ports
+
+`--listen` governs the UI. These are separate, and two of them **must** accept
+connections from your clusters to do their job:
+
+| port | bind | what it is | if a stranger reaches it |
+|---|---|---|---|
+| UI | follows `--listen` | nginx + `/api` + `/ws` | everything above |
+| Grafana | follows `--listen` | dashboards | **reads any dashboard, and queries Loki through its datasource proxy — i.e. every log line from every registered cluster.** Anonymous viewing stays on because TMM Live embeds the dashboard in your browser; requiring a login there would only put a login box inside bnkscope's own page. Admin is a generated password (`bnkscope grafana-password`). |
+| Prometheus `9491` | **always `0.0.0.0`** | remote-write receiver | reads your TMM metrics; **can inject fabricated ones** |
+| Loki `3100` | loopback | log store | not reachable off-host |
+| API `8000` | loopback | FastAPI | not reachable off-host |
+
+Prometheus is open by design — the exporters push *to* it from inside your
+clusters, so it cannot be closed without losing the telemetry. If that matters to you, firewall them to your cluster
+subnets, or use a VPN and bind to it.
+
+Kubeconfigs and cloud credentials are encrypted at rest (`ENCRYPTION_KEY`) —
+which protects the database file on disk, and does not protect it from the
+backup endpoint above.
+
+### What it reads from your machine
+
+Four directories, mounted **read-only**. Nothing is ever written back.
+
+| mount | why |
+|---|---|
+| `~/.kube` | the cluster list itself |
+| `~/.aws` | boto3 reads it to mint EKS tokens natively — no AWS CLI in the image |
+| `~/.config/gcloud` | the same for GKE, via google-auth |
+| `~/.config/tmmscope` | tmmscope's stack, if you already run one instead |
+
+`./bnkscope up` creates any that are missing **as you**, because Docker would
+otherwise create them as empty root-owned directories inside your home. That is
+why it is the supported entry point rather than a bare `docker compose up`.
+
+### `exec:` kubeconfigs
+
+`aws eks get-token`, `aws-iam-authenticator` and `gke-gcloud-auth-plugin` all
+work — bnkscope mints those tokens itself, in Python, and never runs the binary.
+
+**`kubelogin` (AKS) does not.** There is no Python equivalent and the image
+ships no CLI tools, so an AKS context is listed with that reason rather than
+accepted and then failing at connect time. Supply a bearer token instead
+(`kubectl create token <serviceaccount>`) and add the cluster by hand.
 
 ---
 
-## Common Commands
+## Commands
 
-### Laptop (macOS / Windows)
-
-```bash
-make local-deploy     # Build + start everything on your laptop
-make local-up         # Start containers (already built)
-make local-down       # Stop and remove containers
-make local-status     # Show container health
-make local-logs       # Tail container logs
-make local-restart    # Restart all containers
+```
+bnkscope up [--no-build]     start it; negotiates ports, probes your kubeconfig
+           [--listen ADDR]   bind the UI to ADDR instead of 127.0.0.1
+           [--no-telemetry]  skip Prometheus + Grafana (they run by default)
+bnkscope down [--purge]      stop it (--purge also drops the database and key)
+bnkscope status              running state, ports, registered clusters
+bnkscope open                open the UI
+bnkscope logs [service]      follow container logs
+bnkscope endpoint            print the discovery file
 ```
 
-### Linux Server
+**Ports are negotiated, not assumed.** bnkscope wants 8080 and 8000, but under
+host networking it shares the port space with everything else on the machine.
+When a port is taken it walks upward and *persists* the choice, so a running
+stack keeps its ports across re-runs — and reverts to the default once that
+frees up again, unless you asked for a specific port, in which case it stays
+put. Read them back with `bnkscope endpoint` rather than hard-coding them: the
+same contract tmmscope publishes, for the same reason.
 
 ```bash
-make deploy           # Build + start everything on a Linux server
-make up               # Start containers (already built)
-make down             # Stop and remove containers
-make status           # Show container health
-make server-logs      # Tail container logs
-make restart          # Restart all containers
-```
-
-These targets run `make ensure-artifact-network` first, so the
-`bnk-forge-artifacts` network (see [Prerequisite](#prerequisite-the-artifact-runner-network))
-is created if you haven't already made it yourself. Bringing the stack up with a
-bare `docker compose up` skips that, so create the network by hand on that path.
-
-### General
-
-```bash
-make install          # First-time destructive server bootstrap (wipes BNK Forge data)
-make update           # Backward-compatible non-destructive update wrapper
-make upgrade-safe     # Preferred server upgrade path (preflight + strict verification)
-make mcp-readiness    # MCP liveness + runtime readiness gate
-make test             # Run all tests
-make help             # Show all available commands
+./bnkscope up --listen 0.0.0.0           # reach it from another machine (see the warning above)
+BNKSCOPE_UI_PORT=9090 ./bnkscope up      # ask for a specific port
+BNKSCOPE_REGISTRY_CACHE=on ./bnkscope up # require the regcachectl pull-through cache
 ```
 
 ---
 
-## What It Does
+## TMM Live
 
-### Day 1 — Deploy BNK
-- **Deployment Wizard** — 3 choices, running BNK in under 10 minutes
-- **Deployment Blueprints** — pre-packaged stacks that deploy BNK in minutes
-- **20 Python-defined modules** — zero OpenTofu dependency for BNK stack
-- **Smart dependency management** — automatic variable wiring between modules
-- **Parallel execution** — independent modules deploy concurrently (25-50% faster)
+Real-time TMM counters: `f5tmm_up`, throughput, connections, per-pool-member
+load, and AI token usage. bnkscope runs the whole path.
 
-### Day 2 — Operate & Monitor
-- **Traffic Flow Overview** — visualize how traffic flows through gateways, routes, and backends
-- **BNK Health Dashboard** — real-time health of FLO, TMM, gateways, data plane, security
-- **Multi-Cluster Fleet** — aggregate health across all connected clusters
-- **Drift Detection** — scheduled checks catch out-of-band changes
-- **BNK Upgrade Workflow** — rolling upgrade with pre-checks, health gates, rollback
-- **Config Export/Import** — snapshot BNK resources, diff clusters, promote configs
-- **Webhook Alerting** — Slack, Teams, and generic webhook notifications
+```bash
+./bnkscope up                # Prometheus + Grafana come up with it
+```
 
-### Kubernetes & Helm
-- **Full resource management** — view, describe, scale, restart, delete across all types
-- **Pod operations** — real-time logs, exec terminal, events, metrics
-- **Helm package management** — install, upgrade, rollback with hierarchical browsing
-- **Node operations** — cordon, drain, uncordon for maintenance
+Then open **TMM Live**, pick a cluster, and click **Add the exporter**. That
+injects `tmm-stat-exporter` into the cluster's `f5-tmm` pods as an **ephemeral
+container** — no TMM restart, and it works on operator-managed BNK, where a
+patched Deployment would just be reconciled away.
 
-### Security
-- **RBAC** — admin, operator, and viewer roles on all 200+ API routes
-- **Audit trail** — automatic logging of every mutating operation
-- **JWT authentication** with forced password change on first use
+It is transient by construction: an ephemeral container does not survive a pod
+restart, and nothing re-adds it. That is the honest shape for a troubleshooting
+tool, and the page says so rather than letting you find out.
 
----
+Removing it is deliberately harder than adding it. An ephemeral container cannot
+be taken out of a running pod, so clearing one means **recreating the TMM pods**,
+which drops dataplane traffic — a typed confirmation, not a click.
+[D-036](docs/adr/D-036-tmmscope-injection-in-bnkscope.md) has the reasoning.
+
+**Prometheus is not loopback-only**, unlike everything else here: the exporters
+push to it from inside your clusters, through the host gateway. It receives
+metrics and answers queries — it holds no credentials and can change nothing.
+`--no-telemetry` skips the whole stack.
+
+### Coming from tmmscope
+
+[tmmscope](https://github.com/mwiget/tmmscope) is where this came from, and it
+still works — if its stack is up, bnkscope finds and uses it instead of starting
+its own. Two things stay CLI-only on purpose:
+
+- **`--permanent` injection.** The durable modes restart TMM, and the webhook
+  mode installs a cluster-scoped `MutatingWebhookConfiguration` with a 10-year
+  self-signed CA. Neither belongs behind a button.
+- **The `tmm-stat-exporter` image itself**, which is built from that repo and is
+  the thing doing the actual work.
 
 ## Architecture
 
 ```
-                        Browser
-                           |
-                           v
-                    ┌─────────────┐
-                    │  Nginx Proxy │  (HTTPS + WebSocket)
-                    └──────┬──────┘
-                     /     │     /api/
-                     v     │      v
-              ┌──────────┐ │ ┌──────────┐
-              │ Frontend  │ │ │ Backend  │
-              │ React 18  │ │ │ FastAPI  │
-              │ TypeScript│ │ │ Python   │
-              └──────────┘ │ └────┬─────┘
-                           │      │
-                  ┌────────┼──────┼────────┐
-                  v        v      v        v
-              PostgreSQL  Redis  Celery   K8s
-               (data)    (cache) (tasks)  (clusters)
+                      your browser
+                            │
+                  ┌─────────┴─────────┐
+                  │  frontend (nginx) │  React 18 + Vite
+                  └─────────┬─────────┘
+                            │ /api  /ws
+                  ┌─────────┴─────────┐
+                  │  backend (uvicorn)│  FastAPI, one process:
+                  │                   │   HTTP API · WebSockets
+                  │  SQLite ◀── data  │   probes · periodic jobs
+                  │  thread pool      │   4-thread background pool
+                  │  APScheduler      │
+                  └─────────┬─────────┘
+                            │ kubeconfig (read-only)
+                     your BNK clusters
+                            │
+                            │ tmm-stat-exporter pushes (remote_write)
+                            ▼
+                  ┌────────────────────────┐
+                  │ prometheus ◀── grafana │  TMM Live · 24h window
+                  └────────────────────────┘
 ```
 
-All services run as Docker containers via `docker-compose.yml`, with `docker-compose.local.yml` layered on laptops/Docker Desktop.
+Two containers, plus two for telemetry. No database server, no message broker,
+no worker pool, no reverse proxy — a single-user tool watching a handful of
+clusters needs none of them. A fifth exposes read-only MCP
+tools for an AI agent, on loopback (`./bnkscope up --no-mcp` skips it).
 
----
-
-## Configuration
-
-### Module Library
-
-After first login, configure the module library to enable deployment blueprints:
-
-1. Go to **Settings > Defaults**
-2. Set **Module Library Git URL** to: `https://github.com/JLCode-tech/bnk-forge-modules.git`
-3. Set **Module Library Git Ref** to: `release/2.2`
-4. Go to **Settings > Environment Config** and click **Sync Modules**
-
-### Connecting Kubernetes Clusters
-
-BNK Forge connects to clusters via kubeconfig:
-
-1. Go to **Kubernetes > Clusters**
-2. Click **Add Cluster**
-3. Upload or paste your kubeconfig
-
-Kubeconfig-first fleet (D3) is the primary architecture. Operator connectivity remains available as a secondary/legacy-supported path for specific environments.
-
-### Environment Variables (Optional)
-
-Most settings are configurable in the GUI. For advanced configuration, copy and edit the example:
-
-```bash
-cp .env.example .env
-# Edit .env with your settings
-```
-
-See [.env.example](.env.example) for all available options.
-
----
-
-## Updating
-
-Use deployment-mode-aware update commands:
-
-```bash
-# Laptop (Docker Desktop)
-git pull --ff-only
-make local-deploy
-
-# Linux server (preferred)
-make upgrade-safe
-
-# Compatibility wrapper (non-destructive)
-make update
-```
-
-These paths keep existing data and run health verification. Use `make install` only for intentional clean-slate setup.
-
----
-
-## Troubleshooting
-
-```bash
-# Check container status
-make status
-
-# View backend logs
-docker compose logs backend --tail 50
-
-# View all service logs
-docker compose logs --tail 20
-
-# Full reset (WARNING: destroys all data)
-make install
-```
-
-For detailed troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
-
----
-
-## Project Structure
-
-```
-bnk-forge/
-├── backend/              # FastAPI backend (Python)
-│   ├── routes/           #   API endpoints (200+)
-│   ├── services/         #   Business logic
-│   ├── models/           #   SQLAlchemy models
-│   └── modules/          #   Python-defined K8s/BNK modules
-├── frontend-v2/          # React 18 frontend (TypeScript)
-│   └── src/
-│       ├── components/   #   UI components
-│       ├── pages/        #   Route pages
-│       └── hooks/        #   React Query hooks
-├── proxy/                # Nginx reverse proxy
-├── scripts/              # Build and maintenance scripts
-├── docs/                 # Documentation
-├── docker-compose.yml    # Server stack (Linux — host networking)
-├── docker-compose.local.yml  # Laptop overlay (macOS/Windows — bridge networking)
-├── Makefile              # All commands (make help)
-└── upgrade.sh            # Non-destructive upgrade script
-```
-
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [User Guide](docs/USER_GUIDE.md) | Complete guide to using BNK Forge |
-| [API Reference](docs/API_REFERENCE.md) | Full REST API endpoint catalog (200+ endpoints) |
-| [Testing Guide](docs/TESTING.md) | Test architecture, patterns, and how to run tests |
-| [Installation Guide](docs/INSTALLATION.md) | Detailed setup for all environments |
-| [Deployment Guide](docs/DEPLOYMENT.md) | Production deployment |
-| [Upgrade Runbook](docs/UPGRADE_RUNBOOK.md) | Server upgrade procedure |
-| [Architecture Index](docs/architecture/README.md) | Current vs archived architecture documents |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
-| [AWS SSO Setup](docs/AWS_SSO_SETUP.md) | Configure AWS SSO authentication |
-| [Docker Architecture](docs/DOCKER.md) | Multi-target Dockerfile design |
-| [Disk Management](docs/DISK_MANAGEMENT.md) | Docker disk usage and cleanup |
-| [Product Vision](docs/PRODUCT_VISION.md) | Product strategy and positioning |
-| [Strategic Roadmap](docs/STRATEGIC_ROADMAP.md) | Strategic epics and sequencing for platform maturity |
-| [Strategic Backlog](docs/STRATEGIC_BACKLOG.md) | Backlog-ready strategic tickets with Now/Next/Later sequencing |
-| [MCP Productization Plan](docs/MCP_PRODUCTIZATION_PLAN.md) | Roadmap for safe, observable AI-operable interface |
-| [Sprint Plan — Platform Truthfulness 001](docs/SPRINT_PLATFORM_TRUTHFULNESS_001.md) | Agent-ready sprint plan for the first strategic execution wave |
-| [Sprint Plan — Contract Trust 001](docs/SPRINT_CONTRACT_TRUST_001.md) | Agent-ready sprint plan for API contract hardening |
-| [Sprint Plan — MCP Foundation 001](docs/SPRINT_MCP_FOUNDATION_001.md) | Agent-ready sprint plan for AI-operable interface foundations |
-| [Sprint Plan — Operability Baseline 001](docs/SPRINT_OPERABILITY_BASELINE_001.md) | Agent-ready sprint plan for observability and release discipline |
+`network_mode: host` is used so the backend can reach clusters on your own
+networks without Docker's bridge iptables getting between it and your VPN
+routes. On macOS and WSL2 that does not do what it says, so `bnkscope up`
+switches to a bridge overlay that publishes to `127.0.0.1` only.
 
 ---
 
 ## Development
 
 ```bash
-# Run all tests
-make test
-
-# Run checks before pushing
-make pre-push
-
-# See all commands
-make help
+make dev-setup        # backend venv + frontend deps
+make quick-check      # lint + types + openapi freshness (~15s)
+make test             # everything
+make test-docker      # the same, in containers — no local venv or Node needed
 ```
 
-### Version Compatibility
+The Makefile is the source of truth; CI runs the same targets.
 
-| BNK Forge | Module Library | F5 BNK | Status |
-|-----------|---------------|--------|--------|
-| **Current branch** | **release/2.2** | 2.2 GA | **Active** |
-| 2.10.x - 2.12.x | release/2.2 | 2.2 GA | Supported |
+| | |
+|---|---|
+| [User guide](docs/USER_GUIDE.md) | every page, and what it answers |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | when bnkscope itself misbehaves |
+| [Cloud authentication](docs/CLOUD_AUTH.md) | EKS, GKE, AKS, and AWS SSO |
+| [API reference](docs/API_REFERENCE.md) | the HTTP surface (generated) |
+| [Development guide](docs/DEVELOPMENT.md) | build, test, architecture |
+| [Testing](docs/TESTING.md) | suites, fixtures, what is covered |
+| [ADRs](docs/adr/) | why things are the way they are |
+| [How bnkscope came from bnk-forge](docs/BNKSCOPE_PLAN.md) | the eight phases, and what each one measured |
+
+---
+
+## Where this came from
+
+bnkscope is [bnk-forge](https://github.com/f5devcentral/bnk-forge) with the
+deployment platform removed — 623k lines down to ~176k, 13 containers to 2, and
+an initial page load from 5.1 MB to 0.7 MB. bnk-forge deploys BNK; bnkscope
+looks at it. [`docs/BNKSCOPE_PLAN.md`](docs/BNKSCOPE_PLAN.md) records every
+phase, including the parts of the plan that turned out to be wrong.
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-## Project governance
+Apache License 2.0 — see [LICENSE](LICENSE).
 
 - [Contributing](CONTRIBUTING.md) — workflow, ADRs, code style
-- [Development guide](docs/DEVELOPMENT.md) — build, test, architecture
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security policy](SECURITY.md) — how to report a vulnerability
-- Licensed under the [Apache License 2.0](LICENSE)

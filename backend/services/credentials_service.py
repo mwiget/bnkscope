@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from core.encryption import decrypt_value, decrypt_value_or_none
-from models import ApplicationSetting, CloudCredentialTemplate, Project
+from models import ApplicationSetting, CloudCredentialTemplate, KubernetesCluster
 from services.defaults_service import get_default
 from services.ibm_cloud_service import IBMCloudService
 
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 class CredentialUnavailableError(Exception):
     """
-    Raised when AWS credentials cannot be resolved for a project —
+    Raised when AWS credentials cannot be resolved for a cluster —
     either because no template/creds are bound, the SSO keys are absent,
     or the exchanged keys have expired.
 
@@ -78,7 +78,7 @@ CLOUD_CREDENTIAL_ENV_KEYS = frozenset({
 })
 
 
-def get_cloud_credentials_only(project: Project, db=None, *, strict: bool = False) -> dict[str, str]:
+def get_cloud_credentials_only(cluster: KubernetesCluster, db=None, *, strict: bool = False) -> dict[str, str]:
     """Cloud credentials WITHOUT the ambient process environment.
 
     ``get_cloud_credentials_env`` starts from ``os.environ.copy()`` because its
@@ -93,7 +93,7 @@ def get_cloud_credentials_only(project: Project, db=None, *, strict: bool = Fals
     documented ".env bootstrap" path for cloud credentials, and containers
     should honour it the same way subprocesses do.
     """
-    resolved = get_cloud_credentials_env(project, db, strict=strict)
+    resolved = get_cloud_credentials_env(cluster, db, strict=strict)
     return {
         key: value
         for key, value in resolved.items()
@@ -101,7 +101,7 @@ def get_cloud_credentials_only(project: Project, db=None, *, strict: bool = Fals
     }
 
 
-def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False) -> dict[str, str]:
+def get_cloud_credentials_env(cluster: KubernetesCluster, db=None, *, strict: bool = False) -> dict[str, str]:
     """
     Get cloud credentials as environment variables for subprocess execution.
 
@@ -112,7 +112,7 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
     4. Fallback to environment variables (.env - bootstrap only)
 
     Args:
-        project: The Project model instance
+        cluster: The Project model instance
         db: Database session (optional, required for templates and global settings)
         strict: When True, raise CredentialUnavailableError for absent or expired
                 SSO credentials rather than returning a partial env dict.
@@ -177,15 +177,15 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
         except Exception as e:
             logger.warning(f"Failed to load global credentials from database: {e}")
 
-    # Priority 1: Check if project uses a credential template (v2)
-    if project.credential_template_id and db:
+    # Priority 1: Check if cluster uses a credential template (v2)
+    if cluster.credential_template_id and db:
         try:
             template = db.query(CloudCredentialTemplate).filter(
-                CloudCredentialTemplate.id == project.credential_template_id
+                CloudCredentialTemplate.id == cluster.credential_template_id
             ).first()
 
             if template:
-                logger.info(f"Using credential template '{template.name}' for project {project.name}")
+                logger.info(f"Using credential template '{template.name}' for cluster {cluster.name}")
 
                 if template.provider == 'aws':
                     # Access Keys method
@@ -237,7 +237,7 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
 
                     # Mirror the resolved AWS credentials as Terraform variables so that
                     # module provider blocks using var.aws_access_key_id / var.aws_region
-                    # are populated without persisting creds in project variable storage.
+                    # are populated without persisting creds in cluster variable storage.
                     # Only set a TF_VAR_* when the corresponding AWS_* key was actually set.
                     for aws_key, tf_var in (
                         ('AWS_ACCESS_KEY_ID', 'TF_VAR_aws_access_key_id'),
@@ -274,10 +274,10 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
         except Exception as e:
             logger.error(f"Error loading credential template: {e}")
 
-    # Priority 2: Try project-specific encrypted credentials (legacy)
-    if project.cloud_credentials_encrypted:
+    # Priority 2: Try cluster-specific encrypted credentials (legacy)
+    if cluster.cloud_credentials_encrypted:
         try:
-            cred_json = decrypt_value(project.cloud_credentials_encrypted)
+            cred_json = decrypt_value(cluster.cloud_credentials_encrypted)
             if cred_json:
                 cred_data = json.loads(cred_json)
 
@@ -296,43 +296,43 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
                 if cred_data.get('session_token'):
                     env['AWS_SESSION_TOKEN'] = cred_data['session_token']
                     # SSO credentials need region - use system default if not specified
-                    region = cred_data.get('region') or project.region or get_default(db, "cloud.aws.default_region")
+                    region = cred_data.get('region') or cluster.region or get_default(db, "cloud.aws.default_region")
                     env['AWS_DEFAULT_REGION'] = region
 
                 return env
         except Exception as e:
-            logger.error(f"Error getting project credentials: {e}")
+            logger.error(f"Error getting cluster credentials: {e}")
 
-    # Priority 2.5: Fall back to the is_default credential template when the project
-    # has neither an explicit credential_template_id nor project-specific creds.
-    # This makes projects registered without an explicit template binding (e.g. via
+    # Priority 2.5: Fall back to the is_default credential template when the cluster
+    # has neither an explicit credential_template_id nor cluster-specific creds.
+    # This makes clusters registered without an explicit template binding (e.g. via
     # awsbnkctl forge register) work automatically if a default template exists.
     #
-    # Safety rule: only use a default template whose provider matches the project's
+    # Safety rule: only use a default template whose provider matches the cluster's
     # cloud_provider.  A GCP is_default template must never inject credentials into
-    # an AWS project — that would cause a wrong-provider 401 with a misleading error.
-    # If the project's cloud_provider is unknown, skip the fallback entirely.
-    if db and not project.credential_template_id and not project.cloud_credentials_encrypted:
-        project_provider = getattr(project, "cloud_provider", None)
-        if project_provider:
+    # an AWS cluster — that would cause a wrong-provider 401 with a misleading error.
+    # If the cluster's cloud_provider is unknown, skip the fallback entirely.
+    if db and not cluster.credential_template_id and not cluster.cloud_credentials_encrypted:
+        cluster_provider = getattr(cluster, "cloud_provider", None)
+        if cluster_provider:
             try:
                 default_template = db.query(CloudCredentialTemplate).filter(
                     CloudCredentialTemplate.is_default.is_(True),
-                    CloudCredentialTemplate.provider == project_provider,
+                    CloudCredentialTemplate.provider == cluster_provider,
                 ).first()
                 if default_template:
                     logger.info(
                         "Project '%s' has no credential binding — falling back to "
                         "is_default template '%s' (id=%s, provider=%s)",
-                        project.name, default_template.name, default_template.id,
+                        cluster.name, default_template.name, default_template.id,
                         default_template.provider,
                     )
                     # Re-use Priority 1 path by temporarily setting the attribute
                     # on a throwaway namespace so the resolution logic is not duplicated.
-                    # We call ourselves with a shim project that has the template id set.
+                    # We call ourselves with a shim cluster that has the template id set.
                     shim = SimpleNamespace(**{
-                        col.key: getattr(project, col.key)
-                        for col in project.__class__.__table__.columns
+                        col.key: getattr(cluster, col.key)
+                        for col in cluster.__class__.__table__.columns
                     })
                     shim.credential_template_id = default_template.id
                     shim.cloud_credentials_encrypted = None
@@ -342,33 +342,33 @@ def get_cloud_credentials_env(project: Project, db=None, *, strict: bool = False
             except Exception as e:
                 logger.error("Error loading is_default credential template fallback: %s", e)
 
-    # Priority 3: Set region from project if not already set (AWS projects only)
-    if project.cloud_provider == "aws" and project.region and 'AWS_DEFAULT_REGION' not in env:
-        env['AWS_DEFAULT_REGION'] = project.region
+    # Priority 3: Set region from cluster if not already set (AWS clusters only)
+    if cluster.cloud_provider == "aws" and cluster.region and 'AWS_DEFAULT_REGION' not in env:
+        env['AWS_DEFAULT_REGION'] = cluster.region
 
     if global_creds_loaded:
-        logger.info(f"Using global credentials from database for project {project.name}")
+        logger.info(f"Using global credentials from database for cluster {cluster.name}")
     else:
-        logger.info(f"Using global credentials from environment (.env) for project {project.name}")
+        logger.info(f"Using global credentials from environment (.env) for cluster {cluster.name}")
 
     return env
 
 
-def get_gcp_service_account_info(project: Project, db=None) -> dict | None:
+def get_gcp_service_account_info(cluster: KubernetesCluster, db=None) -> dict | None:
     """
-    Return the parsed GCP service-account JSON for a project, or None.
+    Return the parsed GCP service-account JSON for a cluster, or None.
 
-    The SA key is stored encrypted on the project's CloudCredentialTemplate
+    The SA key is stored encrypted on the cluster's CloudCredentialTemplate
     (``gcp_credentials_encrypted``).  Mint an access token from this value
     via ``google.oauth2.service_account.Credentials`` to authenticate the
     Python kubernetes client to GKE without needing the
     ``gke-gcloud-auth-plugin`` binary inside the container.
     """
-    if not (project.credential_template_id and db):
+    if not (cluster.credential_template_id and db):
         return None
 
     template = db.query(CloudCredentialTemplate).filter(
-        CloudCredentialTemplate.id == project.credential_template_id
+        CloudCredentialTemplate.id == cluster.credential_template_id
     ).first()
     if not template or template.provider != "gcp":
         return None

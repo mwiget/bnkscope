@@ -12,7 +12,7 @@ import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { QUERY_STALE_TIME, POLL_INTERVALS } from '@/lib/constants';
-import type { CleanupType, VersionInfo, UpgradeResponse } from '@/types/system';
+import type { VersionInfo } from '@/types/system';
 import { useAppMutation } from '@/hooks/lib/useAppMutation';
 
 /**
@@ -50,24 +50,6 @@ export function useSystemHealth() {
     queryKey: queryKeys.system.health(),
     queryFn: () => api.getSystemHealth(),
     refetchInterval: isVisible ? POLL_INTERVALS.VERY_SLOW : false, // disabled when tab hidden
-    staleTime: QUERY_STALE_TIME.SYSTEM, // PERF-014: 2 minutes
-  });
-}
-
-/**
- * Fetch task queue metrics
- * 
- * PERFORMANCE: Reduced from 5s to 30s polling, disabled when tab hidden
- * This endpoint makes multiple Celery inspect calls which can be slow (ADR-019)
- * PERF-014: Increased staleTime to 120s since backend caches for 30s anyway
- */
-export function useQueueMetrics() {
-  const isVisible = useDocumentVisibility();
-  
-  return useQuery({
-    queryKey: queryKeys.system.queueMetrics(),
-    queryFn: () => api.getQueueMetrics(),
-    refetchInterval: isVisible ? POLL_INTERVALS.SLOW : false, // disabled when tab hidden
     staleTime: QUERY_STALE_TIME.SYSTEM, // PERF-014: 2 minutes
   });
 }
@@ -120,19 +102,6 @@ export function useDatabaseStats() {
 /**
  * Cleanup database mutation
  */
-export function useCleanupDatabase() {
-  const queryClient = useQueryClient();
-
-  return useAppMutation({
-    mutationFn: ({ type, olderThanDays }: { type: CleanupType; olderThanDays: number }) =>
-      api.cleanupDatabase(type, olderThanDays),
-    onSuccess: () => {
-      // Invalidate database stats to refresh after cleanup
-      queryClient.invalidateQueries({ queryKey: queryKeys.system.databaseStats() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.system.performance() });
-    },
-  });
-}
 
 /**
  * Vacuum database mutation
@@ -151,39 +120,6 @@ export function useVacuumDatabase() {
 }
 
 /**
- * Fetch container status
- * 
- * PERFORMANCE: Reduced from 10s to 30s polling, disabled when tab hidden
- * PERF-014: Increased staleTime to 120s
- */
-export function useContainerStatus() {
-  const isVisible = useDocumentVisibility();
-  
-  return useQuery({
-    queryKey: queryKeys.system.containerStatus(),
-    queryFn: () => api.getContainerStatus(),
-    refetchInterval: isVisible ? POLL_INTERVALS.SLOW : false, // disabled when tab hidden
-    staleTime: QUERY_STALE_TIME.SYSTEM, // PERF-014: 2 minutes
-  });
-}
-
-/**
- * Restart containers mutation
- */
-export function useRestartContainers() {
-  const queryClient = useQueryClient();
-
-  return useAppMutation({
-    mutationFn: (services?: string[]) => api.restartContainers(services),
-    onSuccess: () => {
-      // Invalidate container status to refresh after restart
-      queryClient.invalidateQueries({ queryKey: queryKeys.system.containerStatus() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.system.health() });
-    },
-  });
-}
-
-/**
  * UP-013: Fetch system version info (current, latest, update availability)
  */
 export function useSystemVersion() {
@@ -191,21 +127,6 @@ export function useSystemVersion() {
     queryKey: queryKeys.system.version(),
     queryFn: () => api.getSystemVersion(),
     staleTime: 30_000,
-  });
-}
-
-/**
- * UP-013: Trigger a system upgrade mutation
- */
-export function useSystemUpgrade() {
-  const queryClient = useQueryClient();
-
-  return useAppMutation<UpgradeResponse, Error>({
-    mutationFn: () => api.triggerSystemUpgrade(),
-    onSuccess: () => {
-      // Invalidate upgrade status so the banner appears
-      queryClient.invalidateQueries({ queryKey: queryKeys.system.upgradeStatus() });
-    },
   });
 }
 

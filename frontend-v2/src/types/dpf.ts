@@ -9,19 +9,6 @@
 
 // ── Detect Endpoint (lightweight) ─────────────────────────────────────────
 
-export interface DpfDetectResponse {
-  detected: boolean;
-  version: string | null;
-  operator: {
-    configured: boolean;
-    ready: boolean;
-  };
-  devices: {
-    total: number;
-  };
-  dpuclusters: number;
-  cluster_id: number;
-}
 
 // ── Health Analysis ───────────────────────────────────────────────────────
 
@@ -106,9 +93,6 @@ export interface DpfDataResponse {
 
 // ── Health-only Endpoint ──────────────────────────────────────────────────
 
-export type DpfHealthEndpointResponse = DpfHealthResponse & {
-  cluster_id: number;
-};
 
 // ── Raw K8s Resource Shapes (for drill-down views) ────────────────────────
 // These match the raw CRD objects returned in DpfDataResponse.resources.
@@ -187,20 +171,6 @@ export interface DpfDpuCluster {
   };
 }
 
-/** DPU — individual DPU lifecycle object (created by DPUSet controller). */
-export interface DpfDpu {
-  metadata: DpfResourceMeta;
-  spec?: {
-    dpuDevice?: string;   // name of the DPUDevice
-    bfb?: string;         // name of the BFB
-    dpuFlavor?: string;   // name of the DPUFlavor
-    dpuSet?: string;      // owning DPUSet
-  };
-  status?: {
-    phase?: string;       // "Initializing" | "Node-effect" | "DPU-provisioning" | "Ready" | "Error" | "Deleting"
-    conditions?: DpfK8sCondition[];
-  };
-}
 
 /** DPUSet — desired state for a group of DPUs (provisioning.dpu.nvidia.com/v1alpha1).
  *  Aligned with upstream Go type: api/provisioning/v1alpha1/dpuset_types.go */
@@ -433,36 +403,7 @@ export interface DpfDpuServiceInterface {
   };
 }
 
-/** DPUServiceIPAM — IP address management for DPU service chains (svc.dpu.nvidia.com/v1alpha1). */
-export interface DpfDpuServiceIpam {
-  metadata: DpfResourceMeta;
-  spec?: {
-    ipv4Subnet?: string;                     // CIDR
-    ipv4Gateway?: string;
-    ipv4Pool?: {
-      start?: string;
-      end?: string;
-    };
-  };
-  status?: {
-    conditions?: DpfK8sCondition[];
-  };
-}
 
-/** DPUServiceCredentialRequest — cross-cluster auth: host ↔ DPU cluster (svc.dpu.nvidia.com/v1alpha1). */
-export interface DpfDpuServiceCredentialRequest {
-  metadata: DpfResourceMeta;
-  spec?: {
-    secretName?: string;                     // target secret to populate
-    serviceAccountName?: string;             // SA to authenticate as
-    duration?: string;                       // token validity (e.g. "24h")
-    type?: string;                           // credential type
-  };
-  status?: {
-    conditions?: DpfK8sCondition[];
-    expirationTimestamp?: string;            // ISO 8601
-  };
-}
 
 /** ServiceChain — per-DPU realized service chain (svc.dpu.nvidia.com/v1alpha1). */
 export interface DpfServiceChain {

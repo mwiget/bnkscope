@@ -275,5 +275,5 @@ MCP tools should return status fields using canonical vocabulary. When a tool re
 
 ## Related Documents
 
-- [Strategic Backlog](../STRATEGIC_BACKLOG.md)
-- [Sprint Plan — Platform Truthfulness 001](../SPRINT_PLATFORM_TRUTHFULNESS_001.md)
+- Strategic Backlog
+- Sprint Plan — Platform Truthfulness 001

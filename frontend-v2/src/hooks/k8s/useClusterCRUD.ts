@@ -31,22 +31,57 @@ export function useK8sResourceTypes() {
   });
 }
 
+// ── Local kubeconfig discovery ──────────────────────────────────────────────
+
+/**
+ * Contexts found in the operator's own kubeconfig.
+ *
+ * The GET is not a read: it re-probes every context and registers the ones
+ * carrying BNK. That is deliberate — "show me what is out there" and "pick up
+ * what is out there" are the same action for a local tool. It is idempotent,
+ * so refetching costs a sweep, never a duplicate.
+ *
+ * Not polled. A sweep dials every context in the file, including ones behind a
+ * VPN that is down, so it runs when asked and every 10 minutes on the backend's
+ * own schedule.
+ */
+export function useDiscovery(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.k8s.discovery,
+    queryFn: api.getDiscovery,
+    enabled: options?.enabled ?? true,
+    staleTime: QUERY_STALE_TIME.DEFAULT,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Register one discovered context that discovery did not adopt on its own. */
+export function useAdoptContext() {
+  const queryClient = useQueryClient();
+
+  return useAppMutation({
+    mutationFn: (context: string) => api.adoptContext(context),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.discovery });
+      const added = data.candidates[0];
+      notify.success(
+        `Added ${added?.context ?? 'cluster'}`,
+        added?.has_bnk
+          ? 'BNK components were found on this cluster.'
+          : 'No BNK components found yet — the cluster list will pick them up once they appear.',
+        { category: 'cluster' },
+      );
+    },
+  });
+}
+
 // Clusters
 export function useAllClusters() {
   return useQuery({
     queryKey: queryKeys.k8s.clusters.all,
     queryFn: api.getAllClusters,
     staleTime: QUERY_STALE_TIME.DEFAULT, // Cache for 30 seconds
-  });
-}
-
-export function useProjectClusters(projectId: number, options?: { pollingEnabled?: boolean }) {
-  return useQuery({
-    queryKey: queryKeys.k8s.clusters.byProject(projectId),
-    queryFn: () => api.getProjectClusters(projectId),
-    enabled: !!projectId,
-    refetchInterval: options?.pollingEnabled ? POLL_INTERVALS.SLOW : false,
-    placeholderData: (previousData) => previousData,
   });
 }
 
@@ -62,12 +97,10 @@ export function useCreateCluster(options?: { silent?: boolean }) {
   const queryClient = useQueryClient();
 
   return useAppMutation({
-    mutationFn: ({ projectId, data }: { projectId: number; data: K8sClusterCreateRequest }) =>
-      api.createCluster(projectId, data),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.byProject(variables.projectId) });
+    mutationFn: ({ data }: { data: K8sClusterCreateRequest }) => api.createCluster(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.batchConnectivity() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(variables.projectId) });
     },
     silent: options?.silent,
   });
@@ -81,7 +114,6 @@ export function useUpdateCluster(options?: { silent?: boolean }) {
       api.updateCluster(clusterId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.all });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.all });
     },
     silent: options?.silent,
   });
@@ -94,7 +126,6 @@ export function useDeleteCluster() {
     mutationFn: (clusterId: number) => api.deleteCluster(clusterId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.all });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.all });
       notify.success('Cluster deleted successfully', undefined, { category: 'cluster' });
     },
   });
@@ -110,68 +141,6 @@ export function useTestClusterConnection() {
         notify.error('Connection test failed', data.message, { category: 'cluster' });
       }
     },
-  });
-}
-
-export function useDetectEKSClusters() {
-  const queryClient = useQueryClient();
-
-  return useAppMutation({
-    mutationFn: (projectId: number) => api.detectEKSClusters(projectId),
-    onSuccess: (data, projectId) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.byProject(projectId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
-
-      if (data.registered.length > 0) {
-        notify.success(data.message, `Registered ${data.registered.length} EKS cluster(s)`, { category: 'cluster' });
-      } else if (data.skipped.length > 0) {
-        notify.info(data.message, 'All EKS clusters are already registered', { category: 'cluster' });
-      } else {
-        notify.info(data.message, undefined, { category: 'cluster' });
-      }
-
-      if (data.errors.length > 0) {
-        notify.warning(`${data.errors.length} cluster(s) failed to register`, 'Check console for details', { category: 'cluster' });
-      }
-    },
-  });
-}
-
-export function useRefreshClusterKubeconfig() {
-  const queryClient = useQueryClient();
-
-  return useAppMutation({
-    mutationFn: (clusterId: number) => api.refreshClusterKubeconfig(clusterId),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.k8s.clusters.all });
-      notify.success(
-        data.message || 'Kubeconfig refreshed successfully',
-        data.refresh_method === 'ssh'
-          ? 'Kubeconfig re-fetched from remote host via SSH'
-          : 'The cluster now uses updated cloud credentials',
-        { category: 'cluster' },
-      );
-    },
-  });
-}
-
-// Connectivity Probes
-export function useClusterConnectivity(clusterId: number, options?: { enabled?: boolean }) {
-  return useQuery({
-    queryKey: queryKeys.k8s.clusters.connectivity(clusterId),
-    queryFn: () => api.getClusterConnectivity(clusterId),
-    enabled: options?.enabled !== false && !!clusterId,
-    staleTime: QUERY_STALE_TIME.DEFAULT,
-  });
-}
-
-export function useBatchConnectivity(options?: { enabled?: boolean; pollingEnabled?: boolean }) {
-  return useQuery({
-    queryKey: queryKeys.k8s.clusters.batchConnectivity(),
-    queryFn: api.getBatchConnectivity,
-    enabled: options?.enabled !== false,
-    staleTime: QUERY_STALE_TIME.DEFAULT,
-    refetchInterval: options?.pollingEnabled ? POLL_INTERVALS.SLOW : false,
   });
 }
 

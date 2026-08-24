@@ -1,0 +1,14 @@
+{
+  "name": "bnkscope",
+  "short_name": "bnkscope",
+  "description": "Troubleshooting and monitoring for F5 BNK clusters.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A0C10",
+  "theme_color": "#E4002B",
+  "icons": [
+    { "src": "/icons/png/bnkscope-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/png/bnkscope-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/png/bnkscope-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

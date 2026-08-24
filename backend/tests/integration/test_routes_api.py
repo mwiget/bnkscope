@@ -23,37 +23,24 @@ class TestRootEndpoint:
         assert "BNK-Forge" in data["message"]
         assert "version" in data
 
-    def test_root_unauthenticated(self, client):
-        """Root without auth returns 401."""
-        response = client.get("/")
-        assert response.status_code == 401
-
-
 class TestHealthCheck:
     """GET /health and GET /api/health."""
 
-    # The /health endpoint probes redis via redis.from_url().ping() — stub it
-    # so the test container (no redis reachable) doesn't report degraded.
-    _redis_ok = patch("redis.from_url", return_value=MagicMock(ping=lambda: True))
+    # Phase 4 left the database as the only component to probe: the broker and
+    # worker pool this used to stub out are in-process now.
 
     def test_health_check(self, client, admin_headers, sample_user):
         """Health check returns healthy status."""
-        with self._redis_ok:
-            response = client.get("/health", headers=admin_headers)
+        response = client.get("/health", headers=admin_headers)
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
+        assert data["checks"] == {"database": "ok"}
         assert "timestamp" in data
 
     def test_api_health_check(self, client, admin_headers, sample_user):
         """API health check at /api/health returns healthy."""
-        with self._redis_ok:
-            response = client.get("/api/health", headers=admin_headers)
+        response = client.get("/api/health", headers=admin_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
-
-    def test_health_unauthenticated(self, client):
-        """Health check without auth returns 401."""
-        response = client.get("/health")
-        assert response.status_code == 401
 

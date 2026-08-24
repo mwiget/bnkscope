@@ -20,7 +20,6 @@ import {
   mockK8sResources,
   mockSystemHealth,
   mockSystemDefaults,
-  mockQueueMetrics,
   mockPerformanceMetrics,
   mockRecentErrors,
   mockDatabaseStats,
@@ -878,6 +877,16 @@ export const handlers = [
   // K8s Clusters
   // ========================================================================
 
+  // Local kubeconfig discovery (Phase 5). Default to "nothing found" — a test
+  // that cares about candidates overrides this with server.use().
+  http.get('*/api/k8s/discovery', () => {
+    return HttpResponse.json({ candidates: [], found: 0, registered: 0 });
+  }),
+
+  http.post('*/api/k8s/discovery/adopt', () => {
+    return HttpResponse.json({ candidates: [], found: 0, registered: 0 });
+  }),
+
   http.get('*/api/k8s/clusters', ({ request }) => {
     const url = new URL(request.url);
     if (url.pathname !== '/api/k8s/clusters') return;
@@ -892,7 +901,7 @@ export const handlers = [
     return HttpResponse.json(cluster);
   }),
 
-  http.post('*/api/projects/:projectId/k8s/clusters', async ({ request }) => {
+  http.post('*/api/k8s/clusters', async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>;
     return HttpResponse.json({ id: 10, ...body, status: 'connecting', created_at: new Date().toISOString() });
   }),
@@ -1413,10 +1422,6 @@ export const handlers = [
     return HttpResponse.json(mockSystemDefaults);
   }),
 
-  http.get('*/api/system/queue-metrics', () => {
-    return HttpResponse.json(mockQueueMetrics);
-  }),
-
   http.get('*/api/system/performance', () => {
     return HttpResponse.json(mockPerformanceMetrics);
   }),
@@ -1425,12 +1430,8 @@ export const handlers = [
     return HttpResponse.json(mockRecentErrors);
   }),
 
-  http.get('*/api/system/database/stats', () => {
+  http.get('*/api/database/stats', () => {
     return HttpResponse.json(mockDatabaseStats);
-  }),
-
-  http.post('*/api/system/database/cleanup', () => {
-    return HttpResponse.json({ success: true, deleted_count: 150, cleanup_type: 'tasks', cutoff_date: '2026-01-01T00:00:00Z' });
   }),
 
   http.post('*/api/system/database/vacuum', () => {
@@ -1510,11 +1511,21 @@ export const handlers = [
   // fails with ECONNREFUSED and stalls renders during component tests.
   // ========================================================================
 
+  // Mirrors ProcessMetricsResponse. It previously returned a made-up
+  // {processes, total_cpu_percent} shape, which nothing consumed and which
+  // therefore never failed — until something did.
   http.get('*/api/system/process-metrics', () => {
     return HttpResponse.json({
-      processes: [],
-      total_cpu_percent: 0,
-      total_memory_mb: 0,
+      cpu_percent: 2.5,
+      cpu_count: 8,
+      rss_bytes: 180 * 1024 * 1024,
+      vms_bytes: 900 * 1024 * 1024,
+      num_threads: 12,
+      open_fds: 64,
+      net_rx_bytes: 1024,
+      net_tx_bytes: 2048,
+      uptime_seconds: 3661,
+      sampled_at: 1_756_000_000,
     });
   }),
 
@@ -1540,5 +1551,42 @@ export const handlers = [
   // this handler tests fall through to localhost:3000 and spam ECONNREFUSED.
   http.get('*/api/licensing/:clusterId/status', () => {
     return HttpResponse.json({ success: true });
+  }),
+
+  // ========================================================================
+  // Release Sources (ADR-494)
+  // ========================================================================
+
+  http.get('*/api/bare-metal/release-sources', () => {
+    return HttpResponse.json([
+      {
+        id: 1,
+        name: 'repo.f5.com',
+        kind: 'oci',
+        url: 'oci://repo.f5.com/release/f5-bigip-k8s-manifest',
+        has_credential: false,
+        is_active: true,
+        auto_sync: false,
+        sync_interval_hours: null,
+        last_synced_at: null,
+        sync_status: 'idle',
+        sync_error: null,
+        release_count: 0,
+        description: null,
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-01T00:00:00Z',
+      },
+    ]);
+  }),
+
+  // GET /{id}/tags — default: empty list (tests override as needed)
+  http.get('*/api/bare-metal/release-sources/:id/tags', () => {
+    return HttpResponse.json({ tags: [], list_error: null });
+  }),
+
+  // POST /{id}/tags:pull — default: empty summary (tests override as needed)
+  // Note: MSW pattern preserves the literal colon in the path.
+  http.post('*/api/bare-metal/release-sources/:id/tags\\:pull', () => {
+    return HttpResponse.json({ added: [], skipped: [], failed: [] });
   }),
 ];

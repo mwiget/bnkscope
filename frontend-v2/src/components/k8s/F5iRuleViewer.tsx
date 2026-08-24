@@ -1,9 +1,11 @@
 /**
  * F5 iRule Code Viewer
  *
- * Full-screen dialog with Monaco editor showing TCL iRule code.
- * Extracted from spec.iRule field of F5BigCneIrule CRDs.
- * Read-only with syntax highlighting, line numbers, and copy support.
+ * Full-screen dialog showing the TCL iRule from a F5BigCneIrule CRD's
+ * spec.iRule field, read-only, with line numbers and copy support.
+ *
+ * Uses CodeBlock rather than Monaco: nothing here is editable, and Monaco was
+ * 3.8 MB of the initial payload for a viewer (Phase 6).
  */
 
 import { useState } from 'react';
@@ -15,14 +17,9 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Editor } from '@monaco-editor/react';
-import { Card } from '@/components/ui/card';
+import { CodeBlock } from '@/components/ui/CodeBlock';
 import { Copy, Check, Code, CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react';
 import { formatAge } from '@/lib/time-utils';
-// Monaco editor theme is a data-viz/syntax-highlighter allowlist exemption
-// (D-020 ADR) so we still need isDark for that one prop. Chrome surfaces use
-// tokens only.
-import { useTheme } from '@/context/ThemeContext';
 import { notify } from '@/lib/notify';
 import type { K8sResource, K8sCondition } from '@/types';
 
@@ -33,7 +30,6 @@ interface F5iRuleViewerProps {
 }
 
 export function F5iRuleViewer({ open, onOpenChange, resource }: F5iRuleViewerProps) {
-  const { isDark } = useTheme();
   const [copied, setCopied] = useState(false);
 
   if (!resource) return null;
@@ -138,29 +134,12 @@ export function F5iRuleViewer({ open, onOpenChange, resource }: F5iRuleViewerPro
         {/* Code editor */}
         <div className="flex-1 min-h-0">
           {iRuleCode ? (
-            <Card className="overflow-hidden h-full">
-              <Editor
-                height="500px"
-                defaultLanguage="tcl"
-                value={iRuleCode}
-                options={{
-                  readOnly: true,
-                  minimap: { enabled: lineCount > 50 },
-                  scrollBeyondLastLine: false,
-                  fontSize: 13,
-                  lineNumbers: 'on',
-                  folding: true,
-                  wordWrap: 'on',
-                  automaticLayout: true,
-                  tabSize: 4,
-                  renderWhitespace: 'selection',
-                  bracketPairColorization: {
-                    enabled: true,
-                  },
-                }}
-                theme={isDark ? 'vs-dark' : 'vs'}
-              />
-            </Card>
+            <CodeBlock
+              code={iRuleCode}
+              language="tcl"
+              className="h-full max-h-[500px]"
+              aria-label={`iRule ${name}`}
+            />
           ) : (
             <div className="h-64 flex items-center justify-center rounded-lg border bg-muted/50 border-border">
               <div className="text-center">

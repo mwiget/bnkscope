@@ -8,7 +8,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
-import { useAllClusters, useProjectClusters, useCluster } from '@/hooks/useK8s';
+import { useAllClusters, useCluster } from '@/hooks/useK8s';
 import React from 'react';
 
 function createWrapper() {
@@ -89,53 +89,6 @@ describe('useAllClusters', () => {
     await waitFor(() => {
       expect(result.current.isError).toBe(true);
     });
-  });
-});
-
-describe('useProjectClusters', () => {
-  it('fetches clusters for a specific project', async () => {
-    server.use(
-      http.get('*/api/projects/:projectId/k8s/clusters', () => {
-        return HttpResponse.json({
-          clusters: [
-            {
-              id: 1,
-              name: 'project-cluster',
-              project_id: 1,
-              cluster_type: 'eks',
-              status: 'connected',
-              api_server: 'https://eks.amazonaws.com',
-              version: '1.28',
-              node_count: 3,
-              created_at: '2026-01-15T00:00:00Z',
-              updated_at: '2026-02-01T00:00:00Z',
-            },
-          ],
-          count: 1,
-        });
-      })
-    );
-
-    const { result } = renderHook(
-      () => useProjectClusters(1),
-      { wrapper: createWrapper() }
-    );
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(result.current.data).toHaveLength(1);
-    expect(result.current.data![0].name).toBe('project-cluster');
-  });
-
-  it('does not fetch when projectId is 0', () => {
-    const { result } = renderHook(
-      () => useProjectClusters(0),
-      { wrapper: createWrapper() }
-    );
-
-    expect(result.current.fetchStatus).toBe('idle');
   });
 });
 

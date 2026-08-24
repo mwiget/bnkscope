@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { render } from '@/test/test-utils';
 import { CommandPalette } from '@/components/CommandPalette';
+import { NAV_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 
 // Mock scrollIntoView (used by cmdk library, not available in jsdom)
 beforeAll(() => {
@@ -38,24 +39,6 @@ describe('CommandPalette', () => {
     expect(screen.getByPlaceholderText(/type a command or search/i)).toBeInTheDocument();
   });
 
-  it('renders Quick Actions group', async () => {
-    render(<CommandPalette {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Quick Actions')).toBeInTheDocument();
-    });
-  });
-
-  it('renders quick action items', async () => {
-    render(<CommandPalette {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Create New Project')).toBeInTheDocument();
-      expect(screen.getByText('View Operations Log')).toBeInTheDocument();
-      expect(screen.getByText('Browse Modules')).toBeInTheDocument();
-    });
-  });
-
   it('renders Navigation group', async () => {
     render(<CommandPalette {...defaultProps} />);
 
@@ -64,35 +47,39 @@ describe('CommandPalette', () => {
     });
   });
 
-  it('renders navigation items', async () => {
+  it('offers every page, under the name the sidebar uses', async () => {
+    // Generated from NAV_SHORTCUTS, so it cannot drift from the router again.
+    // Hand-maintained, it had six entries: two pointed at /fleet — deleted
+    // with the pipeline — five of the nine pages were missing, and the labels
+    // disagreed with the sidebar. This test asserted "Fleet Overview" was
+    // present, so the suite certified the bug.
     render(<CommandPalette {...defaultProps} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Dashboard')).toBeInTheDocument();
-      expect(screen.getByText('Projects')).toBeInTheDocument();
-      expect(screen.getByText('Modules')).toBeInTheDocument();
-      expect(screen.getByText('Fleet Overview')).toBeInTheDocument();
-      expect(screen.getByText('Kubernetes Resources')).toBeInTheDocument();
-      // K8S-UX-006: Renamed from "Task History" to "Operations Log"
-      expect(screen.getByText('Operations Log')).toBeInTheDocument();
-      expect(screen.getByText('System Settings')).toBeInTheDocument();
+      expect(screen.getByText('Overview')).toBeInTheDocument();
     });
+    for (const label of NAV_SHORTCUTS.map((n) => n.label)) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
   });
 
-  it('renders Recent Projects group when projects exist', async () => {
+  it('offers nothing that is not a live route', async () => {
     render(<CommandPalette {...defaultProps} />);
 
-    await waitFor(() => {
-      expect(screen.getByText('Recent Projects')).toBeInTheDocument();
-    });
+    await waitFor(() => expect(screen.getByText('Overview')).toBeInTheDocument());
+    for (const gone of ['Fleet Overview', 'Fleet: Operators', 'Dashboard']) {
+      expect(screen.queryByText(gone)).not.toBeInTheDocument();
+    }
   });
 
-  it('shows project names from data', async () => {
+  it('renders no empty group heading', async () => {
+    // `quickActions` was an empty array inside a <CommandGroup heading="Quick
+    // Actions">, so the palette opened with a labelled section containing
+    // nothing.
     render(<CommandPalette {...defaultProps} />);
 
-    await waitFor(() => {
-      expect(screen.getByText('test-project')).toBeInTheDocument();
-    });
+    await waitFor(() => expect(screen.getByText('Overview')).toBeInTheDocument());
+    expect(screen.queryByText('Quick Actions')).not.toBeInTheDocument();
   });
 
   it('does not render when open is false', () => {
@@ -101,13 +88,11 @@ describe('CommandPalette', () => {
     expect(screen.queryByPlaceholderText(/type a command or search/i)).not.toBeInTheDocument();
   });
 
-  it('shows keyboard shortcuts for actions', async () => {
+  it('shows the G-sequence for each page', async () => {
     render(<CommandPalette {...defaultProps} />);
 
     await waitFor(() => {
-      // Check for keyboard shortcut badges
-      const shortcuts = screen.getAllByText(/⌘/);
-      expect(shortcuts.length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/^G [A-Z]$/).length).toBe(NAV_SHORTCUTS.length);
     });
   });
 });

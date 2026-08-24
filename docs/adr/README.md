@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Per-decision files. The roll-up index lives in [`.agent/DECISIONS.md`](../../.agent/DECISIONS.md); start there.
+Per-decision files. The roll-up index lives in `.agent/DECISIONS.md`; start there.
 
 ## Format
 
@@ -16,7 +16,7 @@ Each file is one decision: ID, title, status, context, decision (deeper shape), 
 
 ## Vocabulary
 
-Use the terms in [`.agent/context/architecture-language.md`](../../.agent/context/architecture-language.md) — Module / Interface / Implementation / Depth / Seam / Adapter / Leverage / Locality. Apply the deletion test. One adapter = hypothetical seam; two = real.
+Use the terms in `.agent/context/architecture-language.md` — Module / Interface / Implementation / Depth / Seam / Adapter / Leverage / Locality. Apply the deletion test. One adapter = hypothetical seam; two = real.
 
 ## When transitioning a Proposed ADR
 

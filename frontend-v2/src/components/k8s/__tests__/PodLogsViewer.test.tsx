@@ -224,42 +224,16 @@ describe('PodLogsViewer', () => {
     expect(scrollContainer?.classList.contains('overflow-auto')).toBe(true);
   });
 
-  it('includes JWT token in WebSocket URL when available', async () => {
-    // Set a mock token
-    localStorage.setItem('auth_token', 'test-jwt-token-123');
-
+  it('sends no token in the WebSocket URL', async () => {
+    // bnkscope has no login, so nothing ever wrote auth_token -- the follow
+    // URL carried an always-absent query param.
     render(<PodLogsViewer {...defaultProps} />);
 
     await waitFor(() => {
       expect(screen.getByText(/Starting nginx/)).toBeInTheDocument();
     });
 
-    // Click Follow button to trigger WebSocket connection
-    const followButton = screen.getByText('Follow');
-    fireEvent.click(followButton);
-
-    await waitFor(() => {
-      expect(MockWebSocket.instances.length).toBeGreaterThan(0);
-    });
-
-    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
-    expect(ws.url).toContain('token=test-jwt-token-123');
-
-    // Cleanup
-    localStorage.removeItem('auth_token');
-  });
-
-  it('does not include token param when no auth token exists', async () => {
-    localStorage.removeItem('auth_token');
-
-    render(<PodLogsViewer {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/Starting nginx/)).toBeInTheDocument();
-    });
-
-    const followButton = screen.getByText('Follow');
-    fireEvent.click(followButton);
+    fireEvent.click(screen.getByText('Follow'));
 
     await waitFor(() => {
       expect(MockWebSocket.instances.length).toBeGreaterThan(0);

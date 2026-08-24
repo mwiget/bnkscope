@@ -23,8 +23,6 @@ from sqlalchemy.orm import Session
 
 from core.errors import AppError, handle_route_errors
 from database import get_db
-from models import User
-from routes.auth import require_cluster_owner, require_viewer
 from routes.k8s._shared import (
     AnnotateResourceRequest,
     LabelResourceRequest,
@@ -60,8 +58,7 @@ router = APIRouter(prefix="/api", tags=["k8s-resources"])
     # TODO(authz): Post gate-lift (D-018 P1.5), viewers can list instances of
     # any installed CRD — not just curated registry kinds.  Revisit role-gating
     # for non-curated CR instance reads when true multi-user / tenant isolation
-    # lands (ref: PR #125 review, D-018 §Risks).
-    dependencies=[Depends(require_viewer)],
+    # lands (ref: PR #125 review, D-018 §Risks).,
 )
 @handle_route_errors("fetch resources")
 def get_cluster_resources(
@@ -381,7 +378,6 @@ _resource_summary_lock = Lock()
 
 @router.get(
     "/k8s/clusters/{cluster_id}/resource-summary",
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("fetch resource summary")
 def get_cluster_resource_summary(
@@ -463,7 +459,6 @@ def create_resource(
     cluster_id: int,
     resource_type: str,
     request: ResourceCreateRequest,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -488,7 +483,6 @@ def update_resource(
     resource_type: str,
     resource_name: str,
     request: ResourceUpdateRequest,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -515,7 +509,6 @@ def delete_resource(
     resource_name: str,
     namespace: str | None = None,
     dry_run: bool = False,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -540,7 +533,6 @@ def patch_resource(
     resource_type: str,
     resource_name: str,
     request: ResourcePatchRequest,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -575,7 +567,6 @@ def label_resource(
     resource_type: str,
     resource_name: str,
     request: LabelResourceRequest,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -601,7 +592,6 @@ def annotate_resource(
     resource_type: str,
     resource_name: str,
     request: AnnotateResourceRequest,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -630,7 +620,6 @@ def scale_deployment(
     cluster_id: int,
     deployment_name: str,
     request: ScaleDeploymentRequest,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """Scale a deployment to a specific number of replicas."""
@@ -651,7 +640,6 @@ def scale_deployment(
 @router.get(
     "/k8s/clusters/{cluster_id}/pods/{pod_name}/logs",
     response_model=PodLogsResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get pod logs")
 def get_pod_logs(
@@ -690,7 +678,6 @@ def restart_pod(
     cluster_id: int,
     pod_name: str,
     namespace: str,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -711,7 +698,7 @@ def restart_pod(
     }
 
 
-@router.get("/k8s/clusters/{cluster_id}/pods/{pod_name}/containers", dependencies=[Depends(require_viewer)])
+@router.get("/k8s/clusters/{cluster_id}/pods/{pod_name}/containers")
 @handle_route_errors("list pod containers")
 def list_pod_containers(
     cluster_id: int,
@@ -736,7 +723,6 @@ def list_pod_containers(
 @router.get(
     "/k8s/clusters/{cluster_id}/resources/{resource_type}/{resource_name}/describe",
     response_model=ResourceDescribeEnvelope,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("describe resource")
 def describe_resource(
@@ -768,7 +754,6 @@ def describe_resource(
 @router.get(
     "/k8s/clusters/{cluster_id}/events",
     response_model=ClusterEventsResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get cluster events")
 def get_cluster_events(
@@ -809,7 +794,6 @@ def get_cluster_events(
 @router.get(
     "/k8s/clusters/{cluster_id}/top/pods",
     response_model=PodTopResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get pod metrics")
 def get_pod_metrics(
@@ -841,7 +825,6 @@ def get_pod_metrics(
 @router.get(
     "/k8s/clusters/{cluster_id}/top/nodes",
     response_model=NodeTopResponse,
-    dependencies=[Depends(require_viewer)],
 )
 @handle_route_errors("get node metrics")
 def get_node_metrics(
@@ -871,7 +854,7 @@ def get_node_metrics(
 # Deployment Rollout Management
 # ============================================================================
 
-@router.get("/k8s/clusters/{cluster_id}/deployments/{deployment_name}/rollout/history", dependencies=[Depends(require_viewer)])
+@router.get("/k8s/clusters/{cluster_id}/deployments/{deployment_name}/rollout/history")
 @handle_route_errors("get rollout history")
 def get_rollout_history(
     cluster_id: int,
@@ -894,7 +877,7 @@ def get_rollout_history(
     return {"history": history, "deployment_name": deployment_name, "namespace": namespace}
 
 
-@router.get("/k8s/clusters/{cluster_id}/deployments/{deployment_name}/rollout/status", dependencies=[Depends(require_viewer)])
+@router.get("/k8s/clusters/{cluster_id}/deployments/{deployment_name}/rollout/status")
 @handle_route_errors("get rollout status")
 def get_rollout_status(
     cluster_id: int,
@@ -924,7 +907,6 @@ def rollout_undo(
     deployment_name: str,
     namespace: str,
     revision: int | None = None,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -947,7 +929,6 @@ def rollout_restart(
     cluster_id: int,
     deployment_name: str,
     namespace: str,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -971,7 +952,6 @@ def rollout_pause(
     cluster_id: int,
     deployment_name: str,
     namespace: str,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -995,7 +975,6 @@ def rollout_resume(
     cluster_id: int,
     deployment_name: str,
     namespace: str,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -1022,7 +1001,6 @@ def rollout_resume(
 def cordon_node(
     cluster_id: int,
     node_name: str,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -1045,7 +1023,6 @@ def cordon_node(
 def uncordon_node(
     cluster_id: int,
     node_name: str,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -1071,7 +1048,6 @@ def drain_node(
     delete_emptydir_data: bool = False,
     force: bool = False,
     grace_period: int = -1,
-    user: User = Depends(require_cluster_owner),
     db: Session = Depends(get_db),
 ):
     """

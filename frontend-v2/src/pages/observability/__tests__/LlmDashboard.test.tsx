@@ -10,6 +10,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import LlmDashboard from '../LlmDashboard';
+import { STORAGE_KEYS } from '@/lib/storage-keys';
 import type { LlmHistogram, LlmRankings, LlmFilterData } from '@/types/llm-observability';
 
 const histogram = (metric: string): LlmHistogram => ({
@@ -100,4 +101,22 @@ describe('LlmDashboard', () => {
     await waitFor(() => expect(histogramRequests.length).toBeGreaterThan(0));
     expect(histogramRequests.every((u) => u.searchParams.get('model') === 'gpt-4o')).toBe(true);
   });
+
+  it('follows the app-wide cluster selection', async () => {
+    // This page used to keep its own cluster in `?cluster=`, so changing
+    // cluster in the sidebar did nothing here and the tiles sat on whatever
+    // it had picked — which was a hard-coded guess for the first cluster
+    // whose name contained "hgx" or whose context contained
+    // "kubernetes-admin". On a machine with a DPF infrastructure cluster that
+    // is reliably the one cluster running no gateway at all.
+    window.localStorage.setItem(STORAGE_KEYS.SELECTED_CLUSTER, '2');
+
+    render(<LlmDashboard />);
+
+    await waitFor(() => expect(histogramRequests.length).toBeGreaterThan(0));
+    expect(
+      histogramRequests.every((u) => u.pathname.includes('/clusters/2/')),
+    ).toBe(true);
+  });
+
 });

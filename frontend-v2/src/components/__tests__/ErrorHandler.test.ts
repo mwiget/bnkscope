@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { AxiosError } from 'axios';
-import { parseApiError, formatErrorForToast, getErrorIcon } from '@/lib/error-handler';
+import { parseApiError } from '@/lib/error-handler';
 
 // Helper to create mock AxiosError
 function createAxiosError(
@@ -41,8 +41,9 @@ describe('parseApiError', () => {
 
     expect(parsed.title).toBe('Authentication Required');
     expect(parsed.severity).toBe('warning');
-    expect(parsed.action?.label).toBe('Log In');
-    expect(parsed.action?.route).toBe('/login');
+    // The action button used to navigate here; the page was deleted with
+    // the pipeline, so a button that lands on NotFound is worse than none.
+    expect(parsed.action).toBeUndefined();
   });
 
   it('maps downstream K8S_API_ERROR unauthorized to actionable EKS guidance', () => {
@@ -91,7 +92,7 @@ describe('parseApiError', () => {
     const parsed = parseApiError(error);
 
     expect(parsed.title).toBe('Authentication Required');
-    expect(parsed.action?.route).toBe('/login');
+    expect(parsed.action).toBeUndefined();
   });
 
   it('maps OCP SCC-related failures to platform-aware remediation guidance', () => {
@@ -194,7 +195,9 @@ describe('parseApiError', () => {
 
     expect(parsed.title).toBe('Server Error');
     expect(parsed.severity).toBe('error');
-    expect(parsed.action?.route).toBe('/tasks');
+    // The action button used to navigate here; the page was deleted with
+    // the pipeline, so a button that lands on NotFound is worse than none.
+    expect(parsed.action).toBeUndefined();
   });
 
   it('handles 503 Service Unavailable', () => {
@@ -225,7 +228,7 @@ describe('parseApiError', () => {
 
     expect(parsed.title).toBe('Request Timeout');
     expect(parsed.severity).toBe('warning');
-    expect(parsed.action?.route).toBe('/tasks');
+    expect(parsed.action).toBeUndefined();
   });
 
   // =========================================================================
@@ -260,7 +263,9 @@ describe('parseApiError', () => {
     const parsed = parseApiError(error);
 
     expect(parsed.title).toBe('Credentials Error');
-    expect(parsed.action?.route).toBe('/auth-templates');
+    // The action button used to navigate here; the page was deleted with
+    // the pipeline, so a button that lands on NotFound is worse than none.
+    expect(parsed.action).toBeUndefined();
   });
 
   it('maps cluster offline errors', () => {
@@ -270,7 +275,9 @@ describe('parseApiError', () => {
     const parsed = parseApiError(error);
 
     expect(parsed.title).toBe('Cluster Offline');
-    expect(parsed.action?.route).toBe('/operators');
+    // The action button used to navigate here; the page was deleted with
+    // the pipeline, so a button that lands on NotFound is worse than none.
+    expect(parsed.action).toBeUndefined();
   });
 
   it('maps operator disconnected errors', () => {
@@ -280,7 +287,7 @@ describe('parseApiError', () => {
     const parsed = parseApiError(error);
 
     expect(parsed.title).toBe('Operator Disconnected');
-    expect(parsed.action?.route).toBe('/operators');
+    expect(parsed.action).toBeUndefined();
   });
 
   it('maps metrics-server errors', () => {
@@ -291,43 +298,9 @@ describe('parseApiError', () => {
 
     expect(parsed.title).toBe('Metrics Unavailable');
     expect(parsed.severity).toBe('info');
-    expect(parsed.action?.route).toBe('/helm');
-  });
-
-  it('maps state locked errors', () => {
-    const error = createAxiosError(423, {
-      error: { message: 'State is locked by another process' },
-    });
-    const parsed = parseApiError(error);
-
-    expect(parsed.title).toBe('State Locked');
-    expect(parsed.action?.route).toBe('/tasks');
-  });
-
-  it('maps BLUEPRINT_MODULES_MISSING by code to blueprint module guidance', () => {
-    const error = createAxiosError(400, {
-      error: {
-        code: 'BLUEPRINT_MODULES_MISSING',
-        message: 'Required modules missing from catalog',
-      },
-    });
-    const parsed = parseApiError(error);
-
-    expect(parsed.title).toBe('Blueprint Modules Missing');
-    expect(parsed.suggestion).toBe('Sync the catalog source that contains the missing modules, then retry.');
-    expect(parsed.action?.route).toBe('/catalog');
-    expect(parsed.severity).toBe('warning');
-  });
-
-  it('does not classify generic blocked messages as State Locked', () => {
-    const error = createAxiosError(400, {
-      error: {
-        message: 'Deployment blocked because prerequisites are missing',
-      },
-    });
-    const parsed = parseApiError(error);
-
-    expect(parsed.title).toBe('Operation Failed');
+    // The action button used to navigate here; the page was deleted with
+    // the pipeline, so a button that lands on NotFound is worse than none.
+    expect(parsed.action).toBeUndefined();
   });
 
   // =========================================================================
@@ -356,28 +329,3 @@ describe('parseApiError', () => {
   });
 });
 
-describe('formatErrorForToast', () => {
-  it('formats error for toast display', () => {
-    const error = createAxiosError(500);
-    const formatted = formatErrorForToast(error);
-
-    expect(formatted.title).toBeDefined();
-    expect(typeof formatted.title).toBe('string');
-  });
-
-  it('includes action from parsed error', () => {
-    const error = createAxiosError(401);
-    const formatted = formatErrorForToast(error);
-
-    expect(formatted.action?.label).toBe('Log In');
-    expect(formatted.action?.route).toBe('/login');
-  });
-});
-
-describe('getErrorIcon', () => {
-  it('returns correct icons for each severity', () => {
-    expect(getErrorIcon('error')).toContain('❌');
-    expect(getErrorIcon('warning')).toContain('⚠️');
-    expect(getErrorIcon('info')).toContain('ℹ️');
-  });
-});

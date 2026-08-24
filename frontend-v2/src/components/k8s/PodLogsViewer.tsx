@@ -38,19 +38,6 @@ interface PodLogsViewerProps {
   namespace: string;
 }
 
-/**
- * Get a JWT token for WebSocket authentication.
- * Reads from localStorage where the auth system stores it.
- */
-function getAuthToken(): string | null {
-  try {
-    const token = localStorage.getItem('auth_token');
-    return token || null;
-  } catch {
-    return null;
-  }
-}
-
 export function PodLogsViewer({
   open,
   onOpenChange,
@@ -167,10 +154,6 @@ export function PodLogsViewer({
       container: selectedContainer,
       tail_lines: '100',
     });
-    const token = getAuthToken();
-    if (token) {
-      params.set('token', token);
-    }
     const wsUrl = `${protocol}//${host}/ws/k8s/clusters/${clusterId}/pods/${encodeURIComponent(pod.metadata.name)}/logs/follow?${params.toString()}`;
 
     const ws = new WebSocket(wsUrl);

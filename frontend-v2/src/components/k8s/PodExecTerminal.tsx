@@ -23,6 +23,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useTheme } from '@/context/ThemeContext';
 import { logger } from '@/lib/logger';
+import { NeedsWiderScreen } from '@/components/ui/needs-wider-screen';
 
 interface PodExecTerminalProps {
   open: boolean;
@@ -90,12 +91,7 @@ export function PodExecTerminal({
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
 
-    // Build WebSocket URL with JWT token for authentication
-    const authToken = localStorage.getItem('auth_token');
-    let wsUrl = `${protocol}//${host}/ws/k8s/clusters/${clusterId}/pods/${pod.metadata.name}/exec?namespace=${encodeURIComponent(namespace)}&container=${encodeURIComponent(selectedContainer)}&command=${encodeURIComponent(selectedShell)}`;
-    if (authToken) {
-      wsUrl += `&token=${encodeURIComponent(authToken)}`;
-    }
+    const wsUrl = `${protocol}//${host}/ws/k8s/clusters/${clusterId}/pods/${pod.metadata.name}/exec?namespace=${encodeURIComponent(namespace)}&container=${encodeURIComponent(selectedContainer)}&command=${encodeURIComponent(selectedShell)}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -384,10 +380,23 @@ export function PodExecTerminal({
           )}
         </div>
 
-        {/* Terminal */}
-        <div className="flex-1 overflow-hidden rounded-lg border border-border bg-background">
-          <div ref={terminalRef} className="h-full w-full p-2" />
-        </div>
+        {/* Terminal.
+
+            Gated on a phone: an 80-column shell needs roughly 600px at a
+            readable font size, so at 393px xterm either wraps every line or
+            shrinks the type past legibility — and this is a view you open
+            when something is already wrong. The override stays available;
+            a landscape phone is often enough. */}
+        <NeedsWiderScreen
+          id="pod-exec-terminal"
+          title="The terminal"
+          reason="A shell needs about 80 columns; below ~600px lines wrap mid-command."
+          instead={<>Rotate to landscape, or use <span className="font-medium text-foreground">Logs</span> to read output without a shell.</>}
+        >
+          <div className="flex-1 overflow-hidden rounded-lg border border-border bg-background">
+            <div ref={terminalRef} className="h-full w-full p-2" />
+          </div>
+        </NeedsWiderScreen>
 
         <div className="text-xs text-muted-foreground">
           Tip: Use Ctrl+C to interrupt running commands, Ctrl+D to exit shell

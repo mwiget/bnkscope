@@ -86,10 +86,6 @@ export interface CWCAPISetupResponse {
   operator_dispatch?: boolean;
 }
 
-// Backward-compatible aliases during rename transition.
-export type QKViewSetupStatusResponse = CWCAPISetupStatusResponse;
-export type QKViewSetupStep = CWCAPISetupStep;
-export type QKViewSetupResponse = CWCAPISetupResponse;
 
 export interface QKViewDeleteResponse {
   deleted?: boolean;

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from models import ApplicationSetting, CloudCredentialTemplate, Project
+from models import ApplicationSetting, CloudCredentialTemplate, KubernetesCluster
 from services.credentials_service import (
     CredentialUnavailableError,
     _decrypt_credential,
@@ -20,18 +20,17 @@ from services.credentials_service import (
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
-def _make_project(db, name="Cred Project", credential_template_id=None, **kwargs):
-    project_type = kwargs.pop("project_type", "cloud-aws")
+def _make_project(db, name="Cred Cluster", credential_template_id=None, **kwargs):
+    """Build a cluster carrying the cloud credentials under test."""
+    kwargs.pop("project_type", None)
     cloud_provider = kwargs.pop("cloud_provider", "aws")
-    project = Project(
-        name=name, project_type=project_type, cloud_provider=cloud_provider,
-        environment="dev", backend_type="local", color="#000", icon="cloud",
-        is_active=True, credential_template_id=credential_template_id,
-        **kwargs,
+    cluster = KubernetesCluster(
+        name=name, context=f"ctx-{name}", cloud_provider=cloud_provider,
+        credential_template_id=credential_template_id, **kwargs,
     )
-    db.add(project)
+    db.add(cluster)
     db.flush()
-    return project
+    return cluster
 
 
 def _make_template(db, **kwargs):

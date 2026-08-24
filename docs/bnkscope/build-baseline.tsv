@@ -1,0 +1,17 @@
+cold	backend	106	0
+cold	celery-worker	49	0
+cold	celery-beat	40	0
+cold	frontend	45	0
+cold	proxy	4	0
+cold	mcp	13	0
+cold	forge-agent	83	0
+warm	backend	6	0
+warm	celery-worker	14	0
+warm	frontend	37	0
+bnk-forge-agent:latest	1.61GB
+bnk-forge-api:latest	829MB
+bnk-forge-beat:latest	664MB
+bnk-forge-frontend:latest	138MB
+bnk-forge-mcp:latest	268MB
+bnk-forge-proxy:latest	93.9MB
+bnk-forge-worker:latest	1.46GB

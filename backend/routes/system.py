@@ -20,17 +20,15 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from core.errors import BadRequestError, InternalError, handle_route_errors
+from core.errors import BadRequestError, handle_route_errors
 from core.maintenance import get_maintenance_status
 from database import get_db
-from routes.auth import require_admin
 from schemas.backup import BackupCreateRequest, BackupStatusResponse, MaintenanceStatusResponse, RestoreResponse
 from schemas.system import SystemHealthResponse
 from services.backup_service import BackupService
 from services.system_service import SystemService
 
 logger = logging.getLogger(__name__)
-
 
 def _cleanup_file(path: str) -> None:
     """Remove a temporary file after the response has been sent."""
@@ -40,11 +38,10 @@ def _cleanup_file(path: str) -> None:
     except OSError as exc:
         logger.warning("Failed to clean up backup file %s: %s", path, exc)
 
-router = APIRouter(prefix="/api/system", tags=["system"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/api/system", tags=["system"])
 
 # Separate router for public endpoints (no auth required)
 public_router = APIRouter(prefix="/api/system", tags=["system"])
-
 
 # ============================================================
 # Request Models
@@ -54,14 +51,8 @@ class CleanupRequest(BaseModel):
     cleanup_type: str
     older_than_days: int = 30
 
-
-class RestartContainersRequest(BaseModel):
-    services: list[str] | None = None
-
-
 class DefaultsUpdateRequest(BaseModel):
     updates: dict[str, str]
-
 
 # ============================================================
 # Service Health Endpoints
@@ -72,7 +63,6 @@ class DefaultsUpdateRequest(BaseModel):
 def get_system_health(db: Session = Depends(get_db)):
     """Get comprehensive system health status."""
     return SystemService(db).get_health()
-
 
 @public_router.get("/maintenance", response_model=MaintenanceStatusResponse)
 @handle_route_errors("get maintenance status")
@@ -87,7 +77,6 @@ def get_maintenance_mode():
         )
     return MaintenanceStatusResponse(maintenance_mode=False)
 
-
 # ============================================================
 # Process Metrics — backend self-monitoring for header strip
 # ============================================================
@@ -97,7 +86,6 @@ def get_maintenance_mode():
 _self_process = psutil.Process(os.getpid())
 _self_process.cpu_percent(interval=None)  # prime so first real call is accurate
 _process_start_time = _self_process.create_time()
-
 
 class ProcessMetricsResponse(BaseModel):
     cpu_percent: float
@@ -110,7 +98,6 @@ class ProcessMetricsResponse(BaseModel):
     net_tx_bytes: int
     uptime_seconds: int
     sampled_at: float  # unix seconds — frontend diffs this to compute net rates
-
 
 @public_router.get("/process-metrics", response_model=ProcessMetricsResponse)
 @handle_route_errors("process metrics")
@@ -150,18 +137,6 @@ def get_process_metrics() -> ProcessMetricsResponse:
         sampled_at=time.time(),
     )
 
-
-# ============================================================
-# Task Queue Metrics
-# ============================================================
-
-@router.get("/queue-metrics")
-@handle_route_errors("queue metrics")
-def get_queue_metrics(db: Session = Depends(get_db)):
-    """Get task queue depth and worker metrics."""
-    return SystemService(db).get_queue_metrics()
-
-
 # ============================================================
 # Performance Metrics
 # ============================================================
@@ -171,7 +146,6 @@ def get_queue_metrics(db: Session = Depends(get_db)):
 def get_performance_metrics(db: Session = Depends(get_db)):
     """Get system performance metrics."""
     return SystemService(db).get_performance_metrics()
-
 
 # ============================================================
 # Recent Errors
@@ -183,197 +157,17 @@ def get_recent_errors(limit: int = 10, db: Session = Depends(get_db)):
     """Get recent failed tasks and errors."""
     return SystemService(db).get_recent_errors(limit=limit)
 
-
 # ============================================================
 # Database Management
 # ============================================================
 
-@router.get("/database/stats")
-@handle_route_errors("database stats")
-def get_database_stats(db: Session = Depends(get_db)):
-    """Get detailed database statistics."""
-    return SystemService(db).get_database_stats()
-
-
-@router.post("/database/cleanup")
-@handle_route_errors("database cleanup")
-def cleanup_database(request: CleanupRequest, db: Session = Depends(get_db)):
-    """Cleanup old records from database."""
-    result = SystemService(db).cleanup_database(request.cleanup_type, request.older_than_days)
-    db.commit()
-    return result
-
-
 @router.post("/database/vacuum")
 @handle_route_errors("database vacuum")
 def vacuum_database(db: Session = Depends(get_db)):
-    """Run VACUUM ANALYZE on the database."""
+    """Reclaim free pages in the SQLite file (VACUUM)."""
     result = SystemService(db).vacuum_database()
     db.commit()
     return result
-
-
-# ============================================================
-# Workspace Management (delegates to WorkspaceManager)
-# ============================================================
-
-@router.get("/workspaces/stats")
-@handle_route_errors("workspace stats")
-def get_workspace_stats(db: Session = Depends(get_db)):
-    """Get statistics about persistent workspaces."""
-    from services.workspace_manager import WorkspaceManager
-    stats = WorkspaceManager(db).get_workspace_stats()
-    return {"success": True, **stats}
-
-
-@router.get("/workspaces/orphaned")
-@handle_route_errors("list orphaned workspaces")
-def list_orphaned_workspaces(db: Session = Depends(get_db)):
-    """List orphaned workspaces."""
-    from services.workspace_manager import WorkspaceManager
-    orphaned = WorkspaceManager(db).get_orphaned_workspaces()
-    return {"success": True, "orphaned": orphaned, "count": len(orphaned)}
-
-
-@router.post("/workspaces/cleanup")
-@handle_route_errors("cleanup workspaces")
-def cleanup_workspaces(db: Session = Depends(get_db)):
-    """Clean up orphaned workspaces."""
-    from services.workspace_manager import WorkspaceManager
-    workspace = WorkspaceManager(db)
-    orphaned = workspace.get_orphaned_workspaces()
-    deleted_count = workspace.cleanup_orphaned_workspaces()
-    logger.info(f"Cleaned up {deleted_count} orphaned workspaces")
-    return {"success": True, "deleted_count": deleted_count, "deleted_paths": orphaned}
-
-
-# ============================================================
-# Module Lock Management (Postgres heartbeat + fencing tokens)
-# ============================================================
-
-@router.get("/workspaces/locks")
-@handle_route_errors("list module locks")
-def list_workspace_locks(db: Session = Depends(get_db)):
-    """List all currently held module locks (heartbeat + fence-token columns)."""
-    from services.module_lock import ModuleLockService
-    locks = ModuleLockService(db).list_held()
-    return {"success": True, "locks": locks, "count": len(locks)}
-
-
-@router.get("/workspaces/locks/{project_id}/{module_id}")
-@handle_route_errors("check module lock")
-def check_workspace_lock(project_id: int, module_id: int, db: Session = Depends(get_db)):
-    """Check if a specific module is currently locked by a live worker.
-
-    project_id is preserved in the URL for backward compatibility but only
-    module_id is used internally — module_id is unique.
-    """
-    from services.module_lock import ModuleLockService
-    svc = ModuleLockService(db)
-    holder = svc.get_holder(module_id)
-    return {
-        "success": True,
-        "is_locked": svc.is_held(module_id),
-        "holder": holder,
-    }
-
-
-@router.delete("/workspaces/locks/{project_id}/{module_id}")
-@handle_route_errors("force release module lock")
-def force_release_workspace_lock(project_id: int, module_id: int, db: Session = Depends(get_db)):
-    """Force-release a module lock. Admin escape hatch — clears holding_task_id
-    + heartbeat_at without bumping the fence token. Use only when the worker
-    holding the lock is verified dead."""
-    from services.module_lock import ModuleLockService
-    svc = ModuleLockService(db)
-    holder = svc.get_holder(module_id)
-    if holder is None:
-        return {"success": True, "released": False, "message": "No lock exists for this module"}
-    released = svc.force_release(module_id)
-    logger.warning(
-        "Force-released module lock for project=%s module=%s. Previous holder: %s",
-        project_id, module_id, holder,
-    )
-    return {"success": True, "released": released, "previous_holder": holder}
-
-
-# ============================================================
-# Container Management (subprocess, no service extraction needed)
-# ============================================================
-
-@router.post("/containers/restart")
-@handle_route_errors("container restart")
-def restart_containers(request: RestartContainersRequest, db: Session = Depends(get_db)):
-    """Restart Docker containers for BNK Forge services."""
-    import subprocess
-
-    services = request.services
-    if services is None:
-        services = ["backend", "celery-worker", "celery-beat", "frontend"]
-
-    valid_services = {"backend", "celery-worker", "celery-beat", "frontend", "postgres", "redis", "proxy"}
-    invalid_services = [s for s in services if s not in valid_services]
-    if invalid_services:
-        raise BadRequestError(f"Invalid service names: {', '.join(invalid_services)}", code="INVALID_SERVICE_NAME")
-
-    if "postgres" in services or "redis" in services:
-        raise BadRequestError("Cannot restart database services from API for safety", code="RESTRICTED_SERVICE")
-
-    results = []
-    for service in services:
-        container_name = f"bnk-forge-{service}"
-        try:
-            result = subprocess.run(["docker", "restart", container_name],
-                                    capture_output=True, text=True, timeout=60)
-            if result.returncode == 0:
-                results.append({"service": service, "status": "restarted", "container": container_name})
-            else:
-                results.append({"service": service, "status": "failed", "error": result.stderr or "Container not found"})
-        except subprocess.TimeoutExpired:
-            results.append({"service": service, "status": "timeout", "error": "Restart timed out after 60 seconds"})
-        except Exception as e:
-            results.append({"service": service, "status": "error", "error": str(e)})
-
-    failed = [r for r in results if r["status"] != "restarted"]
-    if failed and len(failed) == len(results):
-        raise InternalError("All container restarts failed. Docker socket may not be accessible.",
-                            code="CONTAINER_RESTART_FAILED")
-
-    return {"message": f"Restart initiated for {len(services)} service(s)", "results": results,
-            "note": "Backend container will restart last and may cause API disconnection"}
-
-
-@router.get("/containers/status")
-@handle_route_errors("container status")
-def get_container_status(db: Session = Depends(get_db)):
-    """Get status of all BNK Forge Docker containers."""
-    import subprocess
-
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=bnk-forge", "--format", "{{.Names}}|{{.Status}}|{{.State}}"],
-            capture_output=True, text=True, timeout=10
-        )
-    except subprocess.TimeoutExpired:
-        from core.errors import TimeoutError
-        raise TimeoutError("Docker command")
-
-    if result.returncode != 0:
-        raise InternalError("Failed to query Docker containers.", code="DOCKER_QUERY_ERROR")
-
-    containers = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        parts = line.split("|")
-        if len(parts) != 3:
-            continue
-        name, status, state = parts
-        service_name = name.replace("bnk-forge-v2-", "").replace("-1", "")
-        containers.append({"service": service_name, "container_name": name, "status": status, "state": state})
-
-    return {"containers": containers, "total": len(containers)}
-
 
 # ============================================================
 # System Defaults (delegates to defaults_service)
@@ -386,14 +180,12 @@ def get_system_defaults(db: Session = Depends(get_db)):
     from services.defaults_service import get_all_defaults
     return get_all_defaults(db)
 
-
 @router.get("/defaults/status")
 @handle_route_errors("check defaults status")
 def get_defaults_status(db: Session = Depends(get_db)):
     """Check if all required system defaults are configured."""
     from services.defaults_service import check_required_configured
     return check_required_configured(db)
-
 
 @router.put("/defaults")
 @handle_route_errors("update system defaults")
@@ -407,7 +199,6 @@ def update_system_defaults(request: DefaultsUpdateRequest, db: Session = Depends
     if failed:
         return {"status": "partial", "results": results, "failed": failed}
     return {"status": "success", "results": results}
-
 
 @router.put("/defaults/{key}")
 @handle_route_errors("update single default")
@@ -424,7 +215,6 @@ def update_single_default(key: str, value: str, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success", "key": decoded_key}
 
-
 # ============================================================
 # System Version & Upgrade
 # ============================================================
@@ -438,7 +228,6 @@ def get_system_version(db: Session = Depends(get_db)):
     # Merge upgrade readiness into version response so UI can show warnings
     result["upgrade_readiness"] = svc.get_upgrade_readiness()
     return result
-
 
 @router.get("/upgrade/status")
 @handle_route_errors("get upgrade status")
@@ -464,7 +253,6 @@ def get_upgrade_status(db: Session = Depends(get_db)):
 
     return UpgradeStateResponse(**state).model_dump()
 
-
 @router.get("/upgrade/verify")
 @handle_route_errors("verify post-upgrade health")
 def verify_post_upgrade(db: Session = Depends(get_db)):
@@ -475,13 +263,11 @@ def verify_post_upgrade(db: Session = Depends(get_db)):
     """
     return SystemService(db).verify_post_upgrade()
 
-
 @router.post("/upgrade")
 @handle_route_errors("trigger system upgrade")
 def trigger_system_upgrade(db: Session = Depends(get_db)):
     """Trigger a system upgrade with live output streaming via WebSocket."""
     return SystemService(db).trigger_upgrade()
-
 
 # ============================================================
 # MCP Server Status
@@ -496,7 +282,7 @@ def get_mcp_status():
     info, health status, and the full tool catalog grouped by domain.
     """
     # Try container name first (bridge networking), then localhost (host networking)
-    mcp_urls = ["http://bnk-forge-mcp:8081/mcp", "http://localhost:8081/mcp"]
+    mcp_urls = ["http://bnkscope-mcp:8081/mcp", "http://localhost:8081/mcp"]
     status = "offline"
     latency_ms: float | None = None
     error_message: str | None = None
@@ -537,11 +323,7 @@ def get_mcp_status():
         "system": ("System", "Server"),
         "cluster_management": ("Cluster Management", "Box"),
         "bnk_operations": ("F5 BNK Operations", "Shield"),
-        "diagnostics_fleet": ("Diagnostics & Fleet", "Globe"),
-        "helm": ("Helm", "Package"),
-        "config_management": ("Configuration", "Settings"),
-        "iac_operations": ("Infrastructure as Code", "FolderGit2"),
-        "cloud_auth": ("Cloud & Auth", "Cloud"),
+        "diagnostics_fleet": ("Diagnostics", "Globe"),
     }
 
     tool_catalog: list[dict] = []
@@ -580,7 +362,7 @@ def get_mcp_status():
                     "params": {
                         "protocolVersion": "2024-11-05",
                         "capabilities": {},
-                        "clientInfo": {"name": "bnk-forge-backend", "version": "1"},
+                        "clientInfo": {"name": "bnkscope-backend", "version": "1"},
                     },
                 },
                 headers=common_headers,
@@ -655,7 +437,6 @@ def get_mcp_status():
         "tool_catalog": tool_catalog,
     }
 
-
 # ============================================================
 # Backup & Restore Endpoints
 # ============================================================
@@ -674,14 +455,12 @@ def create_backup(request: BackupCreateRequest, db: Session = Depends(get_db)):
         background=BackgroundTask(_cleanup_file, archive_path),
     )
 
-
 @router.get("/backup/status", response_model=BackupStatusResponse)
 @handle_route_errors("get backup status")
 def get_backup_status(db: Session = Depends(get_db)):
     """Check whether a backup/restore operation is currently in progress."""
     service = BackupService(db)
     return service.get_backup_status()
-
 
 @router.post("/restore", response_model=RestoreResponse)
 @handle_route_errors("restore backup")

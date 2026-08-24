@@ -1,132 +1,82 @@
+"""In-process TTL cache.
+
+Redis went with Celery in bnkscope Phase 4. A single-process, single-user tool
+does not need a shared cache server — it needs the API not to re-scrape a
+cluster on every render. This is that, and nothing more.
+
+Consequences worth knowing, since they differ from Redis:
+  - the cache is per-process and dies with it (fine: nothing here is truth)
+  - it is bounded by ``_MAX_ENTRIES`` and evicts the oldest entries, so a
+    pathological key space cannot grow without limit
+  - values are stored by reference, not serialized, so **callers must not
+    mutate what they get back**
+
+The public surface (``cache.get/set/delete/delete_pattern/clear_all`` and the
+``@cached`` decorator) is unchanged, so call sites did not move.
 """
-Redis cache wrapper for query result caching
-Provides simple interface for caching frequently accessed data
-"""
-import json
+
+import fnmatch
 import logging
-import os
+import threading
+import time
+from collections import OrderedDict
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
 
-import redis
-
 logger = logging.getLogger(__name__)
 
-# Get Redis URL from environment (includes password if configured)
-DEFAULT_REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+# Enough for the scan/health/metrics results this actually holds; the cap only
+# exists so a bug in key construction cannot leak memory indefinitely.
+_MAX_ENTRIES = 2048
 
 
 class CacheService:
-    """Redis cache wrapper with automatic JSON serialization"""
+    """Thread-safe in-process cache with per-entry TTL and LRU-ish eviction."""
 
-    def __init__(self, redis_url: str | None = None):
-        """Initialize Redis connection"""
-        self.redis: Any = None
-        try:
-            url = redis_url or DEFAULT_REDIS_URL
-            self.redis = redis.from_url(url, decode_responses=True)
-            # Test connection
-            self.redis.ping()
-            logger.info(f"✅ Redis cache connected: {redis_url}")
-        except Exception as e:
-            logger.error(f"❌ Redis cache connection failed: {e}")
-            self.redis = None
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._store: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 
     def get(self, key: str) -> Any | None:
-        """
-        Get value from cache
-        Returns None if key doesn't exist or cache is unavailable
-        """
-        if not self.redis:
-            return None
-
-        try:
-            value = self.redis.get(key)
-            if value is None:
+        now = time.monotonic()
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
                 return None
-            return json.loads(value)
-        except Exception as e:
-            logger.warning(f"Cache GET error for key '{key}': {e}")
-            return None
+            expires_at, value = entry
+            if expires_at <= now:
+                del self._store[key]
+                return None
+            self._store.move_to_end(key)
+            return value
 
     def set(self, key: str, value: Any, ttl_seconds: int = 300) -> bool:
-        """
-        Set value in cache with TTL (default 5 minutes)
-        Returns True if successful, False otherwise
-        """
-        if not self.redis:
-            return False
-
-        try:
-            serialized = json.dumps(value, default=str)
-            self.redis.setex(key, ttl_seconds, serialized)
-            return True
-        except Exception as e:
-            logger.warning(f"Cache SET error for key '{key}': {e}")
-            return False
+        with self._lock:
+            self._store[key] = (time.monotonic() + ttl_seconds, value)
+            self._store.move_to_end(key)
+            while len(self._store) > _MAX_ENTRIES:
+                self._store.popitem(last=False)
+        return True
 
     def delete(self, key: str) -> bool:
-        """
-        Delete key from cache
-        Returns True if successful, False otherwise
-        """
-        if not self.redis:
-            return False
-
-        try:
-            self.redis.delete(key)
-            return True
-        except Exception as e:
-            logger.warning(f"Cache DELETE error for key '{key}': {e}")
-            return False
+        with self._lock:
+            return self._store.pop(key, None) is not None
 
     def delete_pattern(self, pattern: str) -> int:
-        """
-        Delete all keys matching pattern (e.g., "project:*")
-        Returns number of keys deleted
-
-        PERFORMANCE OPTIMIZATION (ADR-019):
-        Uses SCAN instead of KEYS to avoid blocking Redis.
-        KEYS is O(n) and blocks the entire Redis server.
-        SCAN is iterative and non-blocking.
-        """
-        if not self.redis:
-            return 0
-
-        try:
-            deleted = 0
-            cursor = 0
-            # Use SCAN to iterate through keys without blocking Redis
-            while True:
-                cursor, keys = self.redis.scan(cursor, match=pattern, count=100)
-                if keys:
-                    deleted += self.redis.delete(*keys)
-                if cursor == 0:
-                    break
-            return deleted
-        except Exception as e:
-            logger.warning(f"Cache DELETE_PATTERN error for pattern '{pattern}': {e}")
-            return 0
+        """Delete every key matching a glob pattern (e.g. ``"cluster:*"``)."""
+        with self._lock:
+            doomed = [k for k in self._store if fnmatch.fnmatchcase(k, pattern)]
+            for k in doomed:
+                del self._store[k]
+        return len(doomed)
 
     def clear_all(self) -> bool:
-        """
-        Clear entire cache (use with caution!)
-        Returns True if successful, False otherwise
-        """
-        if not self.redis:
-            return False
-
-        try:
-            self.redis.flushdb()
-            logger.info("🗑️  Cache cleared")
-            return True
-        except Exception as e:
-            logger.error(f"Cache CLEAR error: {e}")
-            return False
+        with self._lock:
+            self._store.clear()
+        return True
 
 
-# Global cache instance
 cache = CacheService()
 
 

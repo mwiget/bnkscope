@@ -25,9 +25,9 @@ class TestK8sResourceTier1Contracts:
 
     @patch("routes.k8s.resources.KubernetesService")
     def test_resource_list_contract(
-        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster
+        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, make_k8s_cluster
     ):
-        cluster = make_k8s_cluster(project=sample_project)
+        cluster = make_k8s_cluster()
         mock_svc = mock_k8s_svc_cls.return_value
         mock_svc.get_resources.return_value = [
             {
@@ -51,9 +51,9 @@ class TestK8sResourceTier1Contracts:
 
     @patch("routes.k8s.resources.KubernetesService")
     def test_resource_describe_contract(
-        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster
+        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, make_k8s_cluster
     ):
-        cluster = make_k8s_cluster(project=sample_project)
+        cluster = make_k8s_cluster()
         mock_svc = mock_k8s_svc_cls.return_value
         mock_svc.describe_resource.return_value = {
             "name": "nginx",
@@ -80,9 +80,9 @@ class TestK8sResourceTier1Contracts:
 
     @patch("routes.k8s.resources.KubernetesService")
     def test_pod_logs_contract(
-        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster
+        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, make_k8s_cluster
     ):
-        cluster = make_k8s_cluster(project=sample_project)
+        cluster = make_k8s_cluster()
         mock_svc = mock_k8s_svc_cls.return_value
         mock_svc.get_pod_logs.return_value = "line1\nline2"
 
@@ -98,9 +98,9 @@ class TestK8sResourceTier1Contracts:
 
     @patch("routes.k8s.resources.KubernetesService")
     def test_cluster_events_contract(
-        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster
+        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, make_k8s_cluster
     ):
-        cluster = make_k8s_cluster(project=sample_project)
+        cluster = make_k8s_cluster()
         mock_svc = mock_k8s_svc_cls.return_value
         mock_svc.get_events.return_value = [
             {"type": "Warning", "reason": "BackOff", "message": "Back-off restarting"}
@@ -118,9 +118,9 @@ class TestK8sResourceTier1Contracts:
 
     @patch("routes.k8s.resources.KubernetesService")
     def test_pod_top_contract(
-        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster
+        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, make_k8s_cluster
     ):
-        cluster = make_k8s_cluster(project=sample_project)
+        cluster = make_k8s_cluster()
         mock_svc = mock_k8s_svc_cls.return_value
         mock_svc.get_pod_metrics.return_value = {
             "available": True,
@@ -139,9 +139,9 @@ class TestK8sResourceTier1Contracts:
 
     @patch("routes.k8s.resources.KubernetesService")
     def test_node_top_contract(
-        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, sample_project, make_k8s_cluster
+        self, mock_k8s_svc_cls, client, viewer_headers, all_test_users, make_k8s_cluster
     ):
-        cluster = make_k8s_cluster(project=sample_project)
+        cluster = make_k8s_cluster()
         mock_svc = mock_k8s_svc_cls.return_value
         mock_svc.get_node_metrics.return_value = {
             "available": True,
@@ -160,9 +160,9 @@ class TestK8sResourceTier1Contracts:
 
     @patch("routes.k8s.resources.KubernetesService")
     def test_pod_restart_contract(
-        self, mock_k8s_svc_cls, client, admin_headers, sample_user, sample_project, make_k8s_cluster
+        self, mock_k8s_svc_cls, client, admin_headers, sample_user, make_k8s_cluster
     ):
-        cluster = make_k8s_cluster(project=sample_project)
+        cluster = make_k8s_cluster()
         mock_svc = mock_k8s_svc_cls.return_value
         mock_svc.restart_pod.return_value = {
             "success": True,
@@ -199,10 +199,9 @@ class TestResourceTypesAndScanContracts:
         client,
         admin_headers,
         sample_user,
-        sample_project,
         make_k8s_cluster,
     ):
-        cluster = make_k8s_cluster(project=sample_project, name="scan-cluster")
+        cluster = make_k8s_cluster(name="scan-cluster")
         mock_scan.return_value = {
             "cluster_id": cluster.id,
             "cluster_name": cluster.name,

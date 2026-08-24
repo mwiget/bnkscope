@@ -7,12 +7,24 @@
  * selected item is just `text-primary font-medium`. Category headers are small
  * uppercase eyebrow labels. Per-item decorations (status dot, count, tag) are
  * optional so each page maps its own data onto one consistent shape.
+ *
+ * **Below `lg` it is a drawer.** As a column it is 224px of a viewport that may
+ * only be 393px wide, and it sat next to a detail panel and a content area that
+ * were all `flex-shrink-0` — so the page simply overflowed and you panned a
+ * desktop layout around a phone. Below `lg` the same tree renders inside a
+ * sheet, opened by `<ResourceCategorySidebarTrigger>`, and selecting an item
+ * closes it: on a small screen you came here to change what you are looking at,
+ * not to keep the tree on screen.
  */
 
 import { type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
+import { useIsCompact } from '@/hooks/useMediaQuery';
+import { ChevronDown, ChevronRight, PanelLeft } from 'lucide-react';
 
 export interface ResourceCategoryItem {
   key: string;
@@ -53,10 +65,17 @@ interface ResourceCategorySidebarProps {
    * onToggleCategory are ignored in this mode.
    */
   hideGroupHeaders?: boolean;
-  /** Tailwind width class. Default: 'w-52' (~208px — deliberately narrow). */
+  /** Tailwind width class when shown as a column. Default: 'w-52'. */
   width?: string;
   className?: string;
   'aria-label'?: string;
+  /**
+   * Below `lg`, whether the drawer is open. Above it the sidebar is always
+   * visible and these are ignored — pair with
+   * `<ResourceCategorySidebarTrigger>`, which only renders where it applies.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function ResourceCategorySidebar({
@@ -70,7 +89,11 @@ export function ResourceCategorySidebar({
   width = 'w-52',
   className,
   'aria-label': ariaLabel = 'Resource categories',
+  open = false,
+  onOpenChange,
 }: ResourceCategorySidebarProps) {
+  const compact = useIsCompact();
+
   const renderItem = (item: ResourceCategoryItem) => {
     const ItemIcon = item.icon;
     const isSelected = selectedKey === item.key;
@@ -78,7 +101,12 @@ export function ResourceCategorySidebar({
     return (
       <button
         key={item.key}
-        onClick={() => onSelect(item.key)}
+        onClick={() => {
+          onSelect(item.key);
+          // In the drawer, picking an item is the end of the interaction —
+          // leaving it open would cover what you just asked to see.
+          if (compact) onOpenChange?.(false);
+        }}
         title={item.title}
         className={cn(
           'flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm transition-colors',
@@ -111,33 +139,15 @@ export function ResourceCategorySidebar({
     );
   };
 
-  if (hideGroupHeaders) {
-    return (
-      <aside
-        aria-label={ariaLabel}
-        className={cn(
-          width,
-          'flex-shrink-0 overflow-y-auto border-r border-border bg-background',
-          className,
-        )}
-      >
-        {header && <div className="p-3 pb-0">{header}</div>}
-        <nav className="space-y-0.5 p-3">
-          {groups.flatMap((group) => group.items).map(renderItem)}
-        </nav>
-      </aside>
-    );
-  }
-
-  return (
-    <aside
-      aria-label={ariaLabel}
-      className={cn(
-        width,
-        'flex-shrink-0 overflow-y-auto border-r border-border bg-background',
-        className,
-      )}
-    >
+  const body = hideGroupHeaders ? (
+    <>
+      {header && <div className="p-3 pb-0">{header}</div>}
+      <nav className="space-y-0.5 p-3">
+        {groups.flatMap((group) => group.items).map(renderItem)}
+      </nav>
+    </>
+  ) : (
+    <>
       {header && <div className="p-3 pb-0">{header}</div>}
 
       <nav className="space-y-3 p-3">
@@ -175,6 +185,63 @@ export function ResourceCategorySidebar({
           );
         })}
       </nav>
+    </>
+  );
+
+  if (compact) {
+    return (
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent side="left" className="w-[85vw] max-w-xs overflow-y-auto p-0">
+          <VisuallyHidden>
+            <SheetTitle>{ariaLabel}</SheetTitle>
+          </VisuallyHidden>
+          <nav aria-label={ariaLabel}>{body}</nav>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+
+  return (
+    <aside
+      aria-label={ariaLabel}
+      className={cn(
+        width,
+        'flex-shrink-0 overflow-y-auto border-r border-border bg-background',
+        className,
+      )}
+    >
+      {body}
     </aside>
+  );
+}
+
+/**
+ * Opens the category drawer. Renders only below `lg` — above it the sidebar is
+ * a visible column and a toggle for it would be a control that does nothing.
+ *
+ * `label` names what the drawer contains ("Resources", "Components"), because
+ * on a narrow screen it is the only clue to what is behind it.
+ */
+export function ResourceCategorySidebarTrigger({
+  onClick,
+  label = 'Categories',
+}: {
+  onClick: () => void;
+  label?: string;
+}) {
+  const compact = useIsCompact();
+  if (!compact) return null;
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-9 gap-1.5"
+      onClick={onClick}
+      aria-label={`Open ${label.toLowerCase()}`}
+    >
+      <PanelLeft className="h-4 w-4" aria-hidden="true" />
+      <span className="hidden sm:inline">{label}</span>
+    </Button>
   );
 }

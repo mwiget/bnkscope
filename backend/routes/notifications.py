@@ -1,21 +1,19 @@
 """
 Notifications API for user notifications and alerts
 """
-import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from core.errors import ForbiddenError, NotFoundError, handle_route_errors
+from core.errors import NotFoundError, handle_route_errors
 from database import get_db
 from models import Notification
-from routes.auth import get_username_from_request, require_viewer
 
-router = APIRouter(prefix="/api/notifications", tags=["notifications"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 # Separate router for WebSocket — cannot use HTTP auth dependencies
 ws_router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 logger = logging.getLogger(__name__)
@@ -99,17 +97,14 @@ def get_notifications(
 
     Args:
         request: HTTP request (used to extract JWT username)
-        user: Username override (falls back to JWT username)
         unread_only: If True, only return unread notifications
         limit: Maximum number of notifications to return
         before_id: Cursor — return only notifications with id < before_id
         category: Optional category filter
         severity: Optional severity filter
     """
-    effective_user = user or get_username_from_request(request)
-    query = db.query(Notification).filter(
-        (Notification.user == effective_user) | (Notification.user == "all")
-    )
+    # bnkscope is single-user; notifications are not scoped by owner.
+    query = db.query(Notification)
 
     if unread_only:
         query = query.filter(Notification.is_read == False)  # noqa: E712
@@ -130,9 +125,7 @@ def get_notifications(
 @handle_route_errors("get unread count")
 def get_unread_count(request: Request, user: str | None = None, db: Session = Depends(get_db)):
     """Get count of unread notifications for a user."""
-    user = user or get_username_from_request(request)
     count = db.query(Notification).filter(
-        ((Notification.user == user) | (Notification.user == "all")),
         Notification.is_read == False  # noqa: E712
     ).count()
 
@@ -146,15 +139,11 @@ def mark_notification_read(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Mark a notification as read. Only the owning user may mark their own."""
+    """Mark a notification as read."""
     notification = db.query(Notification).filter(Notification.id == notification_id).first()
 
     if not notification:
         raise NotFoundError("notification", notification_id)
-
-    effective_user = get_username_from_request(request)
-    if notification.user != effective_user and notification.user != "all":
-        raise ForbiddenError("Not your notification")
 
     if not notification.is_read:
         notification.is_read = True
@@ -168,9 +157,7 @@ def mark_notification_read(
 @handle_route_errors("mark all read")
 def mark_all_read(request: Request, user: str | None = None, db: Session = Depends(get_db)):
     """Mark all notifications as read for a user."""
-    user = user or get_username_from_request(request)
     notifications = db.query(Notification).filter(
-        ((Notification.user == user) | (Notification.user == "all")),
         Notification.is_read == False  # noqa: E712
     ).all()
 
@@ -190,15 +177,11 @@ def delete_notification(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Delete a notification. Only the owning user may delete their own."""
+    """Delete a notification."""
     notification = db.query(Notification).filter(Notification.id == notification_id).first()
 
     if not notification:
         raise NotFoundError("notification", notification_id)
-
-    effective_user = get_username_from_request(request)
-    if notification.user != effective_user and notification.user != "all":
-        raise ForbiddenError("Not your notification")
 
     db.delete(notification)
     db.commit()
@@ -216,7 +199,7 @@ def create_notification(
     """Create a new notification (for system use). Applies dedupe if dedupe_key is set."""
     data = notification.model_dump()
     if not data.get("user"):
-        data["user"] = get_username_from_request(request)
+        data["user"] = "local"
 
     # Derive the legacy `type` field from severity for back-compat
     severity = data.get("severity", "info")
@@ -252,118 +235,3 @@ def create_notification(
 
     return db_notification
 
-
-# WebSocket connection manager for deployment notifications
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        logger.info(f"WebSocket connected. Total connections: {len(self.active_connections)}")
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-            logger.info(f"WebSocket disconnected. Total connections: {len(self.active_connections)}")
-
-    async def broadcast(self, message: dict):
-        """Broadcast message to all connected clients."""
-        disconnected = []
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception as e:
-                logger.error(f"Error sending message to WebSocket: {e}")
-                disconnected.append(connection)
-
-        # Clean up disconnected clients
-        for conn in disconnected:
-            self.disconnect(conn)
-
-
-# Global connection manager instance
-deployment_manager = ConnectionManager()
-
-
-@ws_router.websocket("/ws/deployments")
-async def websocket_deployment_notifications(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time deployment notifications.
-
-    Clients connect to receive updates about deployment status changes.
-    Messages are sent in JSON format with the following structure:
-    {
-        "deployment_id": int,
-        "module_id": int,
-        "module_name": str,
-        "action": str,  # "init", "plan", "apply", "destroy"
-        "status": str,  # "running", "success", "failed", "cancelled"
-        "timestamp": str,
-        "duration": float (optional),
-        "error_message": str (optional),
-        "resource_changes": {  # optional, for plan/apply
-            "add": int,
-            "change": int,
-            "destroy": int
-        }
-    }
-    """
-    await deployment_manager.connect(websocket)
-    try:
-        # Keep connection alive and listen for client messages (ping/pong)
-        while True:
-            try:
-                # Wait for client messages (primarily for keepalive)
-                await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                # Echo back to confirm connection is alive
-                await websocket.send_json({"type": "pong", "timestamp": datetime.now(UTC).isoformat()})
-            except TimeoutError:
-                # Send ping to check if client is still connected
-                try:
-                    await websocket.send_json({"type": "ping", "timestamp": datetime.now(UTC).isoformat()})
-                except Exception:
-                    break
-    except WebSocketDisconnect:
-        deployment_manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        deployment_manager.disconnect(websocket)
-
-
-async def send_deployment_notification(
-    deployment_id: int,
-    module_id: int,
-    module_name: str,
-    action: str,
-    status: str,
-    duration: float | None = None,
-    error_message: str | None = None,
-    resource_changes: dict | None = None
-):
-    """
-    Send a deployment notification to all connected WebSocket clients.
-
-    This function should be called from deployment operations to notify clients
-    of status changes in real-time.
-    """
-    message = {
-        "deployment_id": deployment_id,
-        "module_id": module_id,
-        "module_name": module_name,
-        "action": action,
-        "status": status,
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
-
-    if duration is not None:
-        message["duration"] = duration
-
-    if error_message:
-        message["error_message"] = error_message
-
-    if resource_changes:
-        message["resource_changes"] = resource_changes
-
-    await deployment_manager.broadcast(message)

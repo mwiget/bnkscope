@@ -1,0 +1,78 @@
+{
+  "KEEP bnk-tmm": {
+    "src": 14735,
+    "test": 374
+  },
+  "KEEP k8s-core": {
+    "src": 13929,
+    "test": 3600
+  },
+  "KEEP observ": {
+    "src": 4752,
+    "test": 785
+  },
+  "KEEP system": {
+    "src": 6997,
+    "test": 0
+  },
+  "OTHER": {
+    "src": 79891,
+    "test": 55788
+  },
+  "RM auth/users": {
+    "src": 10926,
+    "test": 8799
+  },
+  "RM benchmarks": {
+    "src": 13479,
+    "test": 7972
+  },
+  "RM cloud/ssh": {
+    "src": 2613,
+    "test": 1620
+  },
+  "RM discovery": {
+    "src": 12404,
+    "test": 6611
+  },
+  "RM dpu/bm": {
+    "src": 27308,
+    "test": 10254
+  },
+  "RM drift": {
+    "src": 300,
+    "test": 0
+  },
+  "RM fleet/oper": {
+    "src": 15113,
+    "test": 9713
+  },
+  "RM modules": {
+    "src": 16902,
+    "test": 976
+  },
+  "RM projects": {
+    "src": 913,
+    "test": 176
+  },
+  "RM proxy-mig": {
+    "src": 246,
+    "test": 0
+  },
+  "RM snapshots": {
+    "src": 2038,
+    "test": 519
+  },
+  "RM tasks/queue": {
+    "src": 3600,
+    "test": 1761
+  },
+  "RM tofu/exec": {
+    "src": 217,
+    "test": 0
+  },
+  "RM upgrade/lic": {
+    "src": 2881,
+    "test": 1070
+  }
+}

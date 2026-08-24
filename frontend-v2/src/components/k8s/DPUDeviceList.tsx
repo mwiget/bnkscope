@@ -26,7 +26,8 @@ import {
   ChevronRight,
   Server,
 } from 'lucide-react';
-import type { DpfDpuDevice, DpfK8sCondition } from '@/types';
+import type { DpfDpuDevice } from '@/types';
+import { deviceStage } from '@/lib/dpu-device-status';
 
 // ── Props ─────────────────────────────────────────────────────────────────
 
@@ -36,14 +37,6 @@ interface DPUDeviceListProps {
 }
 
 // ── Condition Helpers ─────────────────────────────────────────────────────
-
-/** Ordered lifecycle conditions for DPUDevice. */
-const DEVICE_CONDITIONS = [
-  'DpuDeviceDiscovered',
-  'DpuDeviceNodeAttached',
-  'DpuDeviceInitialized',
-  'DpuDeviceReady',
-] as const;
 
 type ConditionStatus = 'True' | 'False' | 'Unknown' | undefined;
 
@@ -61,22 +54,6 @@ function conditionColor(status: ConditionStatus) {
     case 'False': return 'text-destructive';
     default:      return 'text-muted-foreground';
   }
-}
-
-/** Get the highest reached lifecycle stage. */
-function deviceStage(conditions: DpfK8sCondition[] | undefined): string {
-  if (!conditions?.length) return 'Unknown';
-  for (let i = DEVICE_CONDITIONS.length - 1; i >= 0; i--) {
-    const c = conditions.find((cond) => cond.type === DEVICE_CONDITIONS[i]);
-    if (c?.status === 'True') {
-      // Return friendly name
-      return DEVICE_CONDITIONS[i].replace('DpuDevice', '');
-    }
-  }
-  // Check for error
-  const errCond = conditions.find((c) => c.type === 'DpuDeviceError');
-  if (errCond?.status === 'True') return 'Error';
-  return 'Pending';
 }
 
 type StageBadgeVariant = 'success' | 'info' | 'warning' | 'destructive' | 'muted';
@@ -181,7 +158,7 @@ function DeviceRow({ device }: { device: DpfDpuDevice }) {
               <h4 className="text-xs font-semibold mb-1.5 text-foreground/80">
                 Firmware
               </h4>
-              <div className="grid grid-cols-3 gap-x-6 gap-y-1 text-xs">
+              <div className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
                 <DetailField label="BMC" value={device.status.firmware.bmc} mono />
                 <DetailField label="UEFI" value={device.status.firmware.uefi} mono />
                 <DetailField label="BSP" value={device.status.firmware.bsp} mono />
@@ -357,7 +334,7 @@ export function DPUDeviceList({ devices, isLoading }: DPUDeviceListProps) {
   return (
     <div className="space-y-4">
       {/* Filter cards */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <FilterCard
           label="Total Devices"
           value={devices.length}

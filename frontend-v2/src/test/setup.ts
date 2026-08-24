@@ -18,6 +18,9 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
 afterEach(() => {
   cleanup();
   server.resetHandlers();
+  // A test that widened or narrowed the viewport must not leak it into the
+  // next one — layout bugs that only appear in file order are miserable.
+  resetViewport();
 });
 
 // Clean up after all tests
@@ -27,19 +30,68 @@ afterAll(() => server.close());
 // Global Browser API Mocks
 // ============================================================================
 
-// Mock window.matchMedia (used by Radix UI, Tailwind, dark mode detection)
+// Mock window.matchMedia (used by Radix UI, Tailwind, dark mode detection, and
+// the responsive layout hooks in hooks/useMediaQuery.ts).
+//
+// It answers width queries against a settable viewport rather than returning
+// false for everything. Returning false made every `(min-width: …)` query fail,
+// which reads as "narrower than every breakpoint" — so the whole suite would
+// silently render the handheld layout. The default is a desktop width, so a
+// test that says nothing about the viewport gets the desktop tree; a test that
+// cares calls `setViewportWidth()` from '@/test/viewport'.
+import { getViewportHeight, getViewportWidth, resetViewport, subscribeToViewport } from './viewport';
+
+function parseMinWidth(query: string): number | null {
+  const m = /\(min-width:\s*(\d+)px\)/.exec(query);
+  return m ? Number(m[1]) : null;
+}
+
+function parseMaxWidth(query: string): number | null {
+  const m = /\(max-width:\s*(\d+)px\)/.exec(query);
+  return m ? Number(m[1]) : null;
+}
+
+function parseMaxHeight(query: string): number | null {
+  const m = /\(max-height:\s*(\d+)px\)/.exec(query);
+  return m ? Number(m[1]) : null;
+}
+
+function queryMatches(query: string): boolean {
+  const maxH = parseMaxHeight(query);
+  if (maxH !== null) return getViewportHeight() <= maxH;
+  const min = parseMinWidth(query);
+  if (min !== null) return getViewportWidth() >= min;
+  const max = parseMaxWidth(query);
+  if (max !== null) return getViewportWidth() <= max;
+  // Anything else — prefers-color-scheme, pointer: coarse — stays false, which
+  // is the light-theme, mouse-pointer default the suite assumes.
+  return false;
+}
+
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
-  value: (query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  }),
+  value: (query: string) => {
+    const listeners = new Set<(e: MediaQueryListEvent) => void>();
+    const list = {
+      get matches() {
+        return queryMatches(query);
+      },
+      media: query,
+      onchange: null,
+      addListener: (fn: (e: MediaQueryListEvent) => void) => listeners.add(fn),
+      removeListener: (fn: (e: MediaQueryListEvent) => void) => listeners.delete(fn),
+      addEventListener: (_: string, fn: (e: MediaQueryListEvent) => void) => listeners.add(fn),
+      removeEventListener: (_: string, fn: (e: MediaQueryListEvent) => void) => listeners.delete(fn),
+      dispatchEvent: () => false,
+    };
+    // Re-notify on viewport change, so a component subscribed through the hook
+    // re-renders exactly as it would in a browser.
+    subscribeToViewport(() => {
+      const event = { matches: queryMatches(query), media: query } as MediaQueryListEvent;
+      listeners.forEach((fn) => fn(event));
+    });
+    return list;
+  },
 });
 
 // Mock ResizeObserver (used by Radix UI popovers, dialogs)

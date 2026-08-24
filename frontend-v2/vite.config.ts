@@ -68,7 +68,6 @@ export default defineConfig({
           // UI components - large but stable (all Radix primitives in one chunk)
           'vendor-ui': [
             '@radix-ui/react-alert-dialog',
-            '@radix-ui/react-avatar',
             '@radix-ui/react-checkbox',
             '@radix-ui/react-collapsible',
             '@radix-ui/react-dialog',
@@ -76,8 +75,6 @@ export default defineConfig({
             '@radix-ui/react-label',
             '@radix-ui/react-popover',
             '@radix-ui/react-progress',
-            '@radix-ui/react-radio-group',
-            '@radix-ui/react-scroll-area',
             '@radix-ui/react-select',
             '@radix-ui/react-separator',
             '@radix-ui/react-slider',
@@ -91,9 +88,11 @@ export default defineConfig({
             'cmdk'
           ],
 
-          // Monaco Editor - very large, only used in K8s resource management
-          // Includes both the core editor and the React wrapper
-          'vendor-monaco': ['@monaco-editor/react', 'monaco-editor'],
+          // Monaco is deliberately NOT listed here. A manualChunks entry pins
+          // its modules into a named chunk that the entry graph then preloads,
+          // which is exactly what kept 3.8 MB in the initial payload. Left
+          // alone, Rollup puts it in the chunk behind
+          // components/k8s/MonacoEditor.tsx's dynamic import, where it belongs.
 
           // React Flow - only used in dependency graphs
           'vendor-flow': ['reactflow'],

@@ -5,9 +5,7 @@ Extracted from the monolithic kubernetes.py to avoid duplication.
 """
 
 import logging
-import subprocess
 
-import yaml
 from pydantic import BaseModel, model_validator
 
 from models import KubernetesCluster
@@ -17,16 +15,12 @@ from utils.validators import validate_aws_region
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
 # DRY Serialization Helpers
 # ============================================================================
 
-def serialize_cluster(cluster: KubernetesCluster, include_project_id: bool = True) -> dict:
-    """
-    Serialize a KubernetesCluster to dict.
-    DRY helper to avoid repeated serialization code.
-    """
+def serialize_cluster(cluster: KubernetesCluster) -> dict:
+    """Serialize a KubernetesCluster to dict."""
     platform_context = PlatformContextService.serialize_cluster_context(cluster)
 
     result = {
@@ -45,38 +39,17 @@ def serialize_cluster(cluster: KubernetesCluster, include_project_id: bool = Tru
         "version": cluster.version,
         "last_synced_at": cluster.last_synced_at.isoformat() if cluster.last_synced_at else None,
         "created_at": cluster.created_at.isoformat() if cluster.created_at else None,
-        # SSH tunnel per-cluster config
-        "ssh_tunnel_enabled": cluster.ssh_tunnel_enabled,
-        "ssh_remote_k8s_host": cluster.ssh_remote_k8s_host,
-        "ssh_remote_k8s_port": cluster.ssh_remote_k8s_port,
-        # First-class SSH credential
-        "ssh_credential_id": cluster.ssh_credential_id,
-        "ssh_host_override": cluster.ssh_host_override,
         # Per-cluster prereq selection (NULL → defaults; locked entries are
         # always included in the effective set).
         "enabled_prerequisites": cluster.enabled_prerequisites,
+        # Observed BNK release line, set by the discovery scan (ADR-494).
+        "running_release_id": cluster.running_release_id,
+        # Written by discovery. `has_dpf` is what gates the DPF tab in the UI,
+        # so the list endpoint has to carry it — the detail endpoint alone is
+        # too late, the tab strip renders from the list.
+        "meta_data": cluster.meta_data,
     }
-    if include_project_id:
-        result["project_id"] = cluster.project_id
     return result
-
-
-def run_kubectl(cmd, timeout: int = 30):
-    """Execute kubectl command and return parsed YAML output.
-
-    Args:
-        cmd: Command list to execute
-        timeout: Maximum seconds to wait (default 30s, see ADR-019)
-    """
-    try:
-        output = subprocess.check_output(cmd, text=True, timeout=timeout)
-        return yaml.safe_load(output)
-    except subprocess.TimeoutExpired:
-        logger.warning(f"kubectl command timed out after {timeout}s: {' '.join(cmd[:3])}...")
-        return None
-    except (subprocess.CalledProcessError, FileNotFoundError, Exception) as e:
-        logger.warning(f"kubectl command failed: {e}")
-        return None
 
 
 # ============================================================================
@@ -91,14 +64,6 @@ class ClusterCreateRequest(BaseModel):
     region: str | None = None
     context: str | None = None  # kubectl context name (optional, will auto-detect)
     default_namespace: str | None = "default"
-    # SSH tunnel: opt-in per-cluster toggle + remote K8s endpoint
-    ssh_tunnel_enabled: bool | None = False
-    ssh_remote_k8s_host: str | None = "localhost"
-    ssh_remote_k8s_port: int | None = 6443
-    ssh_credential_id: int | None = None  # First-class SSH credential
-    # Optional: override the SSH endpoint host — use a different host than the credential's host
-    # (e.g. kind cluster on a directly-reachable node that shares the same SSH key)
-    ssh_host_override: str | None = None
 
     @model_validator(mode="after")
     def _validate_region(self):
@@ -108,7 +73,6 @@ class ClusterCreateRequest(BaseModel):
             validate_aws_region(self.region, field_name="region")
         return self
 
-
 class ClusterUpdateRequest(BaseModel):
     """Request model for updating a Kubernetes cluster configuration."""
     name: str | None = None
@@ -117,12 +81,6 @@ class ClusterUpdateRequest(BaseModel):
     region: str | None = None
     context: str | None = None
     default_namespace: str | None = None
-    # SSH tunnel
-    ssh_tunnel_enabled: bool | None = None
-    ssh_remote_k8s_host: str | None = None
-    ssh_remote_k8s_port: int | None = None
-    ssh_credential_id: int | None = None  # First-class SSH credential
-    ssh_host_override: str | None = None
     # Per-cluster prereq selection — list of prereq IDs (e.g.
     # ["cert-manager", "multus", "storage"]). Pass an empty list to disable
     # all optional prereqs; pass None to leave the cluster's setting alone.
@@ -136,7 +94,6 @@ class ClusterUpdateRequest(BaseModel):
             validate_aws_region(self.region, field_name="region")
         return self
 
-
 # ============================================================================
 # Pydantic Request Models — Resource Operations
 # ============================================================================
@@ -147,25 +104,21 @@ class ResourceCreateRequest(BaseModel):
     namespace: str | None = None
     dry_run: bool = False
 
-
 class ResourceUpdateRequest(BaseModel):
     """Request model for updating a Kubernetes resource."""
     resource_yaml: str  # YAML definition of the resource
     namespace: str | None = None
     dry_run: bool = False
 
-
 class ResourceDeleteRequest(BaseModel):
     """Request model for deleting a Kubernetes resource."""
     namespace: str | None = None
     dry_run: bool = False
 
-
 class ScaleDeploymentRequest(BaseModel):
     """Request model for scaling a deployment."""
     replicas: int
     namespace: str
-
 
 class ResourcePatchRequest(BaseModel):
     """Request model for patching a Kubernetes resource."""
@@ -173,20 +126,17 @@ class ResourcePatchRequest(BaseModel):
     namespace: str | None = None
     patch_type: str = "strategic"  # strategic, merge, or json
 
-
 class LabelResourceRequest(BaseModel):
     """Request model for labeling a resource."""
     labels: dict
     namespace: str | None = None
     overwrite: bool = False
 
-
 class AnnotateResourceRequest(BaseModel):
     """Request model for annotating a resource."""
     annotations: dict
     namespace: str | None = None
     overwrite: bool = False
-
 
 # ============================================================================
 # Pydantic Request Models — Cluster Scanner
