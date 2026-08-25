@@ -11,8 +11,21 @@ request/response classes are built from that at call time. Requests are plain
 dicts in, plain dicts out — the same JSON shape ``grpcurl`` prints, which is
 what ``tmmlbctl`` uses and what the frontend expects.
 
-The pool is per-client and private, so nothing here can collide with the
-protobuf descriptors any other part of the backend registers globally.
+The pool is private to this module — never protobuf's global default pool — so
+nothing here can collide with the descriptors any other part of the backend
+registers.
+
+Two things bought the walk down from "every read" to "once per NICo build",
+because measured over a VPN through the apiserver tunnel it cost ~13s of a 25s
+fetch and was re-paid on every 30s poll:
+
+* **The pool is cached** under the nico-api container's image ID. That is the
+  invalidation a cache here needs: the digest changes when and only when the
+  schema can have changed, so an upgrade re-walks and nothing else does. No
+  key, no caching — an unidentifiable server is walked every time.
+* **A failed walk fails the session, once.** Reflection is the expensive part,
+  so retrying it per RPC turned one slow timeout into fifteen and left the
+  inventory silently empty. The first failure is recorded and re-raised.
 """
 
 from __future__ import annotations
@@ -21,11 +34,16 @@ import logging
 import socket
 from typing import Any
 
+from core.cache import cache
 from services.nico.constants import FORGE_TIMEOUT, REACH_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 FORGE_SERVICE = "forge.Forge"
+
+# A NICo build's descriptors do not change under it, so the only reason this
+# expires at all is to bound memory in a process that outlives many upgrades.
+_SCHEMA_TTL = 24 * 60 * 60
 
 
 class ForgeError(RuntimeError):
@@ -60,11 +78,16 @@ class ForgeClient:
         cert: bytes,
         key: bytes,
         timeout: float = FORGE_TIMEOUT,
+        schema_key: str | None = None,
     ):
         import grpc
 
         self.address = address
         self.timeout = timeout
+        # Identifies the *build* whose schema this session will read — the
+        # nico-api image ID. None means "do not cache", which is the safe
+        # default for a server we cannot pin to a version.
+        self.schema_key = schema_key
         creds = grpc.ssl_channel_credentials(
             root_certificates=ca, private_key=key, certificate_chain=cert
         )
@@ -77,6 +100,9 @@ class ForgeClient:
         )
         self._pool = None
         self._service = None
+        # Set once if reflection fails, and re-raised thereafter. See the
+        # module docstring on why this is not retried per call.
+        self._schema_error: ForgeError | None = None
 
     def __enter__(self) -> ForgeClient:
         return self
@@ -92,14 +118,55 @@ class ForgeClient:
 
     # ── schema ────────────────────────────────────────────────────────────
 
-    def _load_schema(self) -> None:
+    def _ensure_schema(self) -> None:
+        """Make ``self._service`` usable, from cache if we can, once either way.
+
+        Three outcomes, and the middle one is the point: a session that has
+        already failed to reflect does not try again. Reflection is the
+        expensive half of a Forge read, so retrying it on each of the ~15
+        inventory RPCs turned one timeout into a minute of them and reported
+        the result as an empty inventory rather than as a failure.
+        """
+        if self._service is not None:
+            return
+        if self._schema_error is not None:
+            raise self._schema_error
+
+        try:
+            if self.schema_key:
+                cached_pool = cache.get(f"nico:forge:schema:{self.schema_key}")
+                if cached_pool is not None:
+                    # Read-only from here: the pool is shared with every other
+                    # session on this NICo build.
+                    self._pool = cached_pool
+                    self._service = cached_pool.FindServiceByName(FORGE_SERVICE)
+                    return
+
+            pool = self._reflect_pool()
+            self._pool = pool
+            self._service = pool.FindServiceByName(FORGE_SERVICE)
+            if self.schema_key:
+                cache.set(
+                    f"nico:forge:schema:{self.schema_key}", pool, ttl_seconds=_SCHEMA_TTL
+                )
+        except Exception as exc:  # noqa: BLE001 — recorded, then re-raised
+            self._schema_error = (
+                exc if isinstance(exc, ForgeError) else ForgeError(f"schema: {exc}")
+            )
+            raise self._schema_error from exc
+
+    def _reflect_pool(self):
         """Pull forge.Forge's descriptors over reflection into a private pool.
 
         Walks the dependency closure: the first response carries the file that
         declares the service, and each file names the ones it imports. On this
-        lab that settles at 13 files in well under a second, so it is done per
-        session rather than cached — a cache would have to be invalidated on
-        every NICo upgrade to buy that back.
+        lab that settles at 13 files — under a second on the LAN, ~13s over a
+        VPN through the apiserver tunnel, which is why the result is cached.
+
+        The walk and the build deliberately happen outside any lock: two
+        sessions racing on the same key duplicate work but cannot corrupt
+        anything, and holding a lock across ~13s of I/O would stall every other
+        cluster instead.
         """
         from google.protobuf import descriptor_pb2, descriptor_pool
         from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
@@ -152,8 +219,8 @@ class ForgeClient:
         for name in list(files):
             add(name)
 
-        self._pool = pool
-        self._service = pool.FindServiceByName(FORGE_SERVICE)
+        logger.debug("Forge schema: %d descriptor files for %s", len(files), self.address)
+        return pool
 
     # ── calls ─────────────────────────────────────────────────────────────
 
@@ -161,12 +228,16 @@ class ForgeClient:
         """Invoke one unary Forge RPC. Dict in, dict (camelCase JSON) out."""
         from google.protobuf import json_format, message_factory
 
-        if self._service is None:
-            self._load_schema()
+        self._ensure_schema()
 
-        desc = self._service.FindMethodByName(method)
-        if desc is None:
-            raise ForgeError(f"no such Forge method: {method}")
+        try:
+            desc = self._service.FindMethodByName(method)
+        except KeyError as exc:
+            # protobuf raises rather than returning None. Worth naming as its
+            # own failure: a method absent from this build is a fact about the
+            # build (vanilla NICo has no LoadBalancerService RPCs at all), not
+            # a transport error.
+            raise ForgeError(f"no such Forge method: {method}") from exc
         request_cls = message_factory.GetMessageClass(desc.input_type)
         response_cls = message_factory.GetMessageClass(desc.output_type)
 

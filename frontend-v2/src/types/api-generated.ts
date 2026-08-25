@@ -1403,6 +1403,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/clusters/{cluster_id}/nico/deployment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Nico Deployment
+         * @description The Kubernetes half — pods, Service, certificate, dependencies, DPUs.
+         *
+         *     The fast, predictable half of the pair the UI drives. ``health`` here is
+         *     scoped to what was actually read: it carries ``inventoryPending: true`` and
+         *     omits the tenant / VPC / load-balancer counts, so the page can paint a true
+         *     header before the Forge side lands rather than showing zeros it has not
+         *     verified.
+         */
+        get: operations["get_nico_deployment_api_k8s_clusters__cluster_id__nico_deployment_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/nico/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Nico Inventory
+         * @description The Forge half — tenants, VPCs, network segments, load balancers.
+         *
+         *     Returns the counts alongside the inventory so the caller can complete the
+         *     header the deployment request painted without recomputing them.
+         */
+        get: operations["get_nico_inventory_api_k8s_clusters__cluster_id__nico_inventory_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/nico/health": {
         parameters: {
             query?: never;
@@ -1416,6 +1465,35 @@ export interface paths {
          */
         get: operations["get_nico_health_api_k8s_clusters__cluster_id__nico_health_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/nico/endpoint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Nico Endpoint
+         * @description Pin the address bnkscope dials for the Forge API, or clear the pin.
+         *
+         *     The escape hatch for the two cases automatic discovery cannot cover: a
+         *     tunnel the operator already runs themselves (`ssh -L`, `kubectl
+         *     port-forward`), and a kubeconfig whose RBAC denies `pods/portforward`. An
+         *     override outranks every discovered candidate but is still TCP-screened, so
+         *     a stale one reports itself instead of failing obscurely.
+         *
+         *     Stored on `cluster.meta_data` rather than a column — one optional string is
+         *     not worth a migration, and the tmmscope label binding set that precedent.
+         */
+        put: operations["put_nico_endpoint_api_k8s_clusters__cluster_id__nico_endpoint_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -3403,6 +3481,14 @@ export interface components {
              * @default 0
              */
             registered: number;
+        };
+        /**
+         * ForgeEndpointRequest
+         * @description An operator-supplied Forge address, or null to clear it.
+         */
+        ForgeEndpointRequest: {
+            /** Endpoint */
+            endpoint?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -7105,6 +7191,68 @@ export interface operations {
             };
         };
     };
+    get_nico_deployment_api_k8s_clusters__cluster_id__nico_deployment_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_nico_inventory_api_k8s_clusters__cluster_id__nico_inventory_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_nico_health_api_k8s_clusters__cluster_id__nico_health_get: {
         parameters: {
             query?: never;
@@ -7115,6 +7263,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_nico_endpoint_api_k8s_clusters__cluster_id__nico_endpoint_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForgeEndpointRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -24,6 +24,28 @@ DEFAULT_NAMESPACE = "nico-system"
 NICO_SERVICE = "nico-api"
 NICO_GRPC_PORT = 1079
 
+# Endpoint discovery is by *selector*, not by name: an install can front the
+# same pods with more than one Service, and the routable one is not the one
+# named `nico-api`. A vanilla NICo site has both
+#
+#     nico-api           ClusterIP      <none>          1079/TCP
+#     nico-api-external  LoadBalancer   10.100.50.240   443:31306/TCP
+#
+# and only the second is reachable from outside the cluster. So every Service
+# in the namespace whose selector matches the nico-api pod is a candidate, and
+# `NICO_SERVICE` survives only as the tie-break when two rank equally.
+#
+# Ranked best-first. An operator-supplied address outranks everything (they
+# know what they built); a port-forward is last because it costs an apiserver
+# session per fetch and a direct address does not.
+ENDPOINT_PREFERENCE = ("override", "loadbalancer", "nodeport", "portforward")
+
+# `cluster.meta_data` key holding an operator-supplied `host:port` for the
+# Forge API — their own `ssh -L` or `kubectl port-forward`, or an address only
+# they can know about. Lives in meta_data rather than a column for the same
+# reason the tmmscope label binding does: no migration for one optional string.
+FORGE_ENDPOINT_KEY = "nico_forge_endpoint"
+
 # cert-manager Secret holding the mTLS client cert `tmmlbctl nico deploy` mints.
 # Without it there is no way into the Forge API and the inventory stays empty.
 ADMIN_CERT_SECRET = "tmm-lb-admin-cert"
@@ -48,12 +70,56 @@ PROVIDER_ENV_KEYS = (
     "TENANT_SECRET_NAMESPACE",
 )
 
-# Supporting stores NICo cannot run without, found by label in their own
-# namespaces. Neither is part of NICo itself; both being down is the usual
-# reason a healthy-looking nico-api answers nothing.
-DEPENDENCY_PODS = (
-    ("postgres", "postgres", "app=postgres"),
-    ("vault", "vault", "app=vault"),
+# The stores a NICo site runs on, found by label in their own namespaces. None
+# is part of NICo itself, and one of them being down is the usual reason a
+# healthy-looking nico-api answers nothing.
+#
+# `selectors` are tried in order and the first that matches wins, because the
+# obvious label is not the one these charts use and both earlier guesses were
+# wrong on a vanilla install:
+#
+#   * NICo's database is the `nico-pg-cluster` Zalando/spilo cluster — the one
+#     the `nico-system.nico.nico-pg-cluster.credentials` Secret feeds to
+#     nico-api's DATASTORE_*. A vanilla site *also* runs an unrelated standalone
+#     `postgres` StatefulSet labelled `app=postgres`, which is what the previous
+#     probe matched and reported as NICo's. `app=postgres` survives only as the
+#     fallback for an install with no operator.
+#   * Vault's Helm chart labels its pods `app.kubernetes.io/name=vault`. The
+#     previous `app=vault` matched nothing, so a Vault with an unready or sealed
+#     member reported as a healthy dependency with zero pods.
+#
+# `pod_labels` are surfaced per pod, because for these two the state that
+# matters is published as a label rather than inferable from readiness: Vault
+# advertises its seal/init/active state and version, spilo advertises which
+# member is primary.
+DEPENDENCIES = (
+    {
+        "name": "postgres",
+        "namespace": "postgres",
+        "selectors": ("application=spilo", "app=postgres"),
+        "pod_labels": ("cluster-name", "spilo-role"),
+    },
+    {
+        "name": "vault",
+        "namespace": "vault",
+        "selectors": ("app.kubernetes.io/name=vault", "app=vault"),
+        "pod_labels": (
+            "vault-active",
+            "vault-initialized",
+            "vault-sealed",
+            "vault-version",
+        ),
+    },
+    # Not dialled by nico-api itself — it is what the site-controller layer
+    # (nico-rest's cloud workers, flow) runs its workflows on. Listed because a
+    # vanilla site has one and provisioning stalls without it, which is
+    # invisible from anywhere else on this page.
+    {
+        "name": "temporal",
+        "namespace": "temporal",
+        "selectors": ("app.kubernetes.io/name=temporal",),
+        "pod_labels": ("app.kubernetes.io/component",),
+    },
 )
 
 # How far back a provider's log is read for current complaints. An operator
@@ -72,3 +138,9 @@ FORGE_TIMEOUT = 10.0
 # unrouted lab subnet black-holes rather than refuses, so this is what bounds
 # "is this address worth a TLS handshake".
 REACH_TIMEOUT = 2.0
+
+# The tunnel adds an apiserver round trip in front of every Forge call, and
+# reflection alone walks a 13-file dependency closure. Measured at ~9s for
+# schema load plus first call on the reference lab, so the direct-dial budget
+# is not enough.
+TUNNEL_TIMEOUT = 30.0

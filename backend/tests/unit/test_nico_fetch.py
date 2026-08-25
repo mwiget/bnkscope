@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from services.nico.constants import PROVIDER_LOG_WINDOW_SEC
 from services.nico.fetch import (
+    _dependencies,
     _fetch_inventory,
     _fetch_load_balancers,
     _lifecycle_state,
@@ -37,11 +38,26 @@ class FakeForge:
 # Endpoint resolution
 # ---------------------------------------------------------------------------
 
-def _service(kind="NodePort", node_port=31079, ingress=()):
+_POD_LABELS = {"app.kubernetes.io/name": "nico-api", "app.kubernetes.io/component": "api"}
+
+
+def _service(
+    name="nico-api",
+    kind="NodePort",
+    port=1079,
+    target_port=1079,
+    node_port=31079,
+    ingress=(),
+    selector=None,
+):
     return SimpleNamespace(
+        metadata=SimpleNamespace(name=name),
         spec=SimpleNamespace(
             type=kind,
-            ports=[SimpleNamespace(port=1079, node_port=node_port)],
+            selector=_POD_LABELS if selector is None else selector,
+            ports=[
+                SimpleNamespace(port=port, target_port=target_port, node_port=node_port)
+            ],
         ),
         status=SimpleNamespace(
             load_balancer=SimpleNamespace(
@@ -52,13 +68,20 @@ def _service(kind="NodePort", node_port=31079, ingress=()):
 
 
 class _Core:
-    def __init__(self, service):
-        self._service = service
+    """Stand-in for CoreV1Api's Service list."""
 
-    def read_namespaced_service(self, **_kwargs):
-        if isinstance(self._service, Exception):
-            raise self._service
-        return self._service
+    def __init__(self, *services):
+        self._services = services
+
+    def list_namespaced_service(self, **_kwargs):
+        if self._services and isinstance(self._services[0], Exception):
+            raise self._services[0]
+        return SimpleNamespace(items=list(self._services))
+
+
+def _resolve(core, api_server="https://192.168.68.66:6443", **kwargs):
+    """`_service_endpoints` with the arguments every case shares."""
+    return _service_endpoints(core, "nico-system", api_server, _POD_LABELS, **kwargs)
 
 
 class TestServiceEndpoints:
@@ -66,9 +89,7 @@ class TestServiceEndpoints:
         """The NodePort is on the node, and the kubeconfig's server URL is the
         only address we know reaches it."""
         with patch("services.nico.fetch.tcp_reachable", return_value=True):
-            out = _service_endpoints(
-                _Core(_service()), "nico-system", "https://192.168.68.66:6443"
-            )
+            out = _resolve(_Core(_service()))
         assert out["reachable"] is True
         assert out["grpc"] == "192.168.68.66:31079"
         assert out["kind"] == "nodeport"
@@ -76,41 +97,222 @@ class TestServiceEndpoints:
 
     def test_a_loadbalancer_address_is_preferred_over_the_nodeport(self):
         with patch("services.nico.fetch.tcp_reachable", return_value=True):
-            out = _service_endpoints(
-                _Core(_service(kind="LoadBalancer", ingress=("10.1.1.5",))),
-                "nico-system",
-                "https://192.168.68.66:6443",
-            )
+            out = _resolve(_Core(_service(kind="LoadBalancer", ingress=("10.1.1.5",))))
         assert out["grpc"] == "10.1.1.5:1079"
         assert out["kind"] == "loadbalancer"
+
+    def test_a_second_service_on_the_same_pods_is_found_by_selector(self):
+        """A vanilla site fronts nico-api twice: a ClusterIP named `nico-api`
+        and a `nico-api-external` LoadBalancer. Only the second is routable,
+        and looking up the canonical name would never see it."""
+        with patch("services.nico.fetch.tcp_reachable", return_value=True):
+            out = _resolve(
+                _Core(
+                    _service(kind="ClusterIP", node_port=None),
+                    _service(
+                        name="nico-api-external",
+                        kind="LoadBalancer",
+                        port=443,
+                        node_port=31306,
+                        ingress=("10.100.50.240",),
+                    ),
+                )
+            )
+        assert out["reachable"] is True
+        assert out["grpc"] == "10.100.50.240:443"
+        assert out["kind"] == "loadbalancer"
+
+    def test_a_service_selecting_other_pods_is_not_a_candidate(self):
+        """`nico-api-metrics` and friends share the namespace, not the pod."""
+        out = _resolve(
+            _Core(_service(name="somebody-else", selector={"app": "postgres"}))
+        )
+        assert out["candidates"] == []
+        assert "selects the nico-api pod" in out["detail"]
 
     def test_an_unroutable_candidate_is_reported_not_claimed(self):
         """A Service can advertise an address on a subnet with no route to it —
         that resolves and prints fine and then answers nothing."""
         with patch("services.nico.fetch.tcp_reachable", return_value=False):
-            out = _service_endpoints(
-                _Core(_service()), "nico-system", "https://192.168.68.66:6443"
-            )
+            out = _resolve(_Core(_service()))
         assert out["reachable"] is False
         assert out["grpc"] == "192.168.68.66:31079"
         assert "not routable" in out["detail"]
 
-    def test_clusterip_only_has_no_candidate_at_all(self):
-        out = _service_endpoints(
-            _Core(_service(kind="ClusterIP", node_port=None)),
-            "nico-system",
-            "https://192.168.68.66:6443",
+    def test_clusterip_only_falls_back_to_the_apiserver_tunnel(self):
+        """The case the reference lab is in: no advertised address is routable,
+        but the apiserver is — every other read on the page proves it."""
+        out = _resolve(
+            _Core(_service(kind="ClusterIP", node_port=None)), api_pod="nico-api-abc"
         )
+        assert out["reachable"] is True
+        assert out["kind"] == "portforward"
+        assert out["tunnel"] == {"pod": "nico-api-abc", "port": 1079}
+        assert out["host"] is None
+
+    def test_the_tunnel_is_the_last_resort_not_the_first(self):
+        """It costs an apiserver session per fetch; a direct address does not."""
+        with patch("services.nico.fetch.tcp_reachable", return_value=True):
+            out = _resolve(_Core(_service()), api_pod="nico-api-abc")
+        assert out["kind"] == "nodeport"
+        assert out["tunnel"] is None
+
+    def test_an_unreachable_admin_ui_is_reported_but_not_offered_as_a_link(self):
+        """bnkscope binds loopback, so the operator's browser is on this host.
+        An address that failed our own TCP screen is dead for them too, and
+        offering it as a link just sends them into a timeout."""
+        with patch("services.nico.fetch.tcp_reachable", return_value=False):
+            out = _resolve(
+                _Core(_service(kind="LoadBalancer", ingress=("10.100.50.240",))),
+                api_pod="nico-api-abc",
+            )
+        assert out["kind"] == "portforward"
+        # Still reported — it is the documented address, and worth showing.
+        assert out["webUi"] == "https://10.100.50.240:1079/admin/"
+        assert out["webUiReachable"] is False
+
+    def test_a_reachable_admin_ui_is_offered_as_a_link(self):
+        with patch("services.nico.fetch.tcp_reachable", return_value=True):
+            out = _resolve(_Core(_service(kind="LoadBalancer", ingress=("10.1.1.5",))))
+        assert out["webUi"] == "https://10.1.1.5:1079/admin/"
+        assert out["webUiReachable"] is True
+
+    def test_a_port_forward_command_is_offered_when_nothing_answers(self):
+        """The admin UI shares the gRPC listener, so the same forward that
+        reaches Forge reaches the UI — and it is the one path that works when
+        every advertised address is on an unrouted subnet."""
+        with patch("services.nico.fetch.tcp_reachable", return_value=False):
+            out = _resolve(
+                _Core(_service(kind="LoadBalancer", ingress=("10.100.50.240",))),
+                api_pod="nico-api-abc",
+            )
+        assert out["portForward"]["command"] == (
+            "kubectl port-forward -n nico-system svc/nico-api 1079:1079"
+        )
+        assert out["portForward"]["webUi"] == "https://127.0.0.1:1079/admin/"
+
+    def test_the_forward_targets_the_pod_when_no_service_exposes_the_grpc_port(self):
+        """An external Service republishes 1079 as 443; forwarding to it would
+        name a port that is not the one the UI is on."""
+        with patch("services.nico.fetch.tcp_reachable", return_value=False):
+            out = _resolve(
+                _Core(
+                    _service(name="nico-api-external", kind="LoadBalancer",
+                             port=443, target_port=1079, ingress=("10.100.50.240",))
+                ),
+                api_pod="nico-api-abc",
+            )
+        assert "pod/nico-api-abc" in out["portForward"]["command"]
+
+    def test_clusterip_only_without_a_tunnel_says_what_to_do(self):
+        out = _resolve(_Core(_service(kind="ClusterIP", node_port=None)))
         assert out["reachable"] is False
         assert out["candidates"] == []
         assert "NodePort" in out["detail"]
 
-    def test_an_unreadable_service_is_a_soft_failure(self):
-        out = _service_endpoints(
-            _Core(RuntimeError("forbidden")), "nico-system", "https://host:6443"
-        )
+    def test_an_override_outranks_every_discovered_candidate(self):
+        with patch("services.nico.fetch.tcp_reachable", return_value=True):
+            out = _resolve(
+                _Core(_service(kind="LoadBalancer", ingress=("10.1.1.5",))),
+                api_pod="nico-api-abc",
+                override="127.0.0.1:11079",
+            )
+        assert out["kind"] == "override"
+        assert out["grpc"] == "127.0.0.1:11079"
+
+    def test_a_stale_override_falls_through_rather_than_dead_ending(self):
+        """An override the operator forgot to tear down should not be the reason
+        a reachable cluster reads as unreachable."""
+        reachable = {("10.1.1.5", 1079)}
+        with patch(
+            "services.nico.fetch.tcp_reachable",
+            side_effect=lambda h, p: (h, p) in reachable,
+        ):
+            out = _resolve(
+                _Core(_service(kind="LoadBalancer", ingress=("10.1.1.5",))),
+                override="127.0.0.1:11079",
+            )
+        assert out["kind"] == "loadbalancer"
+        assert out["grpc"] == "10.1.1.5:1079"
+
+    def test_the_grpc_port_is_matched_on_its_in_cluster_target(self):
+        """An external Service republishes 1079 as 443; `port` alone would pick
+        the wrong thing on a Service that exposes several."""
+        svc = _service(kind="LoadBalancer", port=443, target_port=1079,
+                       ingress=("10.100.50.240",))
+        with patch("services.nico.fetch.tcp_reachable", return_value=True):
+            out = _resolve(_Core(svc))
+        assert out["grpc"] == "10.100.50.240:443"
+
+    def test_a_malformed_override_is_ignored_not_fatal(self):
+        """`meta_data` is a free-form JSON column, so a hand-edited value must
+        not take the whole fetch down — the module never raises for a section
+        it cannot read."""
+        with patch("services.nico.fetch.tcp_reachable", return_value=True):
+            out = _resolve(_Core(_service()), override="not-an-address")
+        assert out["kind"] == "nodeport"
+        assert [c["via"] for c in out["candidates"]] == ["nodeport"]
+
+    def test_no_running_pod_says_so_rather_than_blaming_a_service(self):
+        out = _service_endpoints(_Core(), "nico-system", "https://host:6443", {})
         assert out["reachable"] is False
-        assert "not readable" in out["detail"]
+        assert "no running nico-api pod" in out["detail"]
+
+    def test_candidates_are_screened_concurrently(self):
+        """Sequential screening cost one REACH_TIMEOUT per unroutable address —
+        ~2.9s of the deployment read on the reference lab. Concurrently it is
+        one timeout total, so the screens must overlap in time."""
+        import threading
+        import time
+
+        lock = threading.Lock()
+        live = 0
+        peak = 0
+
+        def slow_screen(_host, _port):
+            nonlocal live, peak
+            with lock:
+                live += 1
+                peak = max(peak, live)
+            time.sleep(0.05)
+            with lock:
+                live -= 1
+            return False
+
+        with patch("services.nico.fetch.tcp_reachable", side_effect=slow_screen):
+            out = _resolve(
+                _Core(
+                    _service(kind="LoadBalancer", ingress=("10.1.1.5",)),
+                    _service(name="nico-api-external", kind="NodePort", node_port=31306),
+                )
+            )
+        assert out["reachable"] is False
+        assert peak > 1, f"screens ran one at a time (peak concurrency {peak})"
+
+    def test_the_winner_is_the_best_ranked_not_the_first_to_answer(self):
+        """A NodePort that answers instantly must not beat a LoadBalancer that
+        answers a little later — the preference order is the point."""
+        import time
+
+        def screen(host, _port):
+            if host == "10.1.1.5":  # the LoadBalancer: slower, but preferred
+                time.sleep(0.1)
+            return True
+
+        with patch("services.nico.fetch.tcp_reachable", side_effect=screen):
+            out = _resolve(
+                _Core(
+                    _service(kind="LoadBalancer", ingress=("10.1.1.5",)),
+                    _service(name="nico-api-external", kind="NodePort", node_port=31306),
+                )
+            )
+        assert out["kind"] == "loadbalancer"
+        assert out["grpc"] == "10.1.1.5:1079"
+
+    def test_an_unreadable_service_list_is_a_soft_failure(self):
+        out = _resolve(_Core(RuntimeError("forbidden")))
+        assert out["reachable"] is False
+        assert out["candidates"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -297,3 +499,121 @@ class TestProviderLogs:
                 raise RuntimeError("container not found")
 
         assert _recent_errors(Core(), "nico-system", "provider-1") == []
+
+
+# ---------------------------------------------------------------------------
+# Dependency probes
+# ---------------------------------------------------------------------------
+
+def _dep_pod(name, namespace, labels, ready=True):
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name, namespace=namespace, labels=labels,
+                                 creation_timestamp=None),
+        spec=SimpleNamespace(node_name="cp1"),
+        status=SimpleNamespace(
+            phase="Running",
+            container_statuses=[
+                SimpleNamespace(ready=ready, restart_count=0, image="postgres:14")
+            ],
+        ),
+    )
+
+
+class _PodCore:
+    """Stand-in for CoreV1Api's labelled pod list, keyed by selector."""
+
+    def __init__(self, by_selector):
+        self.by_selector = by_selector
+        self.queried = []
+
+    def list_pod_for_all_namespaces(self, label_selector=None, **_kwargs):
+        self.queried.append(label_selector)
+        return SimpleNamespace(items=self.by_selector.get(label_selector, []))
+
+
+class TestDependencies:
+    def test_nicos_postgres_is_the_spilo_cluster_not_the_standalone_one(self):
+        """A vanilla site runs both. `nico-system.nico.nico-pg-cluster.credentials`
+        is what nico-api's DATASTORE_* reads, so the spilo cluster is NICo's —
+        the previous `app=postgres` probe reported the unrelated one."""
+        core = _PodCore({
+            "application=spilo": [
+                _dep_pod("nico-pg-cluster-0", "postgres",
+                         {"application": "spilo", "cluster-name": "nico-pg-cluster",
+                          "spilo-role": "master"}),
+            ],
+            "app=postgres": [_dep_pod("postgres-0", "postgres", {"app": "postgres"})],
+        })
+        pg = next(d for d in _dependencies(core) if d["name"] == "postgres")
+        assert [p["name"] for p in pg["pods"]] == ["nico-pg-cluster-0"]
+        assert pg["selector"] == "application=spilo"
+        assert pg["pods"][0]["labels"]["spilo-role"] == "master"
+
+    def test_the_standalone_postgres_is_still_the_fallback(self):
+        """An install with no operator has only the plain StatefulSet."""
+        core = _PodCore({
+            "app=postgres": [_dep_pod("postgres-0", "postgres", {"app": "postgres"})],
+        })
+        pg = next(d for d in _dependencies(core) if d["name"] == "postgres")
+        assert [p["name"] for p in pg["pods"]] == ["postgres-0"]
+        assert pg["selector"] == "app=postgres"
+
+    def test_vault_is_found_by_its_helm_label(self):
+        """`app=vault` matched nothing, so a Vault with an unready member
+        reported as a healthy dependency with zero pods."""
+        core = _PodCore({
+            "app.kubernetes.io/name=vault": [
+                _dep_pod("vault-0", "vault",
+                         {"app.kubernetes.io/name": "vault", "vault-active": "true",
+                          "vault-sealed": "false", "vault-version": "1.14.0"}),
+                _dep_pod("vault-2", "vault",
+                         {"app.kubernetes.io/name": "vault", "vault-sealed": "true"},
+                         ready=False),
+            ],
+        })
+        vault = next(d for d in _dependencies(core) if d["name"] == "vault")
+        assert [p["name"] for p in vault["pods"]] == ["vault-0", "vault-2"]
+        assert vault["selector"] == "app.kubernetes.io/name=vault"
+
+    def test_vaults_seal_state_is_surfaced_because_readiness_hides_it(self):
+        """A sealed Vault can be Running and Ready and still hand NICo nothing."""
+        core = _PodCore({
+            "app.kubernetes.io/name=vault": [
+                _dep_pod("vault-0", "vault",
+                         {"app.kubernetes.io/name": "vault", "vault-sealed": "true",
+                          "vault-initialized": "true"}),
+            ],
+        })
+        vault = next(d for d in _dependencies(core) if d["name"] == "vault")
+        assert vault["pods"][0]["labels"] == {
+            "vault-initialized": "true", "vault-sealed": "true"
+        }
+
+    def test_a_dependency_that_is_absent_reports_no_selector(self):
+        """Distinguishes "looked and found nothing" from "matched by fallback"."""
+        dep = next(d for d in _dependencies(_PodCore({})) if d["name"] == "vault")
+        assert dep["pods"] == []
+        assert dep["selector"] is None
+
+    def test_the_same_labels_in_another_namespace_are_somebody_elses(self):
+        core = _PodCore({
+            "application=spilo": [
+                _dep_pod("nico-pg-cluster-0", "postgres", {"application": "spilo"}),
+                _dep_pod("other-pg-0", "someone-else", {"application": "spilo"}),
+            ],
+        })
+        pg = next(d for d in _dependencies(core) if d["name"] == "postgres")
+        assert [p["name"] for p in pg["pods"]] == ["nico-pg-cluster-0"]
+
+    def test_temporal_is_probed_too(self):
+        core = _PodCore({
+            "app.kubernetes.io/name=temporal": [
+                _dep_pod("temporal-frontend-abc", "temporal",
+                         {"app.kubernetes.io/name": "temporal",
+                          "app.kubernetes.io/component": "frontend"}),
+            ],
+        })
+        names = [d["name"] for d in _dependencies(core)]
+        assert names == ["postgres", "vault", "temporal"]
+        temporal = next(d for d in _dependencies(core) if d["name"] == "temporal")
+        assert temporal["pods"][0]["labels"] == {"app.kubernetes.io/component": "frontend"}

@@ -3821,6 +3821,88 @@
         }
       }
     },
+    "/api/k8s/clusters/{cluster_id}/nico/deployment": {
+      "get": {
+        "tags": [
+          "k8s-nico"
+        ],
+        "summary": "Get Nico Deployment",
+        "description": "The Kubernetes half \u2014 pods, Service, certificate, dependencies, DPUs.\n\nThe fast, predictable half of the pair the UI drives. ``health`` here is\nscoped to what was actually read: it carries ``inventoryPending: true`` and\nomits the tenant / VPC / load-balancer counts, so the page can paint a true\nheader before the Forge side lands rather than showing zeros it has not\nverified.",
+        "operationId": "get_nico_deployment_api_k8s_clusters__cluster_id__nico_deployment_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/nico/inventory": {
+      "get": {
+        "tags": [
+          "k8s-nico"
+        ],
+        "summary": "Get Nico Inventory",
+        "description": "The Forge half \u2014 tenants, VPCs, network segments, load balancers.\n\nReturns the counts alongside the inventory so the caller can complete the\nheader the deployment request painted without recomputing them.",
+        "operationId": "get_nico_inventory_api_k8s_clusters__cluster_id__nico_inventory_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}/nico/health": {
       "get": {
         "tags": [
@@ -3840,6 +3922,57 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/nico/endpoint": {
+      "put": {
+        "tags": [
+          "k8s-nico"
+        ],
+        "summary": "Put Nico Endpoint",
+        "description": "Pin the address bnkscope dials for the Forge API, or clear the pin.\n\nThe escape hatch for the two cases automatic discovery cannot cover: a\ntunnel the operator already runs themselves (`ssh -L`, `kubectl\nport-forward`), and a kubeconfig whose RBAC denies `pods/portforward`. An\noverride outranks every discovered candidate but is still TCP-screened, so\na stale one reports itself instead of failing obscurely.\n\nStored on `cluster.meta_data` rather than a column \u2014 one optional string is\nnot worth a migration, and the tmmscope label binding set that precedent.",
+        "operationId": "put_nico_endpoint_api_k8s_clusters__cluster_id__nico_endpoint_put",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgeEndpointRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -8617,6 +8750,24 @@
         "type": "object",
         "title": "DiscoveryResponse",
         "description": "Response for GET/POST /api/k8s/discovery."
+      },
+      "ForgeEndpointRequest": {
+        "properties": {
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          }
+        },
+        "type": "object",
+        "title": "ForgeEndpointRequest",
+        "description": "An operator-supplied Forge address, or null to clear it."
       },
       "HTTPValidationError": {
         "properties": {
