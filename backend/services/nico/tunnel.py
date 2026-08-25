@@ -44,6 +44,10 @@ _CHUNK = 65536
 # in practice one is used — but a reconnect must not be refused.
 _BACKLOG = 8
 
+# How often the accept loop checks whether the block has exited. Small enough
+# that teardown is not perceptible, large enough to cost nothing while idle.
+_POLL = 0.1
+
 
 class TunnelError(RuntimeError):
     """The port-forward could not be opened."""
@@ -74,10 +78,19 @@ def forge_tunnel(core_api, namespace: str, pod: str, port: int) -> Iterator[str]
     local_port = listener.getsockname()[1]
     stop = threading.Event()
 
+    # Poll rather than block forever in accept(): closing a socket from another
+    # thread does not abort a blocked accept() on Linux, and while that syscall
+    # is in flight the kernel keeps the listener alive — the port would go on
+    # accepting connections after the block exited. A timeout lets `serve` see
+    # `stop` and leave accept() on its own, so the close below is the real end.
+    listener.settimeout(_POLL)
+
     def serve() -> None:
         while not stop.is_set():
             try:
                 conn, _ = listener.accept()
+            except TimeoutError:
+                continue
             except OSError:
                 return  # listener closed — the block exited
             # One portforward session per connection: a session carries a
@@ -97,12 +110,13 @@ def forge_tunnel(core_api, namespace: str, pod: str, port: int) -> Iterator[str]
         yield f"127.0.0.1:{local_port}"
     finally:
         stop.set()
-        # Closing the listener is what unblocks accept() and ends `serve`.
+        # Join before closing: once `serve` has left accept() nothing holds the
+        # listener open, so close() actually retires the port.
+        accepter.join(timeout=_POLL * 10)
         try:
             listener.close()
         except OSError:
             pass
-        accepter.join(timeout=1.0)
 
 
 def _bridge(portforward, core_api, namespace: str, pod: str, port: int, conn) -> None:

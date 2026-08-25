@@ -44,6 +44,7 @@ if backend_path not in sys.path:
 # Imports (after env setup)
 # ---------------------------------------------------------------------------
 
+from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -125,8 +126,32 @@ def db(engine):
     real_session_local = database.SessionLocal
     database.SessionLocal = TestingSessionLocal
 
+    # Fire-and-forget work must not run against this connection. `submit` hands
+    # the job to a thread pool, the job opens its own session via the factory
+    # patched just above -- so it lands on the very connection this fixture is
+    # about to roll back, and a SQLAlchemy connection is not thread-safe. That
+    # race produced three different CI failures from one cause: an
+    # InvalidRequestError surfacing as a 500 when the job overlapped the
+    # request, a row surviving the rollback (the job's commit ended the
+    # fixture's transaction) so the next test saw a duplicate, and a later
+    # test's own rows vanishing with that same stray commit. Timing-dependent,
+    # so it passed locally and failed on the slower CI runner.
+    #
+    # Tests that care about the enqueue itself patch `submit` and assert on the
+    # mock; nothing wants a real background scan against a test database.
+    import core.background
+    real_submit = core.background.submit
+
+    def _dropped_background_job(fn, *args, **kwargs):
+        fut: Future = Future()
+        fut.set_result(None)
+        return fut
+
+    core.background.submit = _dropped_background_job
+
     yield session
 
+    core.background.submit = real_submit
     database.SessionLocal = real_session_local
     session.close()
     transaction.rollback()
