@@ -24,6 +24,8 @@ import type {
   BnkDataResponse,
   DpfDataResponse,
   NicoDataResponse,
+  NicoDeploymentResponse,
+  NicoInventoryResponse,
   A2AAgentsResponse,
   HugePagesDeployRequest,
   HugePagesDeployResponse,
@@ -215,4 +217,10 @@ export const kubernetesApi = {
 
   getNicoData: (clusterId: number) =>
     apiClient.get<NicoDataResponse>(`/api/k8s/clusters/${clusterId}/nico/data`).then((res) => res.data),
+
+  getNicoDeployment: (clusterId: number) =>
+    apiClient.get<NicoDeploymentResponse>(`/api/k8s/clusters/${clusterId}/nico/deployment`).then((res) => res.data),
+
+  getNicoInventory: (clusterId: number) =>
+    apiClient.get<NicoInventoryResponse>(`/api/k8s/clusters/${clusterId}/nico/inventory`).then((res) => res.data),
 };

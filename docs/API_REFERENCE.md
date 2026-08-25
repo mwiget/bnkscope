@@ -4,11 +4,11 @@
 > Do not edit by hand — run `make api-docs` (or the script) instead.
 > `--check` runs in CI, so this file cannot drift from the code.
 
-bnkscope serves **129 operations** across **114 paths**.
+bnkscope serves **135 operations** across **120 paths**.
 
 Summaries are FastAPI's, derived from the handler name — they are terse
 because the code is, not because the doc is abridged. A `—` under **Returns**
-means the endpoint declares no `response_model`; 65 of 129 do
+means the endpoint declares no `response_model`; 71 of 135 do
 not, so the shape there is whatever the handler returns.
 
 ## Authentication — there is none
@@ -66,6 +66,7 @@ Interactive versions of this reference are served by the running backend at
 - [Alert Channels](#alert-channels) — 9
 - [Notifications](#notifications) — 6
 - [Meta](#meta) — 8
+- [k8s-nico](#k8s-nico) — 6
 - [logs](#logs) — 2
 
 
@@ -290,6 +291,18 @@ Interactive versions of this reference are served by the running backend at
 | `PUT` | `/api/settings/{key}` | Update Setting | `{key}` `value` | — | — |
 | `GET` | `/health` | Health Check | — | — | — |
 | `GET` | `/ping` | Ping | — | — | — |
+
+
+## k8s-nico
+
+| Method | Path | Summary | Params | Body | Returns |
+|---|---|---|---|---|---|
+| `GET` | `/api/k8s/clusters/{cluster_id}/nico/data` | Get Nico Data | `{cluster_id}` | — | — |
+| `GET` | `/api/k8s/clusters/{cluster_id}/nico/deployment` | Get Nico Deployment | `{cluster_id}` | — | — |
+| `GET` | `/api/k8s/clusters/{cluster_id}/nico/detect` | Get Nico Detect | `{cluster_id}` | — | — |
+| `PUT` | `/api/k8s/clusters/{cluster_id}/nico/endpoint` | Put Nico Endpoint | `{cluster_id}` | ForgeEndpointRequest | — |
+| `GET` | `/api/k8s/clusters/{cluster_id}/nico/health` | Get Nico Health | `{cluster_id}` | — | — |
+| `GET` | `/api/k8s/clusters/{cluster_id}/nico/inventory` | Get Nico Inventory | `{cluster_id}` | — | — |
 
 
 ## logs

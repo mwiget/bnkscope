@@ -46,21 +46,41 @@ export interface NicoControlPlane {
 }
 
 export interface NicoEndpointCandidate {
-  host: string;
+  /** null for a "portforward" candidate — it carries a pod, not an address. */
+  host: string | null;
   port: number;
-  via: string;
+  via: NicoEndpointKind;
+  /** Which Service advertised this address. Absent for override/portforward. */
+  service?: string;
+  /** The nico-api pod the tunnel targets. Only on "portforward". */
+  pod?: string;
 }
 
+/** Ranked best-first; see ENDPOINT_PREFERENCE in services/nico/constants.py. */
+export type NicoEndpointKind = 'override' | 'loadbalancer' | 'nodeport' | 'portforward';
+
 export interface NicoEndpoint {
-  /** Which candidate won: "nodeport" | "loadbalancer", or the Service type. */
-  kind: string | null;
+  /** Which candidate won, or null if none did. */
+  kind: NicoEndpointKind | null;
+  /** null when dialling through the apiserver tunnel — it has no fixed host. */
   host: string | null;
   port: number | null;
   reachable: boolean;
   candidates: NicoEndpointCandidate[];
   grpc: string | null;
+  /** The admin UI's advertised URL — NICo serves it on the gRPC listener. */
   webUi: string | null;
+  /**
+   * Whether `webUi` answered a TCP connect from the backend. bnkscope binds
+   * loopback, so the browser is on the same host: an address that failed our
+   * screen is dead for the browser too and must not be offered as a link.
+   */
+  webUiReachable: boolean;
+  /** How to reach the admin UI by hand when no advertised address answers. */
+  portForward: { command: string; webUi: string; endpoint: string } | null;
   detail: string | null;
+  /** Set when the winning candidate is the apiserver tunnel. */
+  tunnel: { pod: string; port: number } | null;
 }
 
 export interface NicoProvider {
@@ -74,7 +94,21 @@ export interface NicoProvider {
 export interface NicoDependency {
   name: string;
   namespace: string;
-  pods: NicoPod[];
+  /**
+   * The label selector that actually matched, or null if nothing did. Charts
+   * label these differently per install, so a dependency found by its fallback
+   * — or not found at all — should say so rather than look like a clean read.
+   */
+  selector: string | null;
+  pods: (NicoPod & {
+    /**
+     * The few labels worth showing: Vault's `vault-sealed` / `vault-initialized`
+     * / `vault-active` / `vault-version`, spilo's `spilo-role` / `cluster-name`.
+     * Readiness does not cover these — a sealed Vault is Running and Ready and
+     * still hands NICo nothing.
+     */
+    labels?: Record<string, string>;
+  })[];
 }
 
 // ── Inventory (Forge) ─────────────────────────────────────────────────────
@@ -229,6 +263,12 @@ export interface NicoHealthResponse {
   certExpiring: boolean;
   dpus: { total: number; ready: number };
   errors: string[];
+  /**
+   * True on the deployment half of the split fetch: the Forge inventory has
+   * not been read yet, so the counts above are placeholders and must not be
+   * rendered. A real zero and a not-yet-read are different answers.
+   */
+  inventoryPending?: boolean;
 }
 
 // ── Endpoints ─────────────────────────────────────────────────────────────
@@ -253,4 +293,28 @@ export interface NicoDataResponse {
   inventory: NicoInventory;
   /** Sections that could not be read, and why. Never fatal. */
   errors: string[];
+}
+
+/**
+ * GET /nico/deployment — the Kubernetes half. Everything in the unified
+ * response except `inventory`, and a `health` scoped to what was read: the
+ * inventory-derived counts are absent, not zero (`inventoryPending: true`).
+ */
+export type NicoDeploymentResponse = Omit<NicoDataResponse, 'inventory' | 'health'> & {
+  health: Omit<NicoHealthResponse, NicoInventoryCountKey> & { inventoryPending: true };
+};
+
+/** The health blocks only the Forge half can fill. */
+export type NicoInventoryCountKey =
+  | 'tenants'
+  | 'vpcs'
+  | 'loadBalancers'
+  | 'networkSegments';
+
+/** GET /nico/inventory — the Forge half, with the counts to merge into health. */
+export interface NicoInventoryResponse {
+  cluster_id: number;
+  inventory: NicoInventory;
+  errors: string[];
+  counts: Pick<NicoHealthResponse, NicoInventoryCountKey>;
 }

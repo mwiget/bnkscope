@@ -13,9 +13,14 @@ Modules:
     health      — health aggregation (pure analysis)
 """
 
-from services.nico.fetch import detect_nico, fetch_all_nico_data
+from services.nico.fetch import (
+    detect_nico,
+    fetch_all_nico_data,
+    fetch_nico_deployment,
+    fetch_nico_inventory,
+)
 from services.nico.forge import ForgeClient, ForgeError
-from services.nico.health import analyze_nico_health
+from services.nico.health import analyze_nico_health, inventory_counts
 
 __all__ = [
     "ForgeClient",
@@ -23,4 +28,7 @@ __all__ = [
     "analyze_nico_health",
     "detect_nico",
     "fetch_all_nico_data",
+    "fetch_nico_deployment",
+    "fetch_nico_inventory",
+    "inventory_counts",
 ]

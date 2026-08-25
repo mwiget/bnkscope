@@ -9,22 +9,31 @@
  * network segments, load balancer services) comes from its Forge gRPC API and
  * exists nowhere else.
  *
- * Backed by a single unified fetch (GET /api/k8s/clusters/{id}/nico/data)
- * cached under one React Query key — switching sub-views is instant.
+ * Backed by two fetches, because the halves cost very differently: the
+ * Kubernetes deployment (GET /nico/deployment) is ~6s and stable, while the
+ * Forge inventory (GET /nico/inventory) is ~2s warm and far worse on a cold
+ * descriptor cache. Fetched together, every render waited on the slower one.
  *
- * Polls every 30s.
+ * The two are recombined here into the shape every sub-view already consumed,
+ * so only this component knows the fetch is split. Sections the inventory
+ * feeds show their own collecting state until it lands.
+ *
+ * Both poll every 30s.
  */
 
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { useNicoData } from '@/hooks/k8s/useNico';
+import { useNicoDeployment, useNicoInventory } from '@/hooks/k8s/useNico';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { CodeBlock } from '@/components/ui/CodeBlock';
 import { ErrorState } from '@/components/ui/error-state';
 import { EmptyState } from '@/components/ui/empty-state';
+import { CollectingState } from '@/components/ui/collecting-state';
 import type {
   NicoDataResponse,
   NicoHealthResponse,
+  NicoInventoryCountKey,
   NicoLoadBalancer,
   NicoPod,
   NicoStatus,
@@ -75,6 +84,14 @@ function StatusBadge({ status }: { status: NicoStatus }) {
     </Badge>
   );
 }
+
+/** How each transport reads in the "reachable" row. */
+const TRANSPORT: Record<string, string> = {
+  override:    'yes (pinned endpoint)',
+  loadbalancer:'yes (LoadBalancer)',
+  nodeport:    'yes (NodePort)',
+  portforward: 'yes (apiserver tunnel)',
+};
 
 function podOk(pod: NicoPod) {
   return pod.phase === 'Running' && pod.containers > 0 && pod.ready === pod.containers;
@@ -174,16 +191,71 @@ function PodRow({ pod }: { pod: NicoPod }) {
   );
 }
 
+/**
+ * Placeholders that keep `health` type-complete while the Forge half is still
+ * in flight. Never rendered — every site that would show one is gated on
+ * `health.inventoryPending`, because a real zero and a not-yet-read are
+ * different answers and must not look alike.
+ */
+const PENDING_COUNTS: Pick<NicoHealthResponse, NicoInventoryCountKey> = {
+  tenants: { total: 0 },
+  vpcs: { total: 0 },
+  loadBalancers: { total: 0, ready: 0, programmedPods: 0, pools: 0, members: 0 },
+  networkSegments: { total: 0 },
+};
+
+/** What a tab that only the Forge half can fill shows while it is in flight. */
+function InventoryPending() {
+  return (
+    <CollectingState
+      title="Reading NICo inventory"
+      detail="The deployment above is already current. Tenants, VPCs, network segments and load balancers come from NICo's Forge gRPC API, which is a separate read."
+      slowAfterSeconds={12}
+      slowNote="Forge ships no proto, so its schema is read off the server — cached per nico-api build, so the first read after a restart or an upgrade is the slow one."
+    />
+  );
+}
+
+/** A stat whose value the Forge half has not delivered yet. */
+function PendingStat({ icon: Icon, label }: { icon: typeof Server; label: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted/50">
+          <Icon className="h-5 w-5 text-foreground/40" />
+        </div>
+        <div>
+          <Skeleton className="h-7 w-10" />
+          <p className="mt-1 text-xs text-muted-foreground">{label}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Overview ──────────────────────────────────────────────────────────────
 
 function OverviewTab({ data }: { data: NicoDataResponse }) {
   const { health, controlPlane, endpoint, dependencies, dpf, inventory } = data;
   const cert = controlPlane.mtls;
   const fleet = inventory.fleet;
+  const pending = health.inventoryPending === true;
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+        {/* The first five come from Forge; the DPU count does not, so it
+            stands while the others are still loading. */}
+        {pending ? (
+          <>
+            <PendingStat icon={Users} label="Tenants" />
+            <PendingStat icon={Route} label="LB services" />
+            <PendingStat icon={Boxes} label="VPCs" />
+            <PendingStat icon={Network} label="Segments" />
+            <PendingStat icon={Layers} label="Pool members" />
+          </>
+        ) : (
+          <>
         <StatCard icon={Users} label="Tenants" value={health.tenants.total} />
         <StatCard
           icon={Route}
@@ -203,6 +275,8 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
           value={health.loadBalancers.members}
           detail={health.loadBalancers.pools > 0 ? `${health.loadBalancers.pools} pools` : undefined}
         />
+          </>
+        )}
         <StatCard
           icon={Cpu}
           label="DPUs (DPF)"
@@ -219,16 +293,23 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
               label="reachable"
               value={
                 endpoint.reachable ? (
-                  <span className="text-success">yes ({endpoint.kind})</span>
+                  <span className="text-success">
+                    {TRANSPORT[endpoint.kind ?? ''] ?? `yes (${endpoint.kind})`}
+                  </span>
                 ) : (
                   <span className="text-destructive">{endpoint.detail || 'no'}</span>
                 )
               }
             />
+            {/* Why we are tunnelling — otherwise a healthy tab on a
+                ClusterIP-only Service looks like it should not work. */}
+            {endpoint.reachable && endpoint.kind === 'portforward' && endpoint.detail && (
+              <Field label="transport" value={endpoint.detail} />
+            )}
             <Field
               label="web UI"
               value={
-                endpoint.webUi ? (
+                endpoint.webUi && endpoint.webUiReachable ? (
                   <a
                     className="inline-flex items-center gap-1 text-info hover:underline"
                     href={endpoint.webUi}
@@ -237,6 +318,10 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
                   >
                     {endpoint.webUi} <ExternalLink className="h-3 w-3" />
                   </a>
+                ) : endpoint.webUi ? (
+                  <span className="font-mono text-muted-foreground line-through">
+                    {endpoint.webUi}
+                  </span>
                 ) : null
               }
             />
@@ -251,6 +336,40 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
               }
             />
           </div>
+
+          {/* The advertised address is on the cluster's own subnet, which this
+              host has no route to. The UI shares the gRPC listener, so the
+              same forward that reaches Forge reaches the UI. */}
+          {!endpoint.webUiReachable && endpoint.portForward && (
+            <div className="mt-3 border-t border-border pt-3">
+              <p className="mb-2 text-xs text-muted-foreground">
+                That address is not routable from here. To open the admin UI, forward
+                the port and browse to{' '}
+                <span className="font-mono text-foreground/80">
+                  {endpoint.portForward.webUi}
+                </span>
+                :
+              </p>
+              <CodeBlock
+                code={endpoint.portForward.command}
+                language="plain"
+                showLineNumbers={false}
+                aria-label="port-forward command for the NICo admin UI"
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                Self-signed TLS, so your browser will warn.
+                {controlPlane.webAuth !== 'none' && (
+                  <>
+                    {' '}
+                    Auth is <span className="font-mono">{controlPlane.webAuth}</span> —
+                    the credential is on the nico-api Deployment, not shown here.
+                  </>
+                )}{' '}
+                The same address works as an endpoint override
+                (<span className="font-mono">{endpoint.portForward.endpoint}</span>).
+              </p>
+            </div>
+          )}
         </Section>
 
         <Section title="Client certificate" subtitle={`mTLS · Secret ${cert.secret}`}>
@@ -280,18 +399,53 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Section
           title="Datastore"
-          subtitle="Postgres holds NICo's model; Vault holds its secrets. Neither is part of NICo."
+          subtitle="Postgres holds NICo's model, Vault its secrets, Temporal its workflows. None is part of NICo."
         >
-          <div className="space-y-1.5">
-            {dependencies.flatMap((dep) =>
-              dep.pods.length > 0
-                ? dep.pods.map((pod) => <PodRow key={pod.name} pod={pod} />)
-                : [
-                    <p key={dep.name} className="text-xs text-muted-foreground">
-                      {dep.name}: no pod found in {dep.namespace}
-                    </p>,
-                  ],
-            )}
+          <div className="space-y-3">
+            {dependencies.map((dep) => (
+              <div key={dep.name}>
+                <div className="mb-1 flex items-baseline justify-between gap-3">
+                  <span className="text-xs font-medium text-foreground/80">{dep.name}</span>
+                  {/* Which selector matched: a dependency found by its fallback
+                      is worth distinguishing from one found as expected. */}
+                  <span className="truncate font-mono text-[10px] text-muted-foreground">
+                    {dep.selector ?? `nothing matched in ${dep.namespace}`}
+                  </span>
+                </div>
+                {dep.pods.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {dep.pods.map((pod) => (
+                      <div key={pod.name}>
+                        <PodRow pod={pod} />
+                        {pod.labels && Object.keys(pod.labels).length > 0 && (
+                          <div className="mt-0.5 flex flex-wrap gap-1 pl-1">
+                            {Object.entries(pod.labels).map(([k, v]) => (
+                              <span
+                                key={k}
+                                className={cn(
+                                  'rounded px-1 py-0.5 font-mono text-[10px]',
+                                  // A sealed Vault is the one label here that
+                                  // means "this store cannot serve NICo".
+                                  k === 'vault-sealed' && v === 'true'
+                                    ? 'bg-warning/15 text-warning'
+                                    : 'bg-muted text-muted-foreground',
+                                )}
+                              >
+                                {k.replace('app.kubernetes.io/', '')}={v}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    no pod found in {dep.namespace}
+                  </p>
+                )}
+              </div>
+            ))}
           </div>
         </Section>
 
@@ -326,7 +480,8 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
 
 // ── Tenants ───────────────────────────────────────────────────────────────
 
-function TenantsTab({ tenants }: { tenants: NicoTenant[] }) {
+function TenantsTab({ tenants, pending }: { tenants: NicoTenant[]; pending: boolean }) {
+  if (pending) return <InventoryPending />;
   if (tenants.length === 0) {
     return (
       <EmptyState
@@ -488,7 +643,8 @@ function LbCard({ lb }: { lb: NicoLoadBalancer }) {
   );
 }
 
-function LoadBalancersTab({ lbs }: { lbs: NicoLoadBalancer[] }) {
+function LoadBalancersTab({ lbs, pending }: { lbs: NicoLoadBalancer[]; pending: boolean }) {
+  if (pending) return <InventoryPending />;
   if (lbs.length === 0) {
     return (
       <EmptyState
@@ -510,6 +666,7 @@ function LoadBalancersTab({ lbs }: { lbs: NicoLoadBalancer[] }) {
 // ── Network ───────────────────────────────────────────────────────────────
 
 function NetworkTab({ data }: { data: NicoDataResponse }) {
+  if (data.health.inventoryPending === true) return <InventoryPending />;
   const { vpcs = [], networkSegments = [], domains = [] } = data.inventory;
 
   return (
@@ -718,6 +875,20 @@ function DeploymentTab({ data }: { data: NicoDataResponse }) {
 function NicoSkeleton() {
   return (
     <div className="space-y-6">
+      {/* Measured on the reference lab over a VPN: ~32s cold, ~12s once the
+          Forge descriptor pool is cached. The skeleton alone gave no reason to
+          believe any of that was happening. */}
+      <CollectingState
+        title="Collecting NICo inventory"
+        detail="One read covers both halves: the Kubernetes deployment, and everything NICo holds behind its Forge gRPC API."
+        steps={[
+          'nico-api pods, Services and mTLS client certificate',
+          'Postgres / Vault / Temporal dependencies, LB providers, DPU counts',
+          'Forge session — tenants, VPCs, network segments, load balancers',
+        ]}
+        slowAfterSeconds={12}
+        slowNote="Forge publishes no CRDs and ships no proto, so its schema is read off the server — ~475 method descriptors across 13 files. That walk is cached per nico-api build, so the first read after a restart or an upgrade is the slow one."
+      />
       <Skeleton className="h-8 w-64" />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
         {Array.from({ length: 6 }).map((_, i) => (
@@ -743,10 +914,32 @@ const TABS: { key: NicoTab; label: string }[] = [
 
 export function NICoPanel({ clusterId }: NICoPanelProps) {
   const [activeTab, setActiveTab] = useState<NicoTab>('overview');
-  const { data, isLoading, error, isFetching } = useNicoData(clusterId);
+  const deployment = useNicoDeployment(clusterId);
+  // Gated on the deployment half rather than fired alongside it: that request
+  // memoizes the endpoint resolution, so running them concurrently would make
+  // each pay the ~2.9s TCP screen separately.
+  const inventory = useNicoInventory(clusterId, {
+    enabled: deployment.data?.detected === true,
+  });
 
-  if (isLoading) return <NicoSkeleton />;
-  if (error) return <ErrorState error={error} size="sm" />;
+  const dep = deployment.data;
+  const inv = inventory.data;
+
+  // Recombined into the shape every sub-view below already consumed, so the
+  // split stops at this line.
+  const data: NicoDataResponse | undefined = dep && {
+    ...dep,
+    inventory: inv?.inventory ?? {},
+    errors: [...dep.errors, ...(inv?.errors ?? [])],
+    health: {
+      ...dep.health,
+      ...(inv?.counts ?? PENDING_COUNTS),
+      inventoryPending: !inv,
+    },
+  };
+
+  if (deployment.isLoading) return <NicoSkeleton />;
+  if (deployment.error) return <ErrorState error={deployment.error} size="sm" />;
 
   if (!data || !data.detected) {
     return (
@@ -758,13 +951,21 @@ export function NICoPanel({ clusterId }: NICoPanelProps) {
     );
   }
 
-  const health: NicoHealthResponse = data.health;
+  const health = data.health;
+  const pending = health.inventoryPending === true;
   const tenants = data.inventory.tenants ?? [];
   const lbs = data.inventory.loadBalancers ?? [];
+  // No badge on a tab whose count is not known yet — "(0)" would read as an
+  // answer. The deployment tab is fed by the half that has already landed.
   const counts: Partial<Record<NicoTab, number>> = {
-    tenants: tenants.length,
-    loadbalancers: lbs.length,
-    network: (data.inventory.vpcs?.length ?? 0) + (data.inventory.networkSegments?.length ?? 0),
+    ...(pending
+      ? {}
+      : {
+          tenants: tenants.length,
+          loadbalancers: lbs.length,
+          network:
+            (data.inventory.vpcs?.length ?? 0) + (data.inventory.networkSegments?.length ?? 0),
+        }),
     deployment: data.controlPlane.pods.length + data.providers.length,
   };
 
@@ -786,7 +987,10 @@ export function NICoPanel({ clusterId }: NICoPanelProps) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          {data.endpoint.webUi && (
+          {/* Linked only when the address answered our own TCP screen. It
+              used to link the advertised address unconditionally, which on a
+              lab subnet meant a click straight into a browser timeout. */}
+          {data.endpoint.webUi && data.endpoint.webUiReachable && (
             <a
               className="inline-flex items-center gap-1 text-xs text-info hover:underline"
               href={data.endpoint.webUi}
@@ -796,7 +1000,9 @@ export function NICoPanel({ clusterId }: NICoPanelProps) {
               admin UI <ExternalLink className="h-3 w-3" />
             </a>
           )}
-          {isFetching && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
+          {(deployment.isFetching || inventory.isFetching) && (
+            <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+          )}
         </div>
       </div>
 
@@ -834,8 +1040,8 @@ export function NICoPanel({ clusterId }: NICoPanelProps) {
       </div>
 
       {activeTab === 'overview' && <OverviewTab data={data} />}
-      {activeTab === 'tenants' && <TenantsTab tenants={tenants} />}
-      {activeTab === 'loadbalancers' && <LoadBalancersTab lbs={lbs} />}
+      {activeTab === 'tenants' && <TenantsTab tenants={tenants} pending={pending} />}
+      {activeTab === 'loadbalancers' && <LoadBalancersTab lbs={lbs} pending={pending} />}
       {activeTab === 'network' && <NetworkTab data={data} />}
       {activeTab === 'deployment' && <DeploymentTab data={data} />}
     </div>

@@ -88,6 +88,8 @@ export const queryKeys = {
       dpfData: (clusterId: number) => ['k8s', 'clusters', clusterId, 'dpf', 'data'] as const,
       dpfHealth: (clusterId: number) => ['k8s', 'clusters', clusterId, 'dpf', 'health'] as const,
       nicoData: (clusterId: number) => ['k8s', 'clusters', clusterId, 'nico', 'data'] as const,
+      nicoDeployment: (clusterId: number) => ['k8s', 'clusters', clusterId, 'nico', 'deployment'] as const,
+      nicoInventory: (clusterId: number) => ['k8s', 'clusters', clusterId, 'nico', 'inventory'] as const,
     },
     tunnels: () => ['k8s', 'tunnels'] as const,
   },

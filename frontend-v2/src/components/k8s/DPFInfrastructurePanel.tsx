@@ -22,6 +22,7 @@ import { DPUServicesTab } from './DPUServicesTab';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { CollectingState } from '@/components/ui/collecting-state';
 import type {
   DpfDpuDevice, DpfDpuCluster, DpfDpuSet, DpfBfb, DpfDpuFlavor,
   DpfDpuService, DpfDpuDeployment, DpfDpuServiceChain, DpfDpuServiceInterface,
@@ -369,6 +370,17 @@ function NotInstalledState({ onSetup }: { onSetup?: () => void }) {
 function DPFSkeleton() {
   return (
     <div className="space-y-6">
+      <CollectingState
+        title="Collecting DPF infrastructure"
+        detail="One read walks every DPF custom resource on the cluster."
+        steps={[
+          'DPUDevices, DPUSets and DPUClusters',
+          'BFBs, DPUFlavors and DPUDeployments',
+          'DPUServices, service chains and interfaces',
+        ]}
+        slowAfterSeconds={8}
+        slowNote="Each resource kind is its own API round trip, so the total is dominated by latency to the cluster rather than by how much there is to read."
+      />
       <div className="flex items-center gap-4">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-6 w-24" />
