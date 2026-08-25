@@ -56,6 +56,14 @@ DEPENDENCY_PODS = (
     ("vault", "vault", "app=vault"),
 )
 
+# How far back a provider's log is read for current complaints. An operator
+# that cannot reach NICo re-logs the failure on every resync (30s), so any
+# window comfortably longer than that catches a live problem — the window's job
+# is to exclude *history*, not to catch failures. Without it, a single
+# cold-start blip stayed the last line of an otherwise silent log and read as
+# "failing since Tuesday" for as long as the pod lived.
+PROVIDER_LOG_WINDOW_SEC = 3600
+
 # Per-call budget for the Forge RPCs. The endpoint is either routable and
 # answers in milliseconds, or it is not — a long timeout only stalls the tab.
 FORGE_TIMEOUT = 10.0

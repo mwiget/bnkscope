@@ -34,6 +34,7 @@ from services.nico.constants import (
     NICO_SERVICE,
     PROVIDER_ENV_KEYS,
     PROVIDER_LABEL,
+    PROVIDER_LOG_WINDOW_SEC,
     WEB_AUTH_ENV,
 )
 from services.nico.forge import ForgeClient, tcp_reachable
@@ -114,18 +115,27 @@ def _deployment_env(apps_api, namespace: str, name: str) -> dict[str, str]:
 
 
 def _recent_errors(core_api, namespace: str, pod_name: str) -> list[str]:
-    """The last few WARN/ERROR lines from a pod's log tail.
+    """WARN/ERROR lines a provider has logged *recently*.
 
     A provider that cannot reach NICo stays `Running` and `1/1 Ready` forever —
     the only symptom is in its log. Surfacing a handful of lines is the
     difference between "the operator is up" and "the operator is up and has not
     talked to NICo since Tuesday".
+
+    Bounded by time as well as by line count, and the time bound is the
+    load-bearing one. The reconciler logs a failed poll and nothing on recovery, so
+    one transient error — a cold start that beat nico-api to the network by a
+    few seconds — stays the final line of an otherwise silent log for the life
+    of the pod. Read by tail alone it is indistinguishable from an outage still
+    in progress, which is exactly the wrong thing to tell someone whose load
+    balancers are all READY and reprogramming every 30 seconds.
     """
     try:
         raw = core_api.read_namespaced_pod_log(
             name=pod_name,
             namespace=namespace,
             tail_lines=_LOG_TAIL_LINES,
+            since_seconds=PROVIDER_LOG_WINDOW_SEC,
             _request_timeout=_K8S_TIMEOUT,
         )
     except Exception as exc:  # noqa: BLE001

@@ -9,6 +9,7 @@ replays canned RPC payloads. No live cluster, no gRPC.
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from services.nico.constants import PROVIDER_LOG_WINDOW_SEC
 from services.nico.fetch import (
     _fetch_inventory,
     _fetch_load_balancers,
@@ -248,6 +249,34 @@ class TestInventory:
 
 
 class TestProviderLogs:
+    def test_the_read_is_bounded_to_a_recent_window(self):
+        """The reconciler logs a failed poll and nothing on recovery, so one
+        transient cold-start error stays the last line of an otherwise silent
+        log for the life of the pod. Read by tail alone that is
+        indistinguishable from an outage still in progress — which degraded a
+        cluster whose load balancers were all READY and reprogramming every
+        30 seconds.
+        """
+        seen = {}
+
+        class Core:
+            def read_namespaced_pod_log(self, **kwargs):
+                seen.update(kwargs)
+                return ""
+
+        _recent_errors(Core(), "nico-system", "provider-1")
+        assert seen["since_seconds"] == PROVIDER_LOG_WINDOW_SEC
+        assert seen["tail_lines"] > 0
+
+    def test_a_quiet_window_reports_nothing(self):
+        """An operator that failed days ago and has been fine since has no
+        current complaint to make."""
+        class Core:
+            def read_namespaced_pod_log(self, **_kwargs):
+                return ""
+
+        assert _recent_errors(Core(), "nico-system", "provider-1") == []
+
     def test_ansi_escapes_are_stripped(self):
         """The Rust operators colourise even when stdout is not a terminal, and
         raw SGR escapes render as literal garbage in HTML."""

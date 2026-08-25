@@ -659,9 +659,12 @@ function DeploymentTab({ data }: { data: NicoDataResponse }) {
                 </div>
                 {p.recentErrors.length > 0 && (
                   /* A provider that cannot reach NICo stays Running and Ready
-                     forever; its log is the only place that shows up. */
+                     forever; its log is the only place that shows up. Scoped
+                     to the last hour by the backend — the reconciler logs a
+                     failed poll and nothing on recovery, so an unbounded read
+                     shows a long-recovered cold start as a live outage. */
                   <div className="mt-2 space-y-1">
-                    <p className="text-xs font-medium text-warning">Recent log errors</p>
+                    <p className="text-xs font-medium text-warning">Log errors (last hour)</p>
                     {p.recentErrors.map((line, i) => (
                       <p
                         key={i}
