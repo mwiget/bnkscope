@@ -121,6 +121,12 @@ COMPONENT_NAME_LABELS = (
 # matters is published as a label rather than inferable from readiness: Vault
 # advertises its seal/init/active state and version, spilo advertises which
 # member is primary.
+#
+# Only what nico-api itself cannot run without belongs here. Temporal was
+# listed for a while and is not: nico-api never dials it, it backs the
+# site-controller layer's workflows, and the components that do depend on it
+# — nico-rest's workers and flow — are visible in their own right in the
+# estate view.
 DEPENDENCIES = (
     {
         "name": "postgres",
@@ -138,16 +144,6 @@ DEPENDENCIES = (
             "vault-sealed",
             "vault-version",
         ),
-    },
-    # Not dialled by nico-api itself — it is what the site-controller layer
-    # (nico-rest's cloud workers, flow) runs its workflows on. Listed because a
-    # vanilla site has one and provisioning stalls without it, which is
-    # invisible from anywhere else on this page.
-    {
-        "name": "temporal",
-        "namespace": "temporal",
-        "selectors": ("app.kubernetes.io/name=temporal",),
-        "pod_labels": ("app.kubernetes.io/component",),
     },
 )
 
@@ -175,7 +171,6 @@ INVENTORY_CAPABILITIES = {
     "vpcs": ("FindVpcIds", "FindVpcsByIds"),
     "networkSegments": ("FindNetworkSegmentIds", "FindNetworkSegmentsByIds"),
     "dpfServiceVersions": ("GetDPFServiceVersions",),
-    "fleet": ("FindMachineIds", "FindSwitchIds", "FindRackIds", "FindInstanceIds"),
 }
 
 # Per-call budget for the Forge RPCs. The endpoint is either routable and

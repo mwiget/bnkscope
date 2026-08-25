@@ -236,13 +236,6 @@ export interface NicoDpfServiceVersion {
   configDockerImageTag?: string;
 }
 
-export interface NicoFleetCounts {
-  machines: number;
-  switches: number;
-  racks: number;
-  instances: number;
-}
-
 export interface NicoInventory {
   capabilities?: NicoCapabilities;
   tenants?: NicoTenant[];
@@ -251,7 +244,6 @@ export interface NicoInventory {
   loadBalancers?: NicoLoadBalancer[];
   domains?: NicoDomain[];
   dpfServiceVersions?: NicoDpfServiceVersion[];
-  fleet?: NicoFleetCounts;
 }
 
 // ── Health ────────────────────────────────────────────────────────────────
@@ -268,7 +260,7 @@ export type NicoStatus = 'healthy' | 'degraded' | 'unreachable' | 'not_installed
 export type NicoCapability = 'available' | 'absent' | 'forbidden';
 
 export type NicoCapabilities = Partial<Record<
-  'loadBalancers' | 'domains' | 'vpcs' | 'networkSegments' | 'dpfServiceVersions' | 'fleet',
+  'loadBalancers' | 'domains' | 'vpcs' | 'networkSegments' | 'dpfServiceVersions',
   NicoCapability
 >>;
 

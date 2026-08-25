@@ -463,10 +463,10 @@ def _version_banner(host: str, port: int) -> str | None:
 def _dpu_counts(k8s_service, api_client, cluster_id: int) -> dict[str, int]:
     """DPUs on this cluster, from DPF's own CRs.
 
-    NICo has a DPU inventory of its own and it is empty here: this lab
-    provisions through DPF Zero-Touch, not NICo's fleet-provisioning pipeline.
-    Showing DPF's count next to NICo's zero is what makes that read as a design
-    choice rather than a fault.
+    NICo keeps a DPU inventory of its own, which this lab does not use: DPU
+    lifecycle runs through DPF Zero-Touch rather than NICo's fleet-provisioning
+    pipeline. DPF's count is therefore the only true one, and the reason it is
+    read here rather than taken from NICo.
 
     Runs on the calling thread, never the pool below: ``_safe_fetch`` resolves
     the CRD through the request-scoped SQLAlchemy Session, which is not
@@ -753,14 +753,6 @@ def _fetch_inventory(client: ForgeClient) -> dict[str, Any]:
         for d in client.try_call("GetAllDomains").get("result", [])
     ]
     dpf_versions = client.try_call("GetDPFServiceVersions").get("services", [])
-    # NICo's fleet tables. Empty in a DPF Zero-Touch lab, and worth saying
-    # so explicitly — an empty /admin/machine page otherwise reads as a bug.
-    fleet = {
-        "machines": len(_ids(client.try_call("FindMachineIds"), "machineIds")),
-        "switches": len(_ids(client.try_call("FindSwitchIds"), "switchIds")),
-        "racks": len(_ids(client.try_call("FindRackIds"), "rackIds")),
-        "instances": len(_ids(client.try_call("FindInstanceIds"), "instanceIds")),
-    }
 
     # Now that every call has been made, a section still marked available but
     # whose methods were refused is forbidden, not empty.
@@ -778,7 +770,6 @@ def _fetch_inventory(client: ForgeClient) -> dict[str, Any]:
         "loadBalancers": lbs,
         "domains": domains,
         "dpfServiceVersions": dpf_versions,
-        "fleet": fleet,
     }
 
 

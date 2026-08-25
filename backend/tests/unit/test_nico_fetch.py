@@ -457,9 +457,7 @@ class TestInventory:
         assert len(inventory["loadBalancers"]) == 1
         assert inventory["tenants"][0]["id"] == "acme"
         assert inventory["vpcs"] == []
-        assert inventory["fleet"] == {
-            "machines": 0, "switches": 0, "racks": 0, "instances": 0,
-        }
+        assert inventory["domains"] == []
 
 
 class TestProviderLogs:
@@ -607,6 +605,11 @@ class TestDependencies:
         assert dep["pods"] == []
         assert dep["selector"] is None
 
+    def test_only_what_nico_api_cannot_run_without_is_listed(self):
+        """Temporal was listed for a while and is not: nico-api never dials it,
+        and the components that do are visible in the estate view."""
+        assert [d["name"] for d in _dependencies(_PodCore({}))] == ["postgres", "vault"]
+
     def test_the_same_labels_in_another_namespace_are_somebody_elses(self):
         core = _PodCore({
             "application=spilo": [
@@ -616,21 +619,6 @@ class TestDependencies:
         })
         pg = next(d for d in _dependencies(core) if d["name"] == "postgres")
         assert [p["name"] for p in pg["pods"]] == ["nico-pg-cluster-0"]
-
-    def test_temporal_is_probed_too(self):
-        core = _PodCore({
-            "app.kubernetes.io/name=temporal": [
-                _dep_pod("temporal-frontend-abc", "temporal",
-                         {"app.kubernetes.io/name": "temporal",
-                          "app.kubernetes.io/component": "frontend"}),
-            ],
-        })
-        names = [d["name"] for d in _dependencies(core)]
-        assert names == ["postgres", "vault", "temporal"]
-        temporal = next(d for d in _dependencies(core) if d["name"] == "temporal")
-        assert temporal["pods"][0]["labels"] == {"app.kubernetes.io/component": "frontend"}
-
-
 class TestCapabilities:
     """Absent, forbidden and empty are three different answers."""
 
@@ -667,9 +655,8 @@ class TestCapabilities:
         cannot be settled before the calls that populate it — an earlier
         version reported every late-called section as available because nothing
         had asked it yet."""
-        # These are issued last in the session, after the map is first built.
-        inv = self._inventory(denied=("FindMachineIds", "GetDPFServiceVersions"))
-        assert inv["capabilities"]["fleet"] == "forbidden"
+        # Issued last in the session, after the map is first built.
+        inv = self._inventory(denied=("GetDPFServiceVersions",))
         assert inv["capabilities"]["dpfServiceVersions"] == "forbidden"
 
     def test_a_section_that_answered_is_available_and_its_zero_is_real(self):

@@ -262,9 +262,8 @@ function PendingStat({ icon: Icon, label }: { icon: typeof Server; label: string
 // ── Overview ──────────────────────────────────────────────────────────────
 
 function OverviewTab({ data }: { data: NicoDataResponse }) {
-  const { health, controlPlane, endpoint, dependencies, dpf, inventory } = data;
+  const { health, controlPlane, endpoint, dependencies, dpf } = data;
   const cert = controlPlane.mtls;
-  const fleet = inventory.fleet;
   const pending = health.inventoryPending === true;
   const lbCapAvailable = (health.capabilities?.loadBalancers ?? 'available') === 'available';
 
@@ -448,10 +447,10 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
         </Section>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div>
         <Section
           title="Datastore"
-          subtitle="Postgres holds NICo's model, Vault its secrets, Temporal its workflows. None is part of NICo."
+          subtitle="Postgres holds NICo's model and Vault its secrets. Neither is part of NICo."
         >
           <div className="space-y-3">
             {dependencies.map((dep) => (
@@ -501,30 +500,6 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
           </div>
         </Section>
 
-        <Section
-          title="Fleet inventory"
-          subtitle="NICo's own machine/switch/rack tables."
-        >
-          {fleet ? (
-            <div className="space-y-0.5">
-              <Field label="machines" value={fleet.machines} />
-              <Field label="switches" value={fleet.switches} />
-              <Field label="racks" value={fleet.racks} />
-              <Field label="instances" value={fleet.instances} />
-              {fleet.machines === 0 && dpf.total > 0 && (
-                /* An empty /admin/machine page is the expected state here, not
-                   a fault: DPU lifecycle in this lab is DPF Zero-Touch, which
-                   never registers anything with NICo's provisioning pipeline. */
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Empty by design — DPU lifecycle is DPF-owned here ({dpf.ready}/{dpf.total} DPUs
-                  Ready via DPF Zero-Touch, not NICo fleet provisioning).
-                </p>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Not read.</p>
-          )}
-        </Section>
       </div>
     </div>
   );
@@ -1019,7 +994,7 @@ function NicoSkeleton() {
         detail="One read covers both halves: the Kubernetes deployment, and everything NICo holds behind its Forge gRPC API."
         steps={[
           'nico-api pods, Services and mTLS client certificate',
-          'Postgres / Vault / Temporal dependencies, LB providers, DPU counts',
+          'Postgres / Vault dependencies, LB providers, DPU counts',
           'Forge session — tenants, VPCs, network segments, load balancers',
         ]}
         slowAfterSeconds={12}
