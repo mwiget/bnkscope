@@ -130,6 +130,25 @@ DEPENDENCIES = (
 # "failing since Tuesday" for as long as the pod lived.
 PROVIDER_LOG_WINDOW_SEC = 3600
 
+# Which Forge RPCs each inventory section needs, so a section can say whether
+# this build has it at all rather than reporting a zero it never established.
+#
+# Vanilla NICo has no LoadBalancerService methods whatsoever — the LB API is an
+# F5 extension (`tmm-lb-nico` shapes its proto to drop into `forge.proto`
+# later). Reporting "0 load balancers" there states something about the
+# deployment that was never checked; "this build has no load balancer API" is
+# the truth. Separately, Forge authorizes per method against the client
+# certificate, so `GetAllDomains` answers 403 for a cert that reads VPCs fine —
+# also not "no DNS zones".
+INVENTORY_CAPABILITIES = {
+    "loadBalancers": ("SearchLoadBalancerServices", "GetLoadBalancerServices"),
+    "domains": ("GetAllDomains",),
+    "vpcs": ("FindVpcIds", "FindVpcsByIds"),
+    "networkSegments": ("FindNetworkSegmentIds", "FindNetworkSegmentsByIds"),
+    "dpfServiceVersions": ("GetDPFServiceVersions",),
+    "fleet": ("FindMachineIds", "FindSwitchIds", "FindRackIds", "FindInstanceIds"),
+}
+
 # Per-call budget for the Forge RPCs. The endpoint is either routable and
 # answers in milliseconds, or it is not — a long timeout only stalls the tab.
 FORGE_TIMEOUT = 10.0

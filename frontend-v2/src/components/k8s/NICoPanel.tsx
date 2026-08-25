@@ -31,6 +31,7 @@ import { ErrorState } from '@/components/ui/error-state';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CollectingState } from '@/components/ui/collecting-state';
 import type {
+  NicoCapability,
   NicoDataResponse,
   NicoHealthResponse,
   NicoInventoryCountKey,
@@ -216,6 +217,30 @@ function InventoryPending() {
   );
 }
 
+/** Why a section is blank when the blankness is not a measurement. */
+const CAPABILITY_NOTE: Record<Exclude<NicoCapability, 'available'>, string> = {
+  absent:
+    'This NICo build does not have the API for it. The load balancer RPCs are ' +
+    'an F5 extension to Forge; a vanilla install has none, so there is nothing ' +
+    'to be zero.',
+  forbidden:
+    "Forge authorizes per method against the client certificate, and this one " +
+    'was refused. The data may well exist — we were not allowed to look.',
+};
+
+function CapabilityNote({ what, state }: { what: string; state: NicoCapability }) {
+  if (state === 'available') return null;
+  return (
+    <EmptyState
+      icon={state === 'absent' ? HelpCircle : ShieldCheck}
+      title={state === 'absent' ? `No ${what} API on this build` : `Not authorized for ${what}`}
+      description={CAPABILITY_NOTE[state]}
+      size="sm"
+      illustration={false}
+    />
+  );
+}
+
 /** A stat whose value the Forge half has not delivered yet. */
 function PendingStat({ icon: Icon, label }: { icon: typeof Server; label: string }) {
   return (
@@ -240,6 +265,7 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
   const cert = controlPlane.mtls;
   const fleet = inventory.fleet;
   const pending = health.inventoryPending === true;
+  const lbCapAvailable = (health.capabilities?.loadBalancers ?? 'available') === 'available';
 
   return (
     <div className="space-y-4">
@@ -256,25 +282,44 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
           </>
         ) : (
           <>
-        <StatCard icon={Users} label="Tenants" value={health.tenants.total} />
-        <StatCard
-          icon={Route}
-          label="LB services"
-          value={health.loadBalancers.total}
-          detail={
-            health.loadBalancers.total > 0
-              ? `${health.loadBalancers.ready} ready · ${health.loadBalancers.programmedPods} pods programmed`
-              : undefined
-          }
-        />
-        <StatCard icon={Boxes} label="VPCs" value={health.vpcs.total} />
-        <StatCard icon={Network} label="Segments" value={health.networkSegments.total} />
-        <StatCard
-          icon={Layers}
-          label="Pool members"
-          value={health.loadBalancers.members}
-          detail={health.loadBalancers.pools > 0 ? `${health.loadBalancers.pools} pools` : undefined}
-        />
+            <StatCard icon={Users} label="Tenants" value={health.tenants.total} />
+            {/* An em dash, not 0: this build has no load balancer API, so
+                there is no quantity to report. */}
+            {lbCapAvailable ? (
+              <>
+                <StatCard
+                  icon={Route}
+                  label="LB services"
+                  value={health.loadBalancers.total}
+                  detail={
+                    health.loadBalancers.total > 0
+                      ? `${health.loadBalancers.ready} ready · ${health.loadBalancers.programmedPods} pods programmed`
+                      : undefined
+                  }
+                />
+                <StatCard icon={Boxes} label="VPCs" value={health.vpcs.total} />
+                <StatCard icon={Network} label="Segments" value={health.networkSegments.total} />
+                <StatCard
+                  icon={Layers}
+                  label="Pool members"
+                  value={health.loadBalancers.members}
+                  detail={
+                    health.loadBalancers.pools > 0 ? `${health.loadBalancers.pools} pools` : undefined
+                  }
+                />
+              </>
+            ) : (
+              <>
+                <StatCard icon={Boxes} label="VPCs" value={health.vpcs.total} />
+                <StatCard icon={Network} label="Segments" value={health.networkSegments.total} />
+                <StatCard
+                  icon={Route}
+                  label="LB services"
+                  value="—"
+                  detail="no load balancer API on this build"
+                />
+              </>
+            )}
           </>
         )}
         <StatCard
@@ -643,8 +688,18 @@ function LbCard({ lb }: { lb: NicoLoadBalancer }) {
   );
 }
 
-function LoadBalancersTab({ lbs, pending }: { lbs: NicoLoadBalancer[]; pending: boolean }) {
+function LoadBalancersTab({
+  lbs,
+  pending,
+  capability,
+}: {
+  lbs: NicoLoadBalancer[];
+  pending: boolean;
+  capability: NicoCapability;
+}) {
   if (pending) return <InventoryPending />;
+  // Not "no load balancers configured" — there is no such thing here to configure.
+  if (capability !== 'available') return <CapabilityNote what="load balancer" state={capability} />;
   if (lbs.length === 0) {
     return (
       <EmptyState
@@ -667,6 +722,7 @@ function LoadBalancersTab({ lbs, pending }: { lbs: NicoLoadBalancer[]; pending: 
 
 function NetworkTab({ data }: { data: NicoDataResponse }) {
   if (data.health.inventoryPending === true) return <InventoryPending />;
+  const domainsCap: NicoCapability = data.health.capabilities?.domains ?? 'available';
   const { vpcs = [], networkSegments = [], domains = [] } = data.inventory;
 
   return (
@@ -756,7 +812,12 @@ function NetworkTab({ data }: { data: NicoDataResponse }) {
       </Section>
 
       <Section title="DNS zones" subtitle="Served by NICo's own authoritative DNS.">
-        {domains.length === 0 ? (
+        {/* `GetAllDomains` answers 403 for a cert that reads VPCs happily —
+            Forge authorizes per method. "None." would be a claim we cannot
+            make from a refusal. */}
+        {domainsCap !== 'available' ? (
+          <CapabilityNote what="DNS zone" state={domainsCap} />
+        ) : domains.length === 0 ? (
           <p className="text-xs text-muted-foreground">None.</p>
         ) : (
           <div className="space-y-1.5">
@@ -956,6 +1017,10 @@ export function NICoPanel({ clusterId }: NICoPanelProps) {
 
   const health = data.health;
   const pending = health.inventoryPending === true;
+  const caps = health.capabilities ?? {};
+  // Until the Forge half lands we do not know what this build supports, so
+  // assume it does — the tab shows its own pending state either way.
+  const lbCap: NicoCapability = pending ? 'available' : (caps.loadBalancers ?? 'available');
   const tenants = data.inventory.tenants ?? [];
   const lbs = data.inventory.loadBalancers ?? [];
   // No badge on a tab whose count is not known yet — "(0)" would read as an
@@ -1023,7 +1088,7 @@ export function NICoPanel({ clusterId }: NICoPanelProps) {
       )}
 
       <div className="flex gap-1 rounded-lg border border-border bg-muted/50 p-1">
-        {TABS.map((tab) => (
+        {TABS.filter((tab) => tab.key !== 'loadbalancers' || lbCap === 'available').map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
@@ -1044,7 +1109,9 @@ export function NICoPanel({ clusterId }: NICoPanelProps) {
 
       {activeTab === 'overview' && <OverviewTab data={data} />}
       {activeTab === 'tenants' && <TenantsTab tenants={tenants} pending={pending} />}
-      {activeTab === 'loadbalancers' && <LoadBalancersTab lbs={lbs} pending={pending} />}
+      {activeTab === 'loadbalancers' && (
+        <LoadBalancersTab lbs={lbs} pending={pending} capability={lbCap} />
+      )}
       {activeTab === 'network' && <NetworkTab data={data} />}
       {activeTab === 'deployment' && <DeploymentTab data={data} />}
     </div>

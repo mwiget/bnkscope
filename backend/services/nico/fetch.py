@@ -33,6 +33,7 @@ from services.nico.constants import (
     ENDPOINT_PREFERENCE,
     FORGE_ENDPOINT_KEY,
     FORGE_TIMEOUT,
+    INVENTORY_CAPABILITIES,
     NICO_API_LABEL,
     NICO_GRPC_PORT,
     NICO_SERVICE,
@@ -605,6 +606,9 @@ def _fetch_load_balancers(client: ForgeClient) -> list[dict[str, Any]]:
     This is the whole point of the tab: the VIP, what it fronts, whether the
     dataplane has actually been programmed with it, and on how many TMM pods.
     """
+    # Absent on a vanilla build, where asking is a guaranteed miss.
+    if not client.has_method("SearchLoadBalancerServices"):
+        return []
     ids = _ids(client.try_call("SearchLoadBalancerServices"), "loadBalancerServiceIds")
     if not ids:
         return []
@@ -703,33 +707,75 @@ def _roll_up_tenants(vpcs: list[dict], lbs: list[dict]) -> list[dict[str, Any]]:
     return out
 
 
+def _capabilities(client: ForgeClient) -> dict[str, str]:
+    """Which inventory sections this build and this certificate can answer.
+
+    Three outcomes, and `try_call` returns the same empty dict for all of them:
+
+    * ``absent``    — the build does not declare the RPCs. Known from the
+      descriptors without calling anything.
+    * ``forbidden`` — declared, but this client cert was refused.
+    * ``available`` — we got to ask.
+
+    Only the first is knowable up front; ``forbidden`` is filled in afterwards
+    from what the session was actually refused, which is why this runs twice.
+    """
+    out = {}
+    for section, methods in INVENTORY_CAPABILITIES.items():
+        out[section] = (
+            "available" if all(client.has_method(m) for m in methods) else "absent"
+        )
+    return out
+
+
 def _fetch_inventory(client: ForgeClient) -> dict[str, Any]:
-    """Everything NICo holds, in one session."""
+    """Everything NICo holds, in one session.
+
+    Every RPC is issued before the capability map is finalized, because
+    ``forbidden`` is only learnable by being refused — settling it earlier
+    would report a section as available purely because nothing had asked it
+    yet.
+    """
+    capabilities = _capabilities(client)
     vpcs = _fetch_vpcs(client)
     lbs = _fetch_load_balancers(client)
+    segments = _fetch_segments(client)
+    domains = [
+        {
+            "id": (d.get("id") or {}).get("value", ""),
+            "zone": d.get("zone"),
+            "kind": d.get("kind"),
+            "serial": d.get("serial"),
+        }
+        for d in client.try_call("GetAllDomains").get("result", [])
+    ]
+    dpf_versions = client.try_call("GetDPFServiceVersions").get("services", [])
+    # NICo's fleet tables. Empty in a DPF Zero-Touch lab, and worth saying
+    # so explicitly — an empty /admin/machine page otherwise reads as a bug.
+    fleet = {
+        "machines": len(_ids(client.try_call("FindMachineIds"), "machineIds")),
+        "switches": len(_ids(client.try_call("FindSwitchIds"), "switchIds")),
+        "racks": len(_ids(client.try_call("FindRackIds"), "rackIds")),
+        "instances": len(_ids(client.try_call("FindInstanceIds"), "instanceIds")),
+    }
+
+    # Now that every call has been made, a section still marked available but
+    # whose methods were refused is forbidden, not empty.
+    for section, methods in INVENTORY_CAPABILITIES.items():
+        if capabilities[section] == "available" and any(
+            m in client.denied for m in methods
+        ):
+            capabilities[section] = "forbidden"
+
     return {
+        "capabilities": capabilities,
         "tenants": _roll_up_tenants(vpcs, lbs),
         "vpcs": vpcs,
-        "networkSegments": _fetch_segments(client),
+        "networkSegments": segments,
         "loadBalancers": lbs,
-        "domains": [
-            {
-                "id": (d.get("id") or {}).get("value", ""),
-                "zone": d.get("zone"),
-                "kind": d.get("kind"),
-                "serial": d.get("serial"),
-            }
-            for d in client.try_call("GetAllDomains").get("result", [])
-        ],
-        "dpfServiceVersions": client.try_call("GetDPFServiceVersions").get("services", []),
-        # NICo's fleet tables. Empty in a DPF Zero-Touch lab, and worth saying
-        # so explicitly — an empty /admin/machine page otherwise reads as a bug.
-        "fleet": {
-            "machines": len(_ids(client.try_call("FindMachineIds"), "machineIds")),
-            "switches": len(_ids(client.try_call("FindSwitchIds"), "switchIds")),
-            "racks": len(_ids(client.try_call("FindRackIds"), "rackIds")),
-            "instances": len(_ids(client.try_call("FindInstanceIds"), "instanceIds")),
-        },
+        "domains": domains,
+        "dpfServiceVersions": dpf_versions,
+        "fleet": fleet,
     }
 
 

@@ -22,16 +22,27 @@ from services.nico.fetch import (
 
 
 class FakeForge:
-    """Replays canned Forge responses, keyed by method name."""
+    """Replays canned Forge responses, keyed by method name.
 
-    def __init__(self, responses):
+    `absent` names RPCs this build does not declare — the vanilla case, where
+    the whole LoadBalancerService family is missing. `denied` names RPCs the
+    client certificate was refused. Both default to empty, so a test that does
+    not care sees a build that declares everything and refuses nothing.
+    """
+
+    def __init__(self, responses, absent=(), denied=()):
         self.responses = responses
         self.calls = []
+        self.absent = set(absent)
+        self.denied = set(denied)
 
     def try_call(self, method, body=None):
         self.calls.append((method, body))
         value = self.responses.get(method, {})
         return value(body) if callable(value) else value
+
+    def has_method(self, method):
+        return method not in self.absent
 
 
 # ---------------------------------------------------------------------------
@@ -617,3 +628,64 @@ class TestDependencies:
         assert names == ["postgres", "vault", "temporal"]
         temporal = next(d for d in _dependencies(core) if d["name"] == "temporal")
         assert temporal["pods"][0]["labels"] == {"app.kubernetes.io/component": "frontend"}
+
+
+class TestCapabilities:
+    """Absent, forbidden and empty are three different answers."""
+
+    def _inventory(self, **kwargs):
+        return _fetch_inventory(FakeForge({}, **kwargs))
+
+    def test_a_build_without_the_lb_api_says_so_rather_than_reporting_zero(self):
+        """Vanilla NICo has no LoadBalancerService RPCs at all — the family is
+        an F5 extension. "0 load balancers" states something about the
+        deployment that was never established."""
+        inv = self._inventory(absent=("SearchLoadBalancerServices",
+                                      "GetLoadBalancerServices"))
+        assert inv["capabilities"]["loadBalancers"] == "absent"
+        assert inv["loadBalancers"] == []
+
+    def test_an_absent_lb_api_is_not_even_asked(self):
+        """Asking a build that does not declare the method is a guaranteed
+        miss, and over a tunnel it is a guaranteed slow one."""
+        forge = FakeForge({}, absent=("SearchLoadBalancerServices",
+                                      "GetLoadBalancerServices"))
+        _fetch_inventory(forge)
+        assert "SearchLoadBalancerServices" not in [m for m, _ in forge.calls]
+
+    def test_a_refused_method_is_forbidden_not_empty(self):
+        """Forge authorizes per method against the client cert, so GetAllDomains
+        can be refused on a session that reads VPCs happily. The zones may well
+        exist — we were not allowed to look."""
+        inv = self._inventory(denied=("GetAllDomains",))
+        assert inv["capabilities"]["domains"] == "forbidden"
+        assert inv["domains"] == []
+
+    def test_a_refusal_is_caught_however_late_the_call_is_made(self):
+        """`forbidden` is only learnable by being refused, so the capability map
+        cannot be settled before the calls that populate it — an earlier
+        version reported every late-called section as available because nothing
+        had asked it yet."""
+        # These are issued last in the session, after the map is first built.
+        inv = self._inventory(denied=("FindMachineIds", "GetDPFServiceVersions"))
+        assert inv["capabilities"]["fleet"] == "forbidden"
+        assert inv["capabilities"]["dpfServiceVersions"] == "forbidden"
+
+    def test_a_section_that_answered_is_available_and_its_zero_is_real(self):
+        inv = self._inventory()
+        assert inv["capabilities"]["domains"] == "available"
+        assert inv["capabilities"]["loadBalancers"] == "available"
+
+    def test_absent_outranks_forbidden(self):
+        """A method the build does not declare cannot have refused us."""
+        inv = self._inventory(absent=("GetAllDomains",), denied=("GetAllDomains",))
+        assert inv["capabilities"]["domains"] == "absent"
+
+    def test_the_counts_carry_the_capabilities_to_the_ui(self):
+        """The UI needs to know which zeros it is allowed to state."""
+        from services.nico.health import inventory_counts
+
+        counts = inventory_counts(self._inventory(absent=("SearchLoadBalancerServices",
+                                                          "GetLoadBalancerServices")))
+        assert counts["capabilities"]["loadBalancers"] == "absent"
+        assert counts["loadBalancers"]["total"] == 0

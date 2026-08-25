@@ -103,6 +103,10 @@ class ForgeClient:
         # Set once if reflection fails, and re-raised thereafter. See the
         # module docstring on why this is not retried per call.
         self._schema_error: ForgeError | None = None
+        # Methods this session's certificate was refused. Recorded because a
+        # refusal and an empty result are different answers, and `try_call`
+        # returns the same `{}` for both.
+        self.denied: set[str] = set()
 
     def __enter__(self) -> ForgeClient:
         return self
@@ -264,12 +268,53 @@ class ForgeClient:
         DPF, so NICo's machine/switch/rack tables are legitimately empty and some
         of their RPCs are not wired up at all. One of those must not blank the
         whole tab.
+
+        The empty dict it returns is therefore ambiguous by design, which is why
+        a refusal is *also* recorded in [`denied`]: a caller that needs to tell
+        "nothing there" from "not allowed to look" has [`has_method`] and
+        [`denied`] to ask.
         """
         try:
             return self.call(method, body)
         except Exception as exc:  # noqa: BLE001 — best-effort by definition
+            if _is_denied(exc):
+                self.denied.add(method)
             logger.debug("Forge %s failed: %s", method, exc)
             return {}
+
+    def has_method(self, method: str) -> bool:
+        """Does this NICo build declare `method` at all?
+
+        Free once the schema is loaded, and answerable without calling: an RPC
+        absent from the descriptors is absent from the build. Vanilla NICo has
+        no LoadBalancerService methods whatsoever — that is a fact about the
+        build, and reporting it as "zero load balancers" claims something about
+        the deployment that was never established.
+        """
+        self._ensure_schema()
+        try:
+            self._service.FindMethodByName(method)
+            return True
+        except KeyError:
+            return False
+
+
+def _is_denied(exc: Exception) -> bool:
+    """Was this refused rather than merely failed?
+
+    Forge authorizes per method against the client certificate, so a cert that
+    reads VPCs happily can still be refused `GetAllDomains`. Two shapes: a
+    proper PERMISSION_DENIED status, and a bare HTTP 403 on the stream, which
+    grpc surfaces without a status code.
+    """
+    code = getattr(exc, "code", None)
+    if callable(code):
+        try:
+            if getattr(code(), "name", "") == "PERMISSION_DENIED":
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    return "403" in _grpc_reason(exc)
 
 
 def _grpc_reason(exc: Exception) -> str:

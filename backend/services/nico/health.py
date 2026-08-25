@@ -97,9 +97,14 @@ def inventory_counts(inventory: dict[str, Any]) -> dict[str, Any]:
 
     Split out so the inventory request can return them on its own and the UI
     can merge them into the header the deployment request already painted.
+
+    Carries ``capabilities`` alongside the counts, because on a build that has
+    no load balancer API "0 load balancers" is not a measurement — the UI needs
+    to know which zeros it is allowed to state.
     """
     lbs = inventory.get("loadBalancers") or []
     return {
+        "capabilities": inventory.get("capabilities") or {},
         "tenants": {"total": len(inventory.get("tenants") or [])},
         "vpcs": {"total": len(inventory.get("vpcs") or [])},
         "loadBalancers": {

@@ -230,6 +230,7 @@ export interface NicoFleetCounts {
 }
 
 export interface NicoInventory {
+  capabilities?: NicoCapabilities;
   tenants?: NicoTenant[];
   vpcs?: NicoVpc[];
   networkSegments?: NicoNetworkSegment[];
@@ -242,6 +243,20 @@ export interface NicoInventory {
 // ── Health ────────────────────────────────────────────────────────────────
 
 export type NicoStatus = 'healthy' | 'degraded' | 'unreachable' | 'not_installed';
+
+/**
+ * Whether an inventory section can be answered at all.
+ *   absent    — this NICo build does not declare the RPCs (vanilla has no
+ *               load balancer API; that family is an F5 extension)
+ *   forbidden — declared, but this client certificate was refused
+ *   available — we got to ask, so a zero here is a real zero
+ */
+export type NicoCapability = 'available' | 'absent' | 'forbidden';
+
+export type NicoCapabilities = Partial<Record<
+  'loadBalancers' | 'domains' | 'vpcs' | 'networkSegments' | 'dpfServiceVersions' | 'fleet',
+  NicoCapability
+>>;
 
 export interface NicoHealthResponse {
   status: NicoStatus;
@@ -261,6 +276,8 @@ export interface NicoHealthResponse {
   };
   networkSegments: { total: number };
   certExpiring: boolean;
+  /** Which zeros above are measurements and which are "never asked". */
+  capabilities?: NicoCapabilities;
   dpus: { total: number; ready: number };
   errors: string[];
   /**
