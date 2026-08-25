@@ -467,3 +467,119 @@ class TestProbeErrorMessages:
 
         message = _readable_probe_error(RuntimeError("boom\nstack\nframes\n"))
         assert message == "boom"
+
+
+class TestFootprintBackfill:
+    """`meta_data.has_dpf` for clusters the sweep can never reach.
+
+    A cluster added by hand carries a context that is by definition not in the
+    operator's own kubeconfig, so `_existing()` never matches it and the sweep
+    walks straight past. Before the backfill it kept `has_dpf` unset forever
+    and its DPF tab never appeared, however many times discovery ran.
+    """
+
+    _CLASSIFY = "services.cluster_discovery_service.classify_cluster_components"
+    _LOAD = "services.kubernetes_service.KubernetesService.load_kubeconfig"
+
+    def _hand_added(self, db, name="infra", meta=None):
+        from core.encryption import encrypt_value
+
+        cluster = KubernetesCluster(
+            name=name,
+            context="kubernetes-admin@kubernetes",
+            api_server="https://192.168.68.66:6443",
+            kubeconfig_encrypted=encrypt_value("apiVersion: v1\nkind: Config\n"),
+            meta_data=meta,
+            status="active",
+        )
+        db.add(cluster)
+        db.commit()
+        return cluster
+
+    def _found(self, components):
+        return {
+            "components": components,
+            "namespaces": ["dpf-operator-system"],
+            "has_bnk": bool(set(components) - {"dpf-operator"}),
+            "has_dpf": "dpf-operator" in components,
+        }
+
+    def test_a_hand_added_infra_cluster_gets_its_dpf_flag(self, db):
+        """The reported bug: 3 clusters, DPF operator on `infra`, no DPF tab."""
+        cluster = self._hand_added(db)
+
+        with patch(_CONTEXTS, return_value=[]), \
+             patch(self._LOAD), \
+             patch(self._CLASSIFY, return_value=self._found(["dpf-operator"])):
+            ClusterDiscoveryService(db).run()
+
+        db.refresh(cluster)
+        assert cluster.meta_data["has_dpf"] is True
+        assert cluster.meta_data["bnk_components"] == ["dpf-operator"]
+        assert cluster.last_synced_at is not None
+
+    def test_a_cluster_without_dpf_records_a_real_negative(self, db):
+        cluster = self._hand_added(db, name="tenant")
+
+        with patch(_CONTEXTS, return_value=[]), \
+             patch(self._LOAD), \
+             patch(self._CLASSIFY, return_value=self._found(["f5-tmm"])):
+            ClusterDiscoveryService(db).run()
+
+        db.refresh(cluster)
+        assert cluster.meta_data["has_dpf"] is False
+
+    def test_a_recorded_answer_is_not_probed_again(self, db):
+        """Keyed on the key's absence, not its truth — otherwise every sweep
+        re-probes every non-DPF cluster forever."""
+        self._hand_added(db, name="tenant")
+
+        with patch(_CONTEXTS, return_value=[]), \
+             patch(self._LOAD), \
+             patch(self._CLASSIFY, return_value=self._found(["f5-tmm"])) as classify:
+            svc = ClusterDiscoveryService(db)
+            svc.run()
+            svc.run()
+
+        assert classify.call_count == 1
+
+    def test_an_unreachable_cluster_leaves_has_dpf_unset(self, db):
+        """Not a confident False: a later sweep must be able to tell "never
+        answered" from "answered no"."""
+        cluster = self._hand_added(db)
+
+        with patch(_CONTEXTS, return_value=[]), \
+             patch(self._LOAD, side_effect=TimeoutError("connection timed out")):
+            ClusterDiscoveryService(db).run()
+
+        db.refresh(cluster)
+        assert "has_dpf" not in cluster.meta_data
+        assert "VPN" in cluster.meta_data["probe_error"]
+
+    def test_an_unreachable_cluster_is_retried_next_sweep(self, db):
+        cluster = self._hand_added(db)
+
+        with patch(_CONTEXTS, return_value=[]), \
+             patch(self._LOAD, side_effect=TimeoutError("connection timed out")):
+            ClusterDiscoveryService(db).run()
+        with patch(_CONTEXTS, return_value=[]), \
+             patch(self._LOAD), \
+             patch(self._CLASSIFY, return_value=self._found(["dpf-operator"])):
+            ClusterDiscoveryService(db).run()
+
+        db.refresh(cluster)
+        assert cluster.meta_data["has_dpf"] is True
+        assert "probe_error" not in cluster.meta_data
+
+    def test_a_discovered_cluster_is_left_alone(self, db):
+        """The sweep already answered for it; the backfill must not re-probe."""
+        with patch(_CONTEXTS, return_value=[_context("bnk-lab")]), \
+             patch(_PROBE, return_value=_probe_result(has_bnk=True)):
+            ClusterDiscoveryService(db).run()
+
+        with patch(_CONTEXTS, return_value=[]), \
+             patch(self._LOAD), \
+             patch(self._CLASSIFY) as classify:
+            ClusterDiscoveryService(db).run()
+
+        classify.assert_not_called()

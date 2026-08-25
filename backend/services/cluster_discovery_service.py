@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -65,6 +66,101 @@ DPF_COMPONENTS: frozenset[str] = frozenset({"dpf-operator"})
 # context in the file, including ones behind a VPN that is currently down, so
 # an unreachable context must fail fast rather than hold the sweep.
 _PROBE_TIMEOUT = (3, 8)
+
+
+def _find_bnk_pods(core_api: Any) -> list[tuple[str, str]]:
+    """(app, namespace) for every BNK pod on the cluster.
+
+    ``limit`` is deliberately generous rather than 1: knowing *which*
+    components are present is what lets the UI say "TMM and FLO found"
+    instead of a bare yes, and it costs one page of a filtered list.
+    """
+    found: list[tuple[str, str]] = []
+    for selector in BNK_POD_SELECTORS:
+        try:
+            pods = core_api.list_pod_for_all_namespaces(
+                label_selector=selector,
+                limit=50,
+                _request_timeout=_PROBE_TIMEOUT,
+            )
+        except Exception as exc:  # noqa: BLE001 — a denied list must not fail the probe
+            logger.debug("BNK pod probe with selector %r failed: %s", selector, exc)
+            continue
+        for pod in pods.items:
+            labels = pod.metadata.labels or {}
+            app = labels.get("app") or labels.get("app.kubernetes.io/name") or "unknown"
+            found.append((app, pod.metadata.namespace))
+    return found
+
+
+def classify_cluster_components(api_client: Any) -> dict[str, Any]:
+    """Which BNK / DPF components are running, from pod labels.
+
+    The single definition of ``has_dpf``, the flag that gates the DPF tab.
+    Shared by the discovery sweep and the manual "Add cluster" path so a
+    hand-registered infra cluster gets the same answer a discovered one does.
+
+    Deliberately pod-based rather than API-group based. A DPF *tenant* cluster
+    carries `svc.dpu.nvidia.com` without running the operator, so the group
+    check in ``services/scanner/fetch.py`` — right for gating CRD fetches —
+    would light the DPF tab on a cluster that has no DPUs to show. Only the
+    operator's own pod means "this is the infrastructure cluster".
+
+    Raises whatever the API client raises; callers decide whether a failed
+    probe is fatal.
+    """
+    from kubernetes import client as k8s_client
+
+    found = _find_bnk_pods(k8s_client.CoreV1Api(api_client))
+    components = sorted({app for app, _ns in found})
+    return {
+        "components": components,
+        "namespaces": sorted({ns for _app, ns in found}),
+        "has_bnk": bool(set(components) - DPF_COMPONENTS),
+        "has_dpf": bool(set(components) & DPF_COMPONENTS),
+    }
+
+
+def refresh_cluster_footprint(db: Session, cluster: KubernetesCluster) -> bool:
+    """Probe an already-registered cluster and record what runs on it.
+
+    The manual "Add cluster" path used to skip this, so ``meta_data.has_dpf``
+    stayed NULL and the DPF tab never appeared on an infra cluster added by
+    hand. The discovery sweep could not repair it after the fact either — it
+    matches on context name, and a hand-added cluster's context is by
+    definition not in the operator's own kubeconfig.
+
+    Never raises. Registering a cluster whose API server is unreachable is a
+    supported workflow (watching an install come up, VPN down), so a failed
+    probe records why and leaves ``has_dpf`` *unset* rather than writing a
+    confident ``False`` that a later probe could not tell from a real negative.
+
+    Returns whether the probe succeeded. Does not commit.
+    """
+    from services.kubernetes_service import KubernetesService
+
+    meta = dict(cluster.meta_data or {})
+    try:
+        api_client = KubernetesService(db).load_kubeconfig(cluster)
+        probe = classify_cluster_components(api_client)
+    except Exception as exc:  # noqa: BLE001 — an unreachable cluster still registers
+        logger.info(
+            "Footprint probe of cluster '%s' failed; has_dpf left unset: %s",
+            cluster.name, exc,
+        )
+        meta["probe_error"] = _readable_probe_error(exc)
+        cluster.meta_data = meta
+        return False
+
+    meta.pop("probe_error", None)
+    meta["has_dpf"] = probe["has_dpf"]
+    if probe["components"]:
+        meta["bnk_components"] = probe["components"]
+    cluster.meta_data = meta
+    if probe["namespaces"]:
+        cluster.discovered_namespaces = probe["namespaces"]
+    cluster.last_synced_at = datetime.now(UTC)
+    return True
 
 
 @dataclass
@@ -123,9 +219,12 @@ class ClusterDiscoveryService:
         It backs the "add anyway" path for a cluster where BNK is not installed
         yet — the case where someone is watching an install happen.
         """
+        self.backfill_footprints()
+
         candidates = discover_contexts()
         if not candidates:
             logger.info("No kubeconfig contexts found — nothing to discover")
+            self.db.commit()
             return {"candidates": [], "registered": 0, "found": 0}
 
         reports = [self._process(c, adopt_all=adopt_all) for c in candidates]
@@ -145,6 +244,32 @@ class ClusterDiscoveryService:
             "registered": registered,
             "found": len(reports),
         }
+
+    def backfill_footprints(self) -> int:
+        """Probe registered clusters that have never had a footprint recorded.
+
+        The sweep below can only ever reach clusters whose context is in the
+        operator's kubeconfig. A hand-added cluster is by definition not, so
+        one registered before the manual path probed — or while its API server
+        was unreachable — would stay ``has_dpf``-less forever, and its DPF tab
+        would never come back, however many times discovery ran.
+
+        Keyed on the *absence* of the key rather than a falsy value, so a
+        cluster genuinely without DPF is not re-probed on every sweep.
+        """
+        stale = [
+            c for c in self.db.query(KubernetesCluster).all()
+            if "has_dpf" not in (c.meta_data or {})
+        ]
+        if not stale:
+            return 0
+
+        probed = sum(1 for c in stale if refresh_cluster_footprint(self.db, c))
+        logger.info(
+            "Discovery: backfilled footprint for %d of %d cluster(s) with none recorded",
+            probed, len(stale),
+        )
+        return probed
 
     def adopt(self, context_name: str) -> dict[str, Any]:
         """Register one named context regardless of whether BNK is on it.
@@ -261,42 +386,12 @@ class ClusterDiscoveryService:
             result["version"] = f"{version.major}.{version.minor}"
             result["reachable"] = True
 
-            found = self._find_bnk_pods(k8s_client.CoreV1Api(api_client))
-            components = sorted({app for app, _ns in found})
-            result["components"] = components
-            result["namespaces"] = sorted({ns for _app, ns in found})
-            result["has_bnk"] = bool(set(components) - DPF_COMPONENTS)
-            result["has_dpf"] = bool(set(components) & DPF_COMPONENTS)
+            result.update(classify_cluster_components(api_client))
         except Exception as exc:  # noqa: BLE001 — one bad context must not stop the sweep
             result["detail"] = _readable_probe_error(exc)
             logger.debug("Probe of context '%s' failed: %s", candidate.name, exc)
 
         return result
-
-    @staticmethod
-    def _find_bnk_pods(core_api: Any) -> list[tuple[str, str]]:
-        """(app, namespace) for every BNK pod on the cluster.
-
-        ``limit`` is deliberately generous rather than 1: knowing *which*
-        components are present is what lets the UI say "TMM and FLO found"
-        instead of a bare yes, and it costs one page of a filtered list.
-        """
-        found: list[tuple[str, str]] = []
-        for selector in BNK_POD_SELECTORS:
-            try:
-                pods = core_api.list_pod_for_all_namespaces(
-                    label_selector=selector,
-                    limit=50,
-                    _request_timeout=_PROBE_TIMEOUT,
-                )
-            except Exception as exc:  # noqa: BLE001 — a denied list must not fail the probe
-                logger.debug("BNK pod probe with selector %r failed: %s", selector, exc)
-                continue
-            for pod in pods.items:
-                labels = pod.metadata.labels or {}
-                app = labels.get("app") or labels.get("app.kubernetes.io/name") or "unknown"
-                found.append((app, pod.metadata.namespace))
-        return found
 
     # ------------------------------------------------------------------
     # Persistence
@@ -331,8 +426,6 @@ class ClusterDiscoveryService:
         self, cluster: KubernetesCluster, candidate: DiscoveredContext, probe: dict
     ) -> None:
         """Write the discovered state onto a cluster row."""
-        from datetime import UTC, datetime
-
         cluster.context = candidate.name
         cluster.api_server = candidate.api_server
         cluster.kubeconfig_encrypted = encrypt_value(candidate.kubeconfig)
