@@ -70,6 +70,35 @@ PROVIDER_ENV_KEYS = (
     "TENANT_SECRET_NAMESPACE",
 )
 
+# The rest of a NICo site beyond nico-api itself: DHCP, DNS, NTP, PXE, the BMC
+# proxy, hardware health, the SSH console, and the northbound REST layer. None
+# of it is reachable through Forge, and on a vanilla install it is most of what
+# is actually running — a tab that showed only nico-api showed one pod out of
+# thirty-odd.
+#
+# No single selector finds it, which is why there are three:
+#
+#   * `part-of=site-controller` is NVIDIA's own label and the right primary
+#     signal — namespace-agnostic, and it catches the `flow` orchestrator in
+#     its own namespace as well as everything in nico-system.
+#   * `nico-unbound` carries no part-of label at all (just
+#     `app.kubernetes.io/name=unbound`), so it is only found by sweeping
+#     nico-api's own namespace.
+#   * the `nico-rest` stack — REST API, keycloak, cert-manager, site
+#     agent/manager, cloud and site workers — carries no part-of label either
+#     and lives in its own namespace.
+ESTATE_LABEL = "app.kubernetes.io/part-of=site-controller"
+ESTATE_NAMESPACES = ("nico-rest",)
+
+# Labels that name a component, best first. `component` is the specific one
+# ("dhcp", "bmc-proxy"); `name` is the chart ("nico-rest-api"); `app` is the
+# fallback for keycloak, which carries nothing else.
+COMPONENT_NAME_LABELS = (
+    "app.kubernetes.io/component",
+    "app.kubernetes.io/name",
+    "app",
+)
+
 # The stores a NICo site runs on, found by label in their own namespaces. None
 # is part of NICo itself, and one of them being down is the usual reason a
 # healthy-looking nico-api answers nothing.

@@ -12,6 +12,7 @@ from unittest.mock import patch
 from services.nico.constants import PROVIDER_LOG_WINDOW_SEC
 from services.nico.fetch import (
     _dependencies,
+    _estate,
     _fetch_inventory,
     _fetch_load_balancers,
     _lifecycle_state,
@@ -689,3 +690,140 @@ class TestCapabilities:
                                                           "GetLoadBalancerServices")))
         assert counts["capabilities"]["loadBalancers"] == "absent"
         assert counts["loadBalancers"]["total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# The NICo estate beyond nico-api
+# ---------------------------------------------------------------------------
+
+class _EstateCore:
+    """Serves the label sweep and the two namespace sweeps separately."""
+
+    def __init__(self, by_label=(), by_namespace=None):
+        self.by_label = list(by_label)
+        self.by_namespace = by_namespace or {}
+        self.namespaces_listed = []
+
+    def list_pod_for_all_namespaces(self, label_selector=None, **_kwargs):
+        return SimpleNamespace(items=list(self.by_label))
+
+    def list_namespaced_pod(self, namespace=None, **_kwargs):
+        self.namespaces_listed.append(namespace)
+        return SimpleNamespace(items=list(self.by_namespace.get(namespace, [])))
+
+
+def _estate_pod(name, namespace, labels):
+    return _dep_pod(name, namespace, labels)
+
+
+class TestEstate:
+    def test_the_labelled_site_controller_components_are_grouped(self):
+        """`part-of=site-controller` is NVIDIA's own label and finds most of
+        the estate wherever it is installed."""
+        core = _EstateCore(by_label=[
+            _estate_pod("nico-dhcp-abc-1", "nico-system",
+                        {"app.kubernetes.io/component": "dhcp"}),
+            _estate_pod("nico-ntp-0", "nico-system",
+                        {"app.kubernetes.io/component": "ntp"}),
+            _estate_pod("nico-ntp-1", "nico-system",
+                        {"app.kubernetes.io/component": "ntp"}),
+        ])
+        estate = _estate(core, "nico-system", set())
+        by_name = {c["name"]: c for c in estate}
+        assert by_name["ntp"]["total"] == 2
+        assert by_name["ntp"]["ready"] == 2
+        assert by_name["dhcp"]["total"] == 1
+
+    def test_a_component_without_the_part_of_label_is_still_found(self):
+        """nico-unbound carries `name=unbound` and no part-of label at all, so
+        only the sweep of nico-api's own namespace finds it."""
+        core = _EstateCore(
+            by_label=[],
+            by_namespace={"nico-system": [
+                _estate_pod("nico-unbound-abc-1", "nico-system",
+                            {"app.kubernetes.io/name": "unbound"}),
+            ]},
+        )
+        estate = _estate(core, "nico-system", set())
+        assert [c["name"] for c in estate] == ["unbound"]
+
+    def test_the_nico_rest_stack_is_swept_by_namespace(self):
+        """It carries no part-of label either, and lives in its own namespace."""
+        core = _EstateCore(
+            by_namespace={"nico-rest": [
+                _estate_pod("nico-rest-api-abc-1", "nico-rest",
+                            {"app.kubernetes.io/name": "nico-rest-api"}),
+                _estate_pod("keycloak-abc-1", "nico-rest", {"app": "keycloak"}),
+            ]},
+        )
+        estate = _estate(core, "nico-system", set())
+        assert {c["name"] for c in estate} == {"nico-rest-api", "keycloak"}
+        assert core.namespaces_listed.count("nico-rest") == 1
+
+    def test_keycloak_falls_back_to_its_only_label(self):
+        """It carries `app` and nothing else."""
+        core = _EstateCore(by_namespace={"nico-rest": [
+            _estate_pod("keycloak-abc-1", "nico-rest", {"app": "keycloak"}),
+        ]})
+        assert _estate(core, "nico-system", set())[0]["name"] == "keycloak"
+
+    def test_a_pod_found_by_both_sweeps_is_counted_once(self):
+        """The label sweep and the namespace sweep overlap in nico-system."""
+        pod = _estate_pod("nico-dhcp-abc-1", "nico-system",
+                          {"app.kubernetes.io/component": "dhcp"})
+        core = _EstateCore(by_label=[pod], by_namespace={"nico-system": [pod]})
+        estate = _estate(core, "nico-system", set())
+        assert len(estate) == 1
+        assert estate[0]["total"] == 1
+
+    def test_nico_api_is_excluded_because_it_is_the_control_plane(self):
+        """It is reported in its own right; counting it here would double it
+        in the health rollup."""
+        core = _EstateCore(by_label=[
+            _estate_pod("nico-api-abc-1", "nico-system",
+                        {"app.kubernetes.io/component": "api"}),
+            _estate_pod("nico-dhcp-abc-1", "nico-system",
+                        {"app.kubernetes.io/component": "dhcp"}),
+        ])
+        estate = _estate(core, "nico-system", {"nico-api-abc-1"})
+        assert [c["name"] for c in estate] == ["dhcp"]
+
+    def test_an_unready_component_is_counted_as_such(self):
+        core = _EstateCore(by_label=[
+            _estate_pod("nico-dns-0", "nico-system",
+                        {"app.kubernetes.io/component": "dns"}),
+            _dep_pod("nico-dns-1", "nico-system",
+                     {"app.kubernetes.io/component": "dns"}, ready=False),
+        ])
+        [dns] = _estate(core, "nico-system", set())
+        assert dns["total"] == 2
+        assert dns["ready"] == 1
+
+
+class TestEstateHealth:
+    def _health(self, estate):
+        from services.nico.health import analyze_nico_health
+
+        return analyze_nico_health({
+            "detected": True,
+            "endpoint": {"reachable": True},
+            "controlPlane": {
+                "pods": [{"phase": "Running", "ready": 1, "containers": 1}],
+                "mtls": {"daysLeft": 300},
+            },
+            "providers": [], "dependencies": [], "estate": estate,
+            "inventory": {"tenants": [], "vpcs": [], "loadBalancers": [],
+                          "networkSegments": []},
+        })
+
+    def test_a_down_component_degrades_the_site(self):
+        """A NICo whose DHCP is down is degraded, and that was invisible."""
+        h = self._health([{"name": "dhcp", "total": 1, "ready": 0}])
+        assert h["status"] == "degraded"
+        assert h["estate"] == {"total": 1, "ready": 0, "components": 1}
+
+    def test_a_whole_estate_up_is_healthy(self):
+        h = self._health([{"name": "dhcp", "total": 1, "ready": 1},
+                          {"name": "ntp", "total": 3, "ready": 3}])
+        assert h["status"] == "healthy"
+        assert h["estate"]["total"] == 4

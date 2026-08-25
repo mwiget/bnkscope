@@ -83,6 +83,20 @@ export interface NicoEndpoint {
   tunnel: { pod: string; port: number } | null;
 }
 
+/**
+ * One component of the NICo site beyond nico-api — dhcp, dns, ntp, pxe,
+ * bmc-proxy, hardware-health, ssh-console, the flow orchestrator, and the
+ * nico-rest stack. None of it is reachable through Forge.
+ */
+export interface NicoEstateComponent {
+  /** From `app.kubernetes.io/component`, else `name`, else `app`. */
+  name: string;
+  namespace: string;
+  pods: NicoPod[];
+  total: number;
+  ready: number;
+}
+
 export interface NicoProvider {
   name: string;
   pod: NicoPod;
@@ -265,6 +279,8 @@ export interface NicoHealthResponse {
   api: { total: number; ready: number };
   providers: { total: number; ready: number; withErrors: number };
   dependencies: { total: number; ready: number };
+  /** The site beyond nico-api: pods, ready pods, and distinct components. */
+  estate: { total: number; ready: number; components: number };
   tenants: { total: number };
   vpcs: { total: number };
   loadBalancers: {
@@ -306,6 +322,7 @@ export interface NicoDataResponse {
   endpoint: NicoEndpoint;
   providers: NicoProvider[];
   dependencies: NicoDependency[];
+  estate: NicoEstateComponent[];
   dpf: { total: number; ready: number };
   inventory: NicoInventory;
   /** Sections that could not be read, and why. Never fatal. */

@@ -33,6 +33,7 @@ import { CollectingState } from '@/components/ui/collecting-state';
 import type {
   NicoCapability,
   NicoDataResponse,
+  NicoEstateComponent,
   NicoHealthResponse,
   NicoInventoryCountKey,
   NicoLoadBalancer,
@@ -317,6 +318,12 @@ function OverviewTab({ data }: { data: NicoDataResponse }) {
                   label="LB services"
                   value="—"
                   detail="no load balancer API on this build"
+                />
+                <StatCard
+                  icon={Server}
+                  label="Site components"
+                  value={health.estate.components}
+                  detail={`${health.estate.ready}/${health.estate.total} pods ready`}
                 />
               </>
             )}
@@ -841,8 +848,71 @@ function NetworkTab({ data }: { data: NicoDataResponse }) {
 
 // ── Deployment ────────────────────────────────────────────────────────────
 
+/** The site beyond nico-api, grouped by component and namespace. */
+function EstateSection({ estate }: { estate: NicoEstateComponent[] }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  if (estate.length === 0) return null;
+
+  // Namespaces in the order the backend sorted them, so a stack stays together.
+  const namespaces = [...new Set(estate.map((c) => c.namespace))];
+  const down = estate.filter((c) => c.ready < c.total).length;
+
+  return (
+    <Section
+      title="Site components"
+      subtitle={
+        `The rest of the NICo site — none of it reachable through Forge` +
+        (down > 0 ? ` · ${down} not fully ready` : '')
+      }
+    >
+      <div className="space-y-3">
+        {namespaces.map((ns) => (
+          <div key={ns}>
+            <p className="mb-1 font-mono text-[10px] text-muted-foreground">{ns}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {estate
+                .filter((c) => c.namespace === ns)
+                .map((c) => {
+                  const key = `${c.namespace}/${c.name}`;
+                  const ok = c.ready === c.total;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => setExpanded(expanded === key ? null : key)}
+                      className={cn(
+                        'rounded border px-2 py-1 text-xs transition-colors',
+                        expanded === key && 'ring-1 ring-ring',
+                        ok
+                          ? 'border-border bg-card text-foreground/80 hover:bg-muted/50'
+                          : 'border-warning/40 bg-warning/10 text-warning',
+                      )}
+                    >
+                      {c.name}{' '}
+                      <span className="font-mono text-[10px]">
+                        {c.ready}/{c.total}
+                      </span>
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
+        ))}
+        {/* Pods only for the component you asked about — thirty-odd pod rows
+            at once is a wall, not a view. */}
+        {expanded && (
+          <div className="space-y-1.5 border-t border-border pt-3">
+            {estate
+              .find((c) => `${c.namespace}/${c.name}` === expanded)
+              ?.pods.map((pod) => <PodRow key={pod.name} pod={pod} />)}
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 function DeploymentTab({ data }: { data: NicoDataResponse }) {
-  const { controlPlane, providers, inventory } = data;
+  const { controlPlane, providers, inventory, estate } = data;
   const versions = inventory.dpfServiceVersions ?? [];
 
   return (
@@ -856,6 +926,8 @@ function DeploymentTab({ data }: { data: NicoDataResponse }) {
           )}
         </div>
       </Section>
+
+      <EstateSection estate={estate} />
 
       <Section
         title="LB providers"
@@ -1034,7 +1106,8 @@ export function NICoPanel({ clusterId }: NICoPanelProps) {
           network:
             (data.inventory.vpcs?.length ?? 0) + (data.inventory.networkSegments?.length ?? 0),
         }),
-    deployment: data.controlPlane.pods.length + data.providers.length,
+    deployment:
+      data.controlPlane.pods.length + data.providers.length + data.estate.length,
   };
 
   return (

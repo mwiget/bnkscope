@@ -28,9 +28,12 @@ from urllib.parse import urlparse
 from core.cache import cache
 from services.nico.constants import (
     ADMIN_CERT_SECRET,
+    COMPONENT_NAME_LABELS,
     DEFAULT_NAMESPACE,
     DEPENDENCIES,
     ENDPOINT_PREFERENCE,
+    ESTATE_LABEL,
+    ESTATE_NAMESPACES,
     FORGE_ENDPOINT_KEY,
     FORGE_TIMEOUT,
     INVENTORY_CAPABILITIES,
@@ -918,7 +921,7 @@ def fetch_nico_deployment(k8s_service, cluster_id: int) -> dict[str, Any]:
 
     # The Kubernetes reads are independent of each other and each costs a round
     # trip to a cluster that may be several hops away.
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         endpoint_f = pool.submit(
             _resolved_endpoint,
             core_api,
@@ -932,6 +935,9 @@ def fetch_nico_deployment(k8s_service, cluster_id: int) -> dict[str, Any]:
         env_f = pool.submit(_deployment_env, apps_api, namespace, NICO_SERVICE)
         deps_f = pool.submit(_dependencies, core_api)
         providers_f = pool.submit(_providers, core_api, apps_api, provider_pods)
+        estate_f = pool.submit(
+            _estate, core_api, namespace, {p.metadata.name for p in api_pods}
+        )
 
     # Not in the pool: this one resolves a CRD through the DB session.
     dpus = _dpu_counts(k8s_service, api_client, cluster_id)
@@ -964,6 +970,7 @@ def fetch_nico_deployment(k8s_service, cluster_id: int) -> dict[str, Any]:
         "endpoint": endpoint,
         "providers": providers_f.result(),
         "dependencies": deps_f.result(),
+        "estate": estate_f.result(),
         "dpf": dpus,
         "errors": errors,
     }
@@ -1065,6 +1072,86 @@ def fetch_all_nico_data(k8s_service, cluster_id: int) -> dict[str, Any]:
         "inventory": inventory["inventory"],
         "errors": deployment["errors"] + [e for e in inventory["errors"] if e not in seen],
     }
+
+
+def _pods_in_namespace(core_api, namespace: str) -> list:
+    """Every live pod in one namespace. For the parts that carry no useful label."""
+    try:
+        pods = core_api.list_namespaced_pod(
+            namespace=namespace, limit=200, _request_timeout=_K8S_TIMEOUT
+        )
+    except Exception as exc:  # noqa: BLE001 — a denied or absent namespace
+        logger.debug("pod list in %s failed: %s", namespace, exc)
+        return []
+    return [p for p in pods.items if p.status.phase not in ("Succeeded", "Failed")]
+
+
+def _component_name(pod) -> str:
+    """What to call this pod's component in the UI."""
+    labels = pod.metadata.labels or {}
+    for key in COMPONENT_NAME_LABELS:
+        if labels.get(key):
+            return labels[key]
+    # No useful label: the pod name minus the ReplicaSet and pod suffixes.
+    return "-".join(pod.metadata.name.split("-")[:-2]) or pod.metadata.name
+
+
+def _estate(core_api, api_namespace: str, api_pod_names: set[str]) -> list[dict[str, Any]]:
+    """The NICo site beyond nico-api, grouped by component.
+
+    Three sweeps because no one selector covers the estate — see
+    ``ESTATE_LABEL`` for which parts each finds and why. Results are merged by
+    pod identity, so the overlap between the label and the namespace sweeps
+    costs nothing but a round trip.
+
+    nico-api itself is excluded: it is the control plane, reported in its own
+    right, and counting it here would double it in the health rollup.
+    """
+    with ThreadPoolExecutor(max_workers=2 + len(ESTATE_NAMESPACES)) as pool:
+        labelled = pool.submit(_find_pods, core_api, ESTATE_LABEL)
+        own = pool.submit(_pods_in_namespace, core_api, api_namespace)
+        others = [
+            pool.submit(_pods_in_namespace, core_api, ns) for ns in ESTATE_NAMESPACES
+        ]
+        found = labelled.result() + own.result()
+        for f in others:
+            found += f.result()
+
+    seen: set[tuple[str, str]] = set()
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for pod in found:
+        key = (pod.metadata.namespace, pod.metadata.name)
+        if key in seen or pod.metadata.name in api_pod_names:
+            continue
+        seen.add(key)
+        group_key = (pod.metadata.namespace, _component_name(pod))
+        group = groups.setdefault(
+            group_key,
+            {
+                "name": group_key[1],
+                "namespace": group_key[0],
+                "pods": [],
+            },
+        )
+        group["pods"].append(_pod_summary(pod))
+
+    out = []
+    for group in groups.values():
+        group["total"] = len(group["pods"])
+        group["ready"] = sum(1 for p in group["pods"] if _pod_ready(p))
+        out.append(group)
+    # Namespace, then component — stable, and it keeps a stack together.
+    return sorted(out, key=lambda g: (g["namespace"], g["name"]))
+
+
+def _pod_ready(pod: dict[str, Any]) -> bool:
+    """Running with every container ready. Mirrors health._pod_ok."""
+    containers = pod.get("containers") or 0
+    return (
+        pod.get("phase") == "Running"
+        and containers > 0
+        and pod.get("ready") == containers
+    )
 
 
 def _dependencies(core_api) -> list[dict[str, Any]]:

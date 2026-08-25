@@ -44,6 +44,13 @@ def analyze_nico_health(
     provider_ready = sum(1 for p in providers if _pod_ok(p.get("pod") or {}))
     provider_errors = sum(1 for p in providers if p.get("recentErrors"))
 
+    # The site beyond nico-api: dhcp, dns, ntp, pxe, bmc-proxy, the REST
+    # stack. A NICo whose DHCP is down is degraded, and until now that was
+    # invisible here.
+    estate = data.get("estate") or []
+    estate_total = sum(int(c.get("total") or 0) for c in estate)
+    estate_ready = sum(int(c.get("ready") or 0) for c in estate)
+
     dep_total = sum(len(d.get("pods") or []) for d in dependencies)
     dep_ready = sum(
         1 for d in dependencies for p in (d.get("pods") or []) if _pod_ok(p)
@@ -63,6 +70,7 @@ def analyze_nico_health(
         api_ready < len(api_pods)
         or provider_ready < len(providers)
         or dep_ready < dep_total
+        or estate_ready < estate_total
         or lbs_ready < len(lbs)
         or provider_errors
         or cert_expiring
@@ -82,6 +90,11 @@ def analyze_nico_health(
             "withErrors": provider_errors,
         },
         "dependencies": {"total": dep_total, "ready": dep_ready},
+        "estate": {
+            "total": estate_total,
+            "ready": estate_ready,
+            "components": len(estate),
+        },
         "certExpiring": cert_expiring,
         "dpus": data.get("dpf") or {"total": 0, "ready": 0},
         "errors": data.get("errors") or [],
