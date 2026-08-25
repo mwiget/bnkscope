@@ -73,7 +73,7 @@ class ClusterSummary(BaseModel):
     region: str | None = None
     default_namespace: str = "default"
     enabled_prerequisites: list[str] | None = None
-    # Written by discovery; `has_dpf` gates the DPF tab.
+    # Written by discovery; `has_dpf` and `has_nico` gate the DPF / NICo tabs.
     meta_data: dict[str, Any] | None = None
     bnk_config: BnkClusterConfigSummary | None = None
     node_count: int | None = None
@@ -151,7 +151,10 @@ class DiscoveryCandidate(BaseModel):
     # *different* cluster from the BNK one — the infra cluster that provisions
     # the Kamaji tenant BNK runs on.
     has_dpf: bool = False
-    # Which F5/DPF components were actually found, by label.
+    # NICo's control plane (nico-api) is on this cluster. Same infra cluster as
+    # DPF in the reference deployment, but an independent stack.
+    has_nico: bool = False
+    # Which F5/DPF/NICo components were actually found, by label.
     components: list[str] = Field(default_factory=list)
     version: str | None = None
     detail: str | None = None

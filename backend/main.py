@@ -50,6 +50,7 @@ from routes.k8s import (
     dpf_router,
     f5bnk_router,
     llm_observability_router,
+    nico_router,
     recovery_router,
     resources_router,
     tmm_debug_router,
@@ -265,6 +266,7 @@ app.include_router(resources_router)    # K8s resource CRUD, pod/node ops, metri
 app.include_router(f5bnk_router)        # F5 BNK gateways, topology, health
 app.include_router(llm_observability_router)  # AI-gateway observability — Loki request analytics
 app.include_router(dpf_router)          # NVIDIA DPF — read-only DPU inventory + health
+app.include_router(nico_router)         # NVIDIA NICo — control plane, tenants, LB services
 app.include_router(tmm_debug_router)    # TMM debug sidecar — tmctl, configview, bdt_cli
 app.include_router(recovery_router)     # Post-reboot recovery — CWC cert re-sync, platform restart
 app.include_router(notifications_router)

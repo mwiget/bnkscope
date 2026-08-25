@@ -23,6 +23,7 @@ import type {
   ClusterScanResponse,
   BnkDataResponse,
   DpfDataResponse,
+  NicoDataResponse,
   A2AAgentsResponse,
   HugePagesDeployRequest,
   HugePagesDeployResponse,
@@ -211,4 +212,7 @@ export const kubernetesApi = {
 
   getDpfData: (clusterId: number) =>
     apiClient.get<DpfDataResponse>(`/api/k8s/clusters/${clusterId}/dpf/data`).then((res) => res.data),
+
+  getNicoData: (clusterId: number) =>
+    apiClient.get<NicoDataResponse>(`/api/k8s/clusters/${clusterId}/nico/data`).then((res) => res.data),
 };

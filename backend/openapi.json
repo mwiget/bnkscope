@@ -3739,6 +3739,129 @@
         }
       }
     },
+    "/api/k8s/clusters/{cluster_id}/nico/detect": {
+      "get": {
+        "tags": [
+          "k8s-nico"
+        ],
+        "summary": "Get Nico Detect",
+        "description": "Lightweight NICo detection \u2014 one labelled pod list, no Forge session.\n\nCheap enough to run per cluster: gating the tab must not cost an mTLS\nhandshake against an endpoint that may not be routable.",
+        "operationId": "get_nico_detect_api_k8s_clusters__cluster_id__nico_detect_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/nico/data": {
+      "get": {
+        "tags": [
+          "k8s-nico"
+        ],
+        "summary": "Get Nico Data",
+        "description": "Unified NICo endpoint \u2014 the deployment, the endpoint, and the inventory.\n\nReturns health analysis alongside the full picture. Sections that could not\nbe read report why in ``errors`` rather than failing the request: a NICo\nwhose Forge endpoint is unroutable still has pods, a Service and a\ncertificate worth showing.",
+        "operationId": "get_nico_data_api_k8s_clusters__cluster_id__nico_data_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/k8s/clusters/{cluster_id}/nico/health": {
+      "get": {
+        "tags": [
+          "k8s-nico"
+        ],
+        "summary": "Get Nico Health",
+        "description": "NICo health summary \u2014 control plane, providers, tenants, load balancers.",
+        "operationId": "get_nico_health_api_k8s_clusters__cluster_id__nico_health_get",
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/k8s/clusters/{cluster_id}/tmm-debug/pods": {
       "get": {
         "tags": [
@@ -8425,6 +8548,11 @@
           "has_dpf": {
             "type": "boolean",
             "title": "Has Dpf",
+            "default": false
+          },
+          "has_nico": {
+            "type": "boolean",
+            "title": "Has Nico",
             "default": false
           },
           "components": {

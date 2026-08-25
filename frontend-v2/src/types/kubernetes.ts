@@ -140,11 +140,13 @@ export interface K8sCluster {
   /** Per-cluster prereq selection — null means use defaults; locked entries (multus) are always included on read */
   enabled_prerequisites?: string[] | null;
   /**
-   * Free-form cluster metadata written by discovery. `has_dpf` gates the DPF
-   * tab; `bnk_components` lists what was actually found, by label.
+   * Free-form cluster metadata written by discovery. `has_dpf` and `has_nico`
+   * gate the DPF and NICo tabs; `bnk_components` lists what was actually
+   * found, by label.
    */
   meta_data?: {
     has_dpf?: boolean;
+    has_nico?: boolean;
     bnk_components?: string[];
     discovered?: boolean;
     auth_method?: string;

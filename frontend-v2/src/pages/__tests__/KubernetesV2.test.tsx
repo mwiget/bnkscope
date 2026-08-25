@@ -294,4 +294,43 @@ describe('KubernetesV2', () => {
     expect(screen.queryByRole('tab', { name: /DPF/ })).not.toBeInTheDocument();
   });
 
+  // -------------------------------------------------------------------------
+  // NICo sits next to DPF rather than replacing anything
+  // -------------------------------------------------------------------------
+
+  it('offers NICo alongside DPF on an infra cluster running both', async () => {
+    // The reference deployment puts both on the same infra cluster, but they
+    // are independent stacks — NICo's tenants say nothing about the DPUs
+    // underneath them, so neither tab stands in for the other.
+    const infra = buildCluster(1, 1, 'infra', { has_dpf: true, has_nico: true });
+    mockKubernetesPageApis({
+      projects: [{ id: 1, name: "p" }],
+      allClusters: [infra],
+      clustersByProject: { 1: [infra] },
+    });
+
+    render(<KubernetesV2 />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /DPF/ })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('tab', { name: /NICo/ })).toBeInTheDocument();
+  });
+
+  it('hides NICo on a cluster that does not run it', async () => {
+    const dpfOnly = buildCluster(1, 1, 'infra', { has_dpf: true });
+    mockKubernetesPageApis({
+      projects: [{ id: 1, name: "p" }],
+      allClusters: [dpfOnly],
+      clustersByProject: { 1: [dpfOnly] },
+    });
+
+    render(<KubernetesV2 />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /DPF/ })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('tab', { name: /NICo/ })).not.toBeInTheDocument();
+  });
+
 });

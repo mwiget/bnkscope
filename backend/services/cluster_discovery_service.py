@@ -51,16 +51,23 @@ logger = logging.getLogger(__name__)
 # clusters: the DPF operator on the infra cluster, BNK on the Kamaji tenant it
 # provisions. Registering only the BNK half left the DPF panel unreachable.
 BNK_POD_SELECTORS: tuple[str, ...] = (
-    # TMM (the data plane), FLO (lifecycle), and the ingress controller.
-    "app in (f5-tmm,flo,f5-cne-controller,f5ingress-f5ingress)",
+    # TMM (the data plane), FLO (lifecycle), and the ingress controller — plus
+    # the NICo LB provider, which labels itself the old way.
+    "app in (f5-tmm,flo,f5-cne-controller,f5ingress-f5ingress,nico-lb-provider-tmm)",
     # The same components on charts that use the standard label, plus the DPF
-    # operator itself.
-    "app.kubernetes.io/name in (f5-lifecycle-operator,f5ingress,dpf-operator)",
+    # operator and the NICo API itself.
+    "app.kubernetes.io/name in (f5-lifecycle-operator,f5ingress,dpf-operator,nico-api)",
 )
 
 # Which of the above mean "DPF", so the report can say which kind of cluster
 # this is rather than a bare yes.
 DPF_COMPONENTS: frozenset[str] = frozenset({"dpf-operator"})
+
+# And which mean "NICo". Like DPF, NICo lives on the infra cluster and carries
+# no BNK of its own, so these have to be excluded from ``has_bnk`` too —
+# otherwise finding nico-api would light up the BNK readiness dashboard for a
+# deployment that belongs on the Kamaji tenant cluster.
+NICO_COMPONENTS: frozenset[str] = frozenset({"nico-api", "nico-lb-provider-tmm"})
 
 # Per-context budget for the whole probe (connect, read). Discovery walks every
 # context in the file, including ones behind a VPN that is currently down, so
@@ -87,6 +94,14 @@ def _find_bnk_pods(core_api: Any) -> list[tuple[str, str]]:
             logger.debug("BNK pod probe with selector %r failed: %s", selector, exc)
             continue
         for pod in pods.items:
+            # Finished Job pods are not components. nico-api's chart ships a
+            # `nico-api-migrate` Job carrying the same `app.kubernetes.io/name`
+            # as the API, and its own `app=nico-api-migrate` wins the lookup
+            # below — so a Completed migration read as an unrecognised
+            # component and, being neither DPF nor NICo, set has_bnk on an
+            # infra cluster that carries no BNK at all.
+            if pod.status and pod.status.phase in ("Succeeded", "Failed"):
+                continue
             labels = pod.metadata.labels or {}
             app = labels.get("app") or labels.get("app.kubernetes.io/name") or "unknown"
             found.append((app, pod.metadata.namespace))
@@ -96,7 +111,8 @@ def _find_bnk_pods(core_api: Any) -> list[tuple[str, str]]:
 def classify_cluster_components(api_client: Any) -> dict[str, Any]:
     """Which BNK / DPF components are running, from pod labels.
 
-    The single definition of ``has_dpf``, the flag that gates the DPF tab.
+    The single definition of ``has_dpf`` and ``has_nico``, the flags that gate
+    the DPF and NICo tabs.
     Shared by the discovery sweep and the manual "Add cluster" path so a
     hand-registered infra cluster gets the same answer a discovered one does.
 
@@ -116,8 +132,11 @@ def classify_cluster_components(api_client: Any) -> dict[str, Any]:
     return {
         "components": components,
         "namespaces": sorted({ns for _app, ns in found}),
-        "has_bnk": bool(set(components) - DPF_COMPONENTS),
+        "has_bnk": bool(set(components) - DPF_COMPONENTS - NICO_COMPONENTS),
         "has_dpf": bool(set(components) & DPF_COMPONENTS),
+        # nico-api specifically, not any NICo component: the tab is a view of
+        # the control plane, and a provider on its own has nothing to show.
+        "has_nico": "nico-api" in components,
     }
 
 
@@ -154,6 +173,7 @@ def refresh_cluster_footprint(db: Session, cluster: KubernetesCluster) -> bool:
 
     meta.pop("probe_error", None)
     meta["has_dpf"] = probe["has_dpf"]
+    meta["has_nico"] = probe["has_nico"]
     if probe["components"]:
         meta["bnk_components"] = probe["components"]
     cluster.meta_data = meta
@@ -180,6 +200,8 @@ class CandidateReport:
     # The DPF operator is here. On a real deployment this is a *different*
     # cluster from the BNK one — the infra cluster that provisions the tenant.
     has_dpf: bool = False
+    # NICo's control plane is here — same infra cluster, different stack.
+    has_nico: bool = False
     components: list[str] = field(default_factory=list)
     version: str | None = None
     detail: str | None = None
@@ -196,6 +218,7 @@ class CandidateReport:
             "cluster_id": self.cluster_id,
             "has_bnk": self.has_bnk,
             "has_dpf": self.has_dpf,
+            "has_nico": self.has_nico,
             "components": self.components,
             "version": self.version,
             "detail": self.detail,
@@ -254,12 +277,14 @@ class ClusterDiscoveryService:
         was unreachable — would stay ``has_dpf``-less forever, and its DPF tab
         would never come back, however many times discovery ran.
 
-        Keyed on the *absence* of the key rather than a falsy value, so a
-        cluster genuinely without DPF is not re-probed on every sweep.
+        Keyed on the *absence* of a key rather than a falsy value, so a
+        cluster genuinely without DPF is not re-probed on every sweep. Both
+        flags are checked: a cluster recorded before ``has_nico`` existed has
+        ``has_dpf`` and would otherwise never be re-probed for the NICo one.
         """
         stale = [
             c for c in self.db.query(KubernetesCluster).all()
-            if "has_dpf" not in (c.meta_data or {})
+            if not {"has_dpf", "has_nico"} <= set(c.meta_data or {})
         ]
         if not stale:
             return 0
@@ -317,6 +342,7 @@ class ClusterDiscoveryService:
         report.state = "reachable" if probe["reachable"] else "unreachable"
         report.has_bnk = probe["has_bnk"]
         report.has_dpf = probe.get("has_dpf", False)
+        report.has_nico = probe.get("has_nico", False)
         report.components = probe.get("components", [])
         report.version = probe["version"]
         report.detail = probe["detail"]
@@ -332,10 +358,10 @@ class ClusterDiscoveryService:
 
         if not probe["reachable"]:
             return report
-        if not (probe["has_bnk"] or probe.get("has_dpf") or adopt_all):
+        if not (probe["has_bnk"] or probe.get("has_dpf") or probe.get("has_nico") or adopt_all):
             report.detail = (
-                "Reachable, but no BNK or DPF pods found. Add it manually if you "
-                "are watching an install in progress."
+                "Reachable, but no BNK, DPF or NICo pods found. Add it manually "
+                "if you are watching an install in progress."
             )
             return report
 
@@ -365,6 +391,7 @@ class ClusterDiscoveryService:
             "reachable": False,
             "has_bnk": False,
             "has_dpf": False,
+            "has_nico": False,
             "version": None,
             "namespaces": [],
             "components": [],
@@ -451,6 +478,7 @@ class ClusterDiscoveryService:
         if probe.get("components"):
             meta["bnk_components"] = probe["components"]
         meta["has_dpf"] = bool(probe.get("has_dpf"))
+        meta["has_nico"] = bool(probe.get("has_nico"))
         cluster.meta_data = meta
 
 

@@ -6,6 +6,7 @@ Each module owns a focused domain:
   resources.py  — Generic K8s resource CRUD, pod/node ops, metrics, rollouts
   f5bnk.py      — F5 BNK data (gateways, firewall, egress, topology, health)
   dpf.py        — NVIDIA DPF data (DPU devices, clusters, services, health)
+  nico.py       — NVIDIA NICo data (tenants, VPCs, LB services, via Forge gRPC)
   tmm_debug.py  — TMM debug sidecar diagnostics (tmctl, configview, bdt_cli)
   recovery.py   — Post-reboot recovery (CWC cert re-sync, platform restart)
 
@@ -17,6 +18,7 @@ from routes.k8s.crds import router as crds_router
 from routes.k8s.dpf import router as dpf_router
 from routes.k8s.f5bnk import router as f5bnk_router
 from routes.k8s.llm_observability import router as llm_observability_router
+from routes.k8s.nico import router as nico_router
 from routes.k8s.recovery import router as recovery_router
 from routes.k8s.resources import router as resources_router
 from routes.k8s.tmm_debug import router as tmm_debug_router
@@ -29,6 +31,7 @@ __all__ = [
     "f5bnk_router",
     "llm_observability_router",
     "dpf_router",
+    "nico_router",
     "tmm_debug_router",
     "recovery_router",
     "topology_router",

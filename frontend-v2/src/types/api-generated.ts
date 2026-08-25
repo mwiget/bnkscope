@@ -1355,6 +1355,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/k8s/clusters/{cluster_id}/nico/detect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Nico Detect
+         * @description Lightweight NICo detection — one labelled pod list, no Forge session.
+         *
+         *     Cheap enough to run per cluster: gating the tab must not cost an mTLS
+         *     handshake against an endpoint that may not be routable.
+         */
+        get: operations["get_nico_detect_api_k8s_clusters__cluster_id__nico_detect_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/nico/data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Nico Data
+         * @description Unified NICo endpoint — the deployment, the endpoint, and the inventory.
+         *
+         *     Returns health analysis alongside the full picture. Sections that could not
+         *     be read report why in ``errors`` rather than failing the request: a NICo
+         *     whose Forge endpoint is unroutable still has pods, a Service and a
+         *     certificate worth showing.
+         */
+        get: operations["get_nico_data_api_k8s_clusters__cluster_id__nico_data_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/k8s/clusters/{cluster_id}/nico/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Nico Health
+         * @description NICo health summary — control plane, providers, tenants, load balancers.
+         */
+        get: operations["get_nico_health_api_k8s_clusters__cluster_id__nico_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/k8s/clusters/{cluster_id}/tmm-debug/pods": {
         parameters: {
             query?: never;
@@ -3306,6 +3374,11 @@ export interface components {
              * @default false
              */
             has_dpf: boolean;
+            /**
+             * Has Nico
+             * @default false
+             */
+            has_nico: boolean;
             /** Components */
             components?: string[];
             /** Version */
@@ -6940,6 +7013,99 @@ export interface operations {
         };
     };
     get_dpf_health_api_k8s_clusters__cluster_id__dpf_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_nico_detect_api_k8s_clusters__cluster_id__nico_detect_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_nico_data_api_k8s_clusters__cluster_id__nico_data_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_nico_health_api_k8s_clusters__cluster_id__nico_health_get: {
         parameters: {
             query?: never;
             header?: never;

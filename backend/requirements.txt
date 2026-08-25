@@ -36,8 +36,19 @@ google-auth==2.38.0
 kubernetes==31.0.0
 kr8s==0.20.15
 
-# HTTP
+# gRPC — NICo's Forge API is gRPC-only (no CRDs, no REST). The schema is read
+# off the server with reflection rather than vendored, so grpcio-reflection is
+# here for its client stubs and protobuf for the dynamic descriptor pool.
+# See backend/services/nico/forge.py.
+grpcio==1.83.0
+grpcio-reflection==1.83.0
+protobuf==7.36.0
+
+# HTTP. h2 is not optional here: nico-api multiplexes its HTTP root onto the
+# same HTTP/2 listener as gRPC, so the version banner is unreadable over
+# HTTP/1.1 (see services/nico/fetch.py:_version_banner).
 httpx==0.28.1
+h2==4.4.1
 requests==2.33.0
 
 # Process metrics (CPU/RAM/network for self-monitoring endpoint)

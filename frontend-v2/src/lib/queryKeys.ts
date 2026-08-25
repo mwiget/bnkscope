@@ -87,6 +87,7 @@ export const queryKeys = {
       dpfDetect: (clusterId: number) => ['k8s', 'clusters', clusterId, 'dpf', 'detect'] as const,
       dpfData: (clusterId: number) => ['k8s', 'clusters', clusterId, 'dpf', 'data'] as const,
       dpfHealth: (clusterId: number) => ['k8s', 'clusters', clusterId, 'dpf', 'health'] as const,
+      nicoData: (clusterId: number) => ['k8s', 'clusters', clusterId, 'nico', 'data'] as const,
     },
     tunnels: () => ['k8s', 'tunnels'] as const,
   },

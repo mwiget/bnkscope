@@ -15,6 +15,6 @@ export { K8sSidebar } from './K8sSidebar';
 export { K8sResourceTable } from './K8sResourceTable';
 export type { ResourceAction } from './K8sResourceTable';
 export { K8sDetailPanel } from './K8sDetailPanel';
-export { K8sDialogs, K8sClusterScanView, K8sDpfInfraView, useK8sDialogs } from './K8sDialogs';
+export { K8sDialogs, K8sClusterScanView, K8sDpfInfraView, K8sNicoView, useK8sDialogs } from './K8sDialogs';
 
 // K8S-UX-004: Helm integration

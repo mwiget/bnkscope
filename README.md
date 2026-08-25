@@ -24,9 +24,9 @@ Open the URL it prints. There is no login.
 ## What happens next
 
 bnkscope reads `~/.kube/config` on startup and probes every context in it.
-A cluster running **BNK** or the **NVIDIA DPF operator** registers itself —
-detected by pod labels, not namespace names, because on a real deployment the
-two live on different clusters and the namespaces vary by install shape.
+A cluster running **BNK**, the **NVIDIA DPF operator** or **NICo** registers itself —
+detected by pod labels, not namespace names, because on a real deployment they
+live on different clusters and the namespaces vary by install shape.
 Everything else is listed with a one-click **Add**, or a plain reason it cannot
 be added: an unreadable cert path, an auth plugin bnkscope cannot run.
 
@@ -35,7 +35,7 @@ Then:
 | | |
 |---|---|
 | **Overview** | Is anything wrong right now, and where. Clusters sort by trouble, not by name. |
-| **Clusters** | Every resource on a cluster — pods, logs, exec, events, YAML. A **DPF** tab appears on a cluster running the NVIDIA DPF operator. |
+| **Clusters** | Every resource on a cluster — pods, logs, exec, events, YAML. A **DPF** tab appears on a cluster running the NVIDIA DPF operator, and a **NICo** tab on one running the NVIDIA Infra Controller — its tenants, VPCs and tenant load balancer services, read from the Forge API. |
 | **BNK Health** | TMM, gateways, traffic flow, and the `tmctl` / `configview` / `bdt_cli` diagnostics. |
 | **TMM Live** | Real-time TMM counters in Grafana. One click adds the exporter to a cluster's TMM pods. |
 | **Logs** | Every cluster's logs, 24h, searchable. Collected through the Kubernetes API — nothing installed. |

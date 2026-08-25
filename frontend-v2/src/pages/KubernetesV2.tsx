@@ -35,6 +35,7 @@ import {
   Plus,
   RefreshCw,
   Cpu,
+  Globe,
   LayoutDashboard,
   Wrench,
   ScanSearch,
@@ -69,6 +70,7 @@ import {
   K8sDialogs,
   K8sClusterScanView,
   K8sDpfInfraView,
+  K8sNicoView,
   isResourceUnhealthy,
   useK8sDialogs,
 } from './kubernetes';
@@ -126,7 +128,7 @@ export default function KubernetesV2() {
   // View mode — "dashboard" shows the BNK-deployment-focused scan view as the
   // default landing. "advanced" shows the generic resource browser (sidebar
   // tree + table). "migration" shows the proxy/CIS migration surface.
-  const [viewMode, setViewMode] = useState<'dashboard' | 'advanced' | 'dpf'>(() => {
+  const [viewMode, setViewMode] = useState<'dashboard' | 'advanced' | 'dpf' | 'nico'>(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.K8S_VIEW_MODE);
     if (stored === 'advanced') return stored;
     return 'dashboard';
@@ -206,6 +208,13 @@ export default function KubernetesV2() {
     clusters.find((c) => c.id === selectedCluster)?.meta_data?.has_dpf,
   );
 
+  // And when it finds nico-api. In the reference deployment that is the same
+  // infra cluster DPF runs on, but it is an independent stack — a cluster can
+  // carry either, both, or neither.
+  const selectedClusterHasNico = Boolean(
+    clusters.find((c) => c.id === selectedCluster)?.meta_data?.has_nico,
+  );
+
   // The right landing view depends on which cluster you picked. DPF runs on
   // the infrastructure cluster; BNK runs on the Kamaji tenant. Landing a DPF
   // cluster on the BNK readiness Dashboard shows a scan for a deployment that
@@ -214,12 +223,19 @@ export default function KubernetesV2() {
   // also strand you on a tab that is no longer offered.
   //
   // 'advanced' is left alone in both directions: it is the one view that means
-  // the same thing everywhere, and picking it is an explicit choice.
+  // the same thing everywhere, and picking it is an explicit choice. 'nico' is
+  // left alone for the same reason on a cluster that has NICo — without that
+  // exception the DPF rule below would snap the tab back the instant it was
+  // clicked, because an infra cluster usually carries both.
   useEffect(() => {
     if (viewMode === 'advanced') return;
+    if (viewMode === 'nico') {
+      if (!selectedClusterHasNico) setViewMode(selectedClusterHasDpf ? 'dpf' : 'dashboard');
+      return;
+    }
     if (selectedClusterHasDpf && viewMode !== 'dpf') setViewMode('dpf');
     if (!selectedClusterHasDpf && viewMode === 'dpf') setViewMode('dashboard');
-  }, [selectedCluster, selectedClusterHasDpf, viewMode]);
+  }, [selectedCluster, selectedClusterHasDpf, selectedClusterHasNico, viewMode]);
 
   // Select the first cluster when nothing valid is selected yet.
   useEffect(() => {
@@ -560,7 +576,7 @@ export default function KubernetesV2() {
         <ResourceViewTabs
           aria-label="Kubernetes view mode"
           active={viewMode}
-          onChange={(key) => setViewMode(key as 'dashboard' | 'advanced' | 'dpf')}
+          onChange={(key) => setViewMode(key as 'dashboard' | 'advanced' | 'dpf' | 'nico')}
           tabs={[
             // Dashboard is BNK readiness, which a DPF infrastructure cluster
             // is not a candidate for — so it gives way to DPF there rather
@@ -569,6 +585,12 @@ export default function KubernetesV2() {
             ...(selectedClusterHasDpf
               ? [{ key: 'dpf', label: 'DPF', icon: Cpu, title: 'NVIDIA DPF infrastructure — DPUs, BFB images, DPUSets' }]
               : [{ key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, title: 'BNK readiness and health' }]),
+            // NICo sits next to DPF rather than replacing anything: it is a
+            // second stack on the same infra cluster, and its tenants and load
+            // balancers say nothing about the DPUs underneath them.
+            ...(selectedClusterHasNico
+              ? [{ key: 'nico', label: 'NICo', icon: Globe, title: 'NVIDIA NICo — tenants, VPCs and tenant load balancer services' }]
+              : []),
             { key: 'advanced', label: 'Advanced', icon: Wrench, title: 'Generic Kubernetes resource browser for troubleshooting' },
           ]}
         />
@@ -627,6 +649,16 @@ export default function KubernetesV2() {
               }}
             >
               <K8sDpfInfraView clusterId={selectedCluster} />
+            </ConnectivityGate>
+          ) : viewMode === 'nico' ? (
+            <ConnectivityGate
+              target={{
+                type: 'cluster',
+                id: selectedCluster,
+                displayName: clusters?.find((c) => c.id === selectedCluster)?.name,
+              }}
+            >
+              <K8sNicoView clusterId={selectedCluster} />
             </ConnectivityGate>
           ) : viewMode === 'dashboard' || showClusterScan ? (
             /* Dashboard mode: BNK-deployment-focused scan view. Always the

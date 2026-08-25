@@ -44,9 +44,9 @@ def serialize_cluster(cluster: KubernetesCluster) -> dict:
         "enabled_prerequisites": cluster.enabled_prerequisites,
         # Observed BNK release line, set by the discovery scan (ADR-494).
         "running_release_id": cluster.running_release_id,
-        # Written by discovery. `has_dpf` is what gates the DPF tab in the UI,
-        # so the list endpoint has to carry it — the detail endpoint alone is
-        # too late, the tab strip renders from the list.
+        # Written by discovery. `has_dpf` / `has_nico` are what gate the DPF and
+        # NICo tabs in the UI, so the list endpoint has to carry them — the
+        # detail endpoint alone is too late, the tab strip renders from the list.
         "meta_data": cluster.meta_data,
     }
     return result

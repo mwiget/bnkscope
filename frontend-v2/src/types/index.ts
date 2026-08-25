@@ -18,6 +18,7 @@ export * from './qkview';
 export * from './system';
 export * from './tmm-debug';
 export * from './dpf';
+export * from './nico';
 export * from './recovery';
 export * from './backup';
 export * from './credentials';

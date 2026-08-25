@@ -18,7 +18,7 @@ _PROBE = "services.cluster_discovery_service.ClusterDiscoveryService._probe"
 _CONTEXTS = "services.cluster_discovery_service.discover_contexts"
 
 
-def _pod_list(entries, key="app"):
+def _pod_list(entries, key="app", phase="Running"):
     """A fake list_pod_for_all_namespaces page from (app, namespace) pairs."""
     from unittest.mock import MagicMock
 
@@ -28,6 +28,7 @@ def _pod_list(entries, key="app"):
         pod = MagicMock()
         pod.metadata.labels = {key: app}
         pod.metadata.namespace = namespace
+        pod.status.phase = phase
         page.items.append(pod)
     return page
 
@@ -47,12 +48,13 @@ def _context(name="lab-a", **overrides):
     return DiscoveredContext(**{**defaults, **overrides})
 
 
-def _probe_result(reachable=True, has_bnk=False, has_dpf=False, version="1.29",
-                  namespaces=None, components=None, detail=None):
+def _probe_result(reachable=True, has_bnk=False, has_dpf=False, has_nico=False,
+                  version="1.29", namespaces=None, components=None, detail=None):
     return {
         "reachable": reachable,
         "has_bnk": has_bnk,
         "has_dpf": has_dpf,
+        "has_nico": has_nico,
         "version": version,
         "namespaces": namespaces if namespaces is not None
         else (["dpf-operator-system"] if has_bnk else []),
@@ -89,7 +91,7 @@ class TestRegistrationRule:
         candidate = result["candidates"][0]
         assert candidate["state"] == "reachable"
         assert candidate["registered"] is False
-        assert "no BNK or DPF pods found" in candidate["detail"]
+        assert "no BNK, DPF or NICo pods found" in candidate["detail"]
 
     def test_an_unreachable_context_is_reported_not_registered(self, db):
         with patch(_CONTEXTS, return_value=[_context("vpn-only")]), \
@@ -365,6 +367,64 @@ class TestProbe:
         assert result["has_bnk"] is False
         assert result["components"] == ["dpf-operator"]
 
+    def test_a_nico_infra_cluster_registers_without_claiming_bnk(self, db):
+        """nico-api sits on the same infra cluster DPF does and carries no BNK.
+
+        The subtraction in ``classify_cluster_components`` is what keeps that
+        true: without excluding the NICo components, finding nico-api would set
+        ``has_bnk`` and light the BNK readiness Dashboard for a deployment that
+        belongs on the Kamaji tenant cluster.
+        """
+        with patch("services.kubernetes_service.KubernetesService.load_kubeconfig"), \
+             patch("kubernetes.client.VersionApi"), \
+             patch("kubernetes.client.CoreV1Api") as core_api:
+            core_api.return_value.list_pod_for_all_namespaces.side_effect = [
+                _pod_list([("nico-lb-provider-tmm", "nico-system")]),
+                _pod_list([("dpf-operator", "dpf-operator-system"),
+                           ("nico-api", "nico-system")],
+                          key="app.kubernetes.io/name"),
+            ]
+            result = ClusterDiscoveryService(db)._probe(_context("infra"))
+
+        assert result["has_nico"] is True
+        assert result["has_dpf"] is True
+        assert result["has_bnk"] is False
+
+    def test_the_lb_provider_alone_does_not_gate_the_nico_tab(self, db):
+        """The tab is a view of the control plane; a provider on its own has
+        nothing to show."""
+        with patch("services.kubernetes_service.KubernetesService.load_kubeconfig"), \
+             patch("kubernetes.client.VersionApi"), \
+             patch("kubernetes.client.CoreV1Api") as core_api:
+            core_api.return_value.list_pod_for_all_namespaces.side_effect = [
+                _pod_list([("nico-lb-provider-tmm", "nico-system")]),
+                _pod_list([]),
+            ]
+            result = ClusterDiscoveryService(db)._probe(_context("infra"))
+
+        assert result["has_nico"] is False
+        assert result["has_bnk"] is False
+
+    def test_a_completed_migration_job_is_not_a_component(self, db):
+        """nico-api's chart ships a `nico-api-migrate` Job carrying the same
+        `app.kubernetes.io/name` as the API. Its own `app` label wins the
+        component lookup, so a Completed migration read as an unrecognised
+        component — and, being neither DPF nor NICo, set has_bnk on an infra
+        cluster that carries no BNK at all.
+        """
+        with patch("services.kubernetes_service.KubernetesService.load_kubeconfig"), \
+             patch("kubernetes.client.VersionApi"), \
+             patch("kubernetes.client.CoreV1Api") as core_api:
+            core_api.return_value.list_pod_for_all_namespaces.side_effect = [
+                _pod_list([("nico-api-migrate", "nico-system")], phase="Succeeded"),
+                _pod_list([("nico-api", "nico-system")], key="app.kubernetes.io/name"),
+            ]
+            result = ClusterDiscoveryService(db)._probe(_context("infra"))
+
+        assert result["components"] == ["nico-api"]
+        assert result["has_nico"] is True
+        assert result["has_bnk"] is False
+
     def test_the_standard_label_variant_is_also_matched(self, db):
         """Charts that use app.kubernetes.io/name instead of app."""
         with patch("services.kubernetes_service.KubernetesService.load_kubeconfig"), \
@@ -500,8 +560,9 @@ class TestFootprintBackfill:
         return {
             "components": components,
             "namespaces": ["dpf-operator-system"],
-            "has_bnk": bool(set(components) - {"dpf-operator"}),
+            "has_bnk": bool(set(components) - {"dpf-operator", "nico-api"}),
             "has_dpf": "dpf-operator" in components,
+            "has_nico": "nico-api" in components,
         }
 
     def test_a_hand_added_infra_cluster_gets_its_dpf_flag(self, db):
