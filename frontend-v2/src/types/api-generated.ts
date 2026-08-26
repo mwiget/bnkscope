@@ -3259,6 +3259,8 @@ export interface components {
             label_pinned: boolean;
             /** Available Labels */
             available_labels?: string[];
+            /** Last Seen Age */
+            last_seen_age?: number | null;
             /** Dashboard Url */
             dashboard_url?: string | null;
             /** Inject Command */
@@ -3581,6 +3583,8 @@ export interface components {
             namespace: string;
             /** Injected */
             injected: boolean;
+            /** Kind */
+            kind?: string | null;
             /** Pushing To */
             pushing_to?: string | null;
             /**
@@ -3588,6 +3592,17 @@ export interface components {
              * @default false
              */
             stale: boolean;
+            /** Started At */
+            started_at?: string | null;
+            /** Running For */
+            running_for?: number | null;
+            /**
+             * Streaming
+             * @default false
+             */
+            streaming: boolean;
+            /** Last Push Error */
+            last_push_error?: string | null;
         };
         /**
          * InjectionStateResponse
@@ -3637,6 +3652,27 @@ export interface components {
             stale_target?: string | null;
             /** Expected Port */
             expected_port?: number | null;
+            /**
+             * Permanent Pods
+             * @default 0
+             */
+            permanent_pods: number;
+            /**
+             * Streaming Pods
+             * @default 0
+             */
+            streaming_pods: number;
+            /**
+             * Silent Pods
+             * @default 0
+             */
+            silent_pods: number;
+            /** Verdict */
+            verdict?: string | null;
+            /** Verdict Detail */
+            verdict_detail?: string | null;
+            /** Settle Seconds */
+            settle_seconds?: number | null;
             /** Added */
             added?: string[];
             /** Skipped */
@@ -4927,6 +4963,10 @@ export interface components {
             updated_at?: string | null;
             /** Streaming Clusters */
             streaming_clusters?: string[];
+            /** Last Seen */
+            last_seen?: {
+                [key: string]: number;
+            };
             /** Dashboards */
             dashboards?: components["schemas"]["TmmscopeDashboard"][];
             /** Detail */

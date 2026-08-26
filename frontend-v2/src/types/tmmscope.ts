@@ -24,6 +24,10 @@ export interface TmmscopeStatus {
   /** cluster= labels Prometheus holds f5tmm_up series for — what "injected"
    *  actually means, as opposed to what a file claims. */
   streaming_clusters: string[];
+  /** cluster= label -> seconds since its last sample. Carries labels that have
+   *  *stopped*, which `streaming_clusters` cannot: five minutes after a cluster
+   *  goes quiet it drops out and looks like one that never streamed. */
+  last_seen: Record<string, number>;
   dashboards: TmmscopeDashboard[];
   detail: string | null;
 }
@@ -37,18 +41,42 @@ export interface ClusterTelemetry {
   /** The label came from an explicit binding rather than a name match. */
   label_pinned: boolean;
   available_labels: string[];
+  /** Seconds since this cluster's most recent sample, streaming or not. */
+  last_seen_age: number | null;
   dashboard_url: string | null;
   inject_command: string;
   eject_command: string;
 }
 
+/** Exactly one holds per cluster, and each names a different action. Only
+ *  `stale_target` is the one that re-installing the exporter actually fixes. */
+export type InjectionVerdict =
+  | 'no_tmm'
+  | 'not_installed'
+  | 'settling'
+  | 'streaming'
+  | 'partial_delivery'
+  | 'stale_target'
+  | 'not_delivering';
+
 export interface InjectionPod {
   pod: string;
   namespace: string;
   injected: boolean;
+  /** In the pod template, or bolted on. Only an ephemeral one can be cleared
+   *  by recreating the pod; a permanent one comes straight back. */
+  kind: 'permanent' | 'ephemeral' | null;
   /** The remote-write URL baked in at injection. Immutable once injected. */
   pushing_to: string | null;
   stale: boolean;
+  started_at: string | null;
+  /** Seconds the exporter container has been running. Bounds "settling". */
+  running_for: number | null;
+  /** Prometheus holds live series for *this pod*. */
+  streaming: boolean;
+  /** The exporter's own last remote_write complaint — the line that names the
+   *  actual cause. Populated only when something is wrong. */
+  last_push_error: string | null;
 }
 
 export interface InjectionState {
@@ -66,6 +94,13 @@ export interface InjectionState {
   stale_pods: number;
   stale_target: string | null;
   expected_port: number | null;
+  /** Exporters that are part of the pod template rather than injected here. */
+  permanent_pods: number;
+  streaming_pods: number;
+  silent_pods: number;
+  verdict: InjectionVerdict | null;
+  verdict_detail: string | null;
+  settle_seconds: number | null;
   added: string[];
   skipped: string[];
   deleted: string[];

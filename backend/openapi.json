@@ -8281,6 +8281,17 @@
             "type": "array",
             "title": "Available Labels"
           },
+          "last_seen_age": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen Age"
+          },
           "dashboard_url": {
             "anyOf": [
               {
@@ -8964,6 +8975,17 @@
             "type": "boolean",
             "title": "Injected"
           },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
           "pushing_to": {
             "anyOf": [
               {
@@ -8979,6 +9001,44 @@
             "type": "boolean",
             "title": "Stale",
             "default": false
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "running_for": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running For"
+          },
+          "streaming": {
+            "type": "boolean",
+            "title": "Streaming",
+            "default": false
+          },
+          "last_push_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Push Error"
           }
         },
         "type": "object",
@@ -9058,6 +9118,54 @@
               }
             ],
             "title": "Expected Port"
+          },
+          "permanent_pods": {
+            "type": "integer",
+            "title": "Permanent Pods",
+            "default": 0
+          },
+          "streaming_pods": {
+            "type": "integer",
+            "title": "Streaming Pods",
+            "default": 0
+          },
+          "silent_pods": {
+            "type": "integer",
+            "title": "Silent Pods",
+            "default": 0
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          },
+          "verdict_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict Detail"
+          },
+          "settle_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settle Seconds"
           },
           "added": {
             "items": {
@@ -12167,6 +12275,13 @@
             },
             "type": "array",
             "title": "Streaming Clusters"
+          },
+          "last_seen": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Last Seen"
           },
           "dashboards": {
             "items": {

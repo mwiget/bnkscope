@@ -82,6 +82,11 @@ class TmmscopeStatus:
     updated_at: str | None = None
     # cluster= label values Prometheus currently holds f5tmm_up series for.
     streaming_clusters: list[str] = field(default_factory=list)
+    # cluster= label -> seconds since its last f5tmm_up sample, over the last
+    # few hours. Includes labels that have stopped, which the instant query
+    # above cannot: five minutes after a cluster goes quiet it drops out of
+    # `streaming_clusters` and looks exactly like one that never streamed.
+    last_seen: dict[str, float] = field(default_factory=dict)
     detail: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -92,6 +97,7 @@ class TmmscopeStatus:
             "prometheus_url": self.prometheus_url,
             "updated_at": self.updated_at,
             "streaming_clusters": self.streaming_clusters,
+            "last_seen": dict(self.last_seen),
             "dashboards": [dict(d) for d in DASHBOARDS],
             "detail": self.detail,
         }
@@ -226,13 +232,28 @@ def get_status() -> TmmscopeStatus:
 
     if status.prometheus_url:
         status.streaming_clusters = _streaming_clusters(status.prometheus_url)
+        status.last_seen = last_seen_ages(status.prometheus_url)
         if not status.streaming_clusters:
+            stopped = sorted(status.last_seen)
             status.detail = (
-                "The telemetry stack is up, but no cluster is streaming to it "
-                "yet. Add the exporter to a cluster's TMM pods below."
+                "The telemetry stack is up, but nothing is streaming to it right "
+                f"now. {', '.join(stopped)} last delivered "
+                f"{_ago(min(status.last_seen.values()))} ago."
+                if stopped
+                else "The telemetry stack is up, but no cluster is streaming to "
+                "it yet. Add the exporter to a cluster's TMM pods below."
             )
 
     return status
+
+
+def _ago(seconds: float) -> str:
+    """A duration a human reads at a glance. Coarse on purpose."""
+    if seconds < 90:
+        return f"{int(seconds)}s"
+    if seconds < 5400:
+        return f"{int(seconds // 60)}m"
+    return f"{seconds / 3600:.1f}h"
 
 
 def prometheus_ingest() -> tuple[int, str] | None:
@@ -352,10 +373,19 @@ def _streaming_clusters(prometheus_url: str) -> list[str]:
     unrelated series carrying the same label name cannot make a cluster look
     like it is streaming TMM telemetry when it is not.
     """
+    names = {
+        (row.get("metric") or {}).get("cluster")
+        for row in _query(prometheus_url, _STREAMING_QUERY)
+    }
+    return sorted(n for n in names if isinstance(n, str) and n)
+
+
+def _query(prometheus_url: str, query: str) -> list[dict[str, Any]]:
+    """One instant query, never raising — an empty result reads as "nothing"."""
     try:
         resp = requests.get(
             f"{_probe_url(prometheus_url).rstrip('/')}/api/v1/query",
-            params={"query": _STREAMING_QUERY},
+            params={"query": query},
             timeout=_PROBE_TIMEOUT,
         )
         resp.raise_for_status()
@@ -366,11 +396,73 @@ def _streaming_clusters(prometheus_url: str) -> list[str]:
 
     if payload.get("status") != "success":
         return []
-    names = {
-        (row.get("metric") or {}).get("cluster")
-        for row in (payload.get("data") or {}).get("result") or []
+    return (payload.get("data") or {}).get("result") or []
+
+
+#: How far back "when did this last stream?" looks. An instant query cannot
+#: answer it: Prometheus drops a series from the instant vector once nothing has
+#: arrived for its staleness window, so five minutes after a cluster stops it
+#: becomes indistinguishable from one that never streamed at all. That is the
+#: exact gap that let a dead exporter read as "waiting for the first metrics".
+_LAST_SEEN_WINDOW = "6h"
+
+#: `timestamp()` inside a subquery returns the *sample's* timestamp at each
+#: step, so the max over the window is when the last sample actually landed.
+#: `timestamp(last_over_time(...))` looks like the obvious spelling and is
+#: wrong — it returns the evaluation time, which is always now.
+_WINDOW_AGE_QUERY = (
+    f"time() - max by (cluster) (max_over_time(timestamp(f5tmm_up)[{_LAST_SEEN_WINDOW}:1m]))"
+)
+
+#: The same question with no subquery, and so no step quantisation. Needed
+#: because a subquery evaluates on absolute step boundaries: a stream that
+#: started after the last boundary is invisible to it, and the answer falls
+#: back to the *previous* stream's last sample. Observed exactly that — a TMM
+#: pod recreated a minute earlier and pushing happily reported as "last
+#: delivered 29m ago", which is the same lie as the one this exists to fix,
+#: pointed the other way. This one sees anything inside Prometheus's staleness
+#: window; the subquery covers everything older.
+_LIVE_AGE_QUERY = "time() - max by (cluster) (timestamp(f5tmm_up))"
+
+
+def last_seen_ages(prometheus_url: str) -> dict[str, float]:
+    """cluster label -> seconds since its most recent `f5tmm_up` sample.
+
+    Covers clusters that have stopped as well as those still streaming, which is
+    what turns "not streaming" into "stopped streaming nine minutes ago".
+
+    Two queries, smaller age wins: neither one alone answers for both a live
+    stream and a long-dead one. PromQL has no element-wise max between two
+    vectors, so the combining happens here.
+    """
+    ages: dict[str, float] = {}
+    for query in (_WINDOW_AGE_QUERY, _LIVE_AGE_QUERY):
+        for row in _query(prometheus_url, query):
+            name = (row.get("metric") or {}).get("cluster")
+            try:
+                age = max(0.0, float((row.get("value") or [None, None])[1]))
+            except (TypeError, ValueError):
+                continue
+            if isinstance(name, str) and name:
+                ages[name] = min(ages.get(name, age), age)
+    return ages
+
+
+def streaming_pods(prometheus_url: str, cluster_label: str) -> set[str]:
+    """Pod names under `cluster_label` with live `f5tmm_up` series.
+
+    Delivery is a per-pod fact. A cluster with several TMM pods keeps streaming
+    when one of them stops, so a cluster-level answer reports everything as fine
+    while one node has gone silent — which is precisely what a reinstalled DPU
+    looks like.
+    """
+    escaped = cluster_label.replace("\\", "\\\\").replace('"', '\\"')
+    payload = _query(prometheus_url, f'count by (pod) (f5tmm_up{{cluster="{escaped}"}})')
+    return {
+        pod
+        for row in payload
+        if isinstance(pod := (row.get("metric") or {}).get("pod"), str) and pod
     }
-    return sorted(n for n in names if isinstance(n, str) and n)
 
 
 def inject_command(context: str, cluster_name: str | None = None) -> str:

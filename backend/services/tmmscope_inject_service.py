@@ -139,20 +139,72 @@ def _has_volume(pod: Any, volume_name: str) -> bool:
     return any(v.name == volume_name for v in (pod.spec.volumes or []))
 
 
+#: Where an exporter came from. `permanent` is a real container in the pod
+#: template — what `tmmscope inject --permanent` and the cluster builders
+#: (tmmlitectl/ocibnkctl, and DPF's own DPUService templates) install.
+#: `ephemeral` is what bnkscope injects. Both are equally "installed"; only the
+#: permanent one survives a pod restart, and only the ephemeral one can be
+#: cleared by recreating the pod.
+KIND_PERMANENT = "permanent"
+KIND_EPHEMERAL = "ephemeral"
+
+
+def _exporter_containers(pod: Any) -> list[tuple[str, Any]]:
+    """(kind, container) for every exporter in the pod spec.
+
+    Both lists are searched. Reading only `ephemeral_containers` was a bug with
+    a wide blast radius: every permanently-injected cluster — which is all of
+    DPF, where the exporter rides the DaemonSet's pod template — reported no
+    push URL at all, so staleness could never be detected there and the exporter
+    was invisible in every way except a name in a container list.
+    """
+    found: list[tuple[str, Any]] = []
+    for kind, attr in ((KIND_PERMANENT, "containers"), (KIND_EPHEMERAL, "ephemeral_containers")):
+        for c in getattr(pod.spec, attr, None) or []:
+            if c.name == SIDECAR_NAME:
+                found.append((kind, c))
+    return found
+
+
 def _pushing_to(pod: Any) -> str | None:
     """The remote-write URL the injected exporter is actually using.
 
-    Baked in at injection time and **immutable** — an ephemeral container's spec
-    cannot be edited. So when Prometheus moves, this is how a stale injection is
-    recognised: the exporter is running, `f5tmm_up` is nowhere, and the only
-    difference is a port number nobody can see.
+    Baked in at injection time and **immutable** — neither an ephemeral
+    container's spec nor a running container's env can be edited. So when
+    Prometheus moves, this is how a stale injection is recognised: the exporter
+    is running, `f5tmm_up` is nowhere, and the only difference is a port number
+    nobody can see.
     """
-    for c in getattr(pod.spec, "ephemeral_containers", None) or []:
-        if c.name != SIDECAR_NAME:
-            continue
+    for _kind, c in _exporter_containers(pod):
         for env in getattr(c, "env", None) or []:
             if env.name == "TMSTAT_REMOTE_WRITE_URL":
                 return env.value
+    return None
+
+
+def _exporter_kind(pod: Any) -> str | None:
+    """Whether the exporter is part of the pod template or bolted on."""
+    kinds = [kind for kind, _ in _exporter_containers(pod)]
+    # A pod can carry both — someone injected ephemerally over a cluster that
+    # already had the sidecar. The permanent one is the durable fact.
+    return KIND_PERMANENT if KIND_PERMANENT in kinds else (kinds[0] if kinds else None)
+
+
+def _exporter_started_at(pod: Any) -> Any:
+    """When the exporter container last started running, or None.
+
+    This is what bounds "settling". Without it, "injected but no metrics" is one
+    state that means two very different things — five seconds after injection it
+    is normal, and ten minutes after it is a fault — and the UI can only show
+    the optimistic reading of both.
+    """
+    for attr in ("container_statuses", "ephemeral_container_statuses"):
+        for cs in getattr(pod.status, attr, None) or []:
+            if cs.name != SIDECAR_NAME:
+                continue
+            running = getattr(cs.state, "running", None) if cs.state else None
+            if running is not None and running.started_at:
+                return running.started_at
     return None
 
 
@@ -232,19 +284,87 @@ def derive_remote_write_host(
 # ---------------------------------------------------------------------------
 
 
+#: How long an exporter may run without its metrics arriving before that stops
+#: being "settling" and becomes a fault. Injection to first sample is a couple
+#: of seconds; the exporter's own push interval is 2s and its retry backoff is
+#: ~10s, so a minute and a half is generous by an order of magnitude.
+SETTLE_SECONDS = 90
+
+#: Verdicts. Exactly one holds for a cluster, and each names a different action.
+VERDICT_NO_TMM = "no_tmm"
+VERDICT_NOT_INSTALLED = "not_installed"
+VERDICT_SETTLING = "settling"
+VERDICT_STREAMING = "streaming"
+VERDICT_PARTIAL_DELIVERY = "partial_delivery"
+VERDICT_STALE_TARGET = "stale_target"
+VERDICT_NOT_DELIVERING = "not_delivering"
+
+
+def _running_for(started_at: Any, now: Any) -> float | None:
+    if started_at is None:
+        return None
+    try:
+        return max(0.0, (now - started_at).total_seconds())
+    except TypeError:  # pragma: no cover - naive/aware mismatch
+        return None
+
+
+def _last_push_error(
+    core_v1: k8s_client.CoreV1Api, name: str, namespace: str
+) -> str | None:
+    """The exporter's own last complaint, verbatim.
+
+    The exporter logs every failed `remote_write` with the reason — "connection
+    refused", "context deadline exceeded", a 4xx from Prometheus. That one line
+    separates the three things that otherwise look identical from outside the
+    pod: wrong address, no route, and a collector that is rejecting the write.
+    Read only when something is actually wrong, because it is a log request per
+    pod and the answer is uninteresting when metrics are arriving.
+    """
+    try:
+        log = core_v1.read_namespaced_pod_log(
+            name=name,
+            namespace=namespace,
+            container=SIDECAR_NAME,
+            tail_lines=20,
+            timestamps=False,
+        )
+    except ApiException:
+        logger.debug("Could not read exporter log from %s", name, exc_info=True)
+        return None
+    for line in reversed((log or "").splitlines()):
+        if "remote_write" in line:
+            return line.strip()[:500]
+    return None
+
+
 def get_injection_state(
-    api_client: k8s_client.ApiClient, expected_port: int | None = None
+    api_client: k8s_client.ApiClient,
+    expected_port: int | None = None,
+    *,
+    streaming_pods: set[str] | None = None,
+    cluster_streaming: bool | None = None,
 ) -> dict[str, Any]:
-    """Which f5-tmm pods carry the exporter, and whether it can still reach us.
+    """Which f5-tmm pods carry the exporter, and whether it is actually working.
 
     `expected_port` is the Prometheus port bnkscope is listening on now. An
     exporter injected when Prometheus was somewhere else keeps running and keeps
     pushing into a closed socket — from the outside that is indistinguishable
     from never having injected at all, so it is called out rather than counted
     as working.
+
+    `streaming_pods` is the set of pod names Prometheus holds live `f5tmm_up`
+    series for. Installed and delivering are different facts, and the difference
+    is per pod, not per cluster: re-install one DPU of several and the cluster
+    keeps streaming from its siblings while that one silently stops. A
+    cluster-level answer cannot see that, so this takes the pod-level one.
     """
+    from datetime import UTC, datetime
+
     core_v1 = k8s_client.CoreV1Api(api_client)
     pods = find_tmm_pods(api_client)
+    now = datetime.now(UTC)
+    live = streaming_pods if streaming_pods is not None else set()
 
     entries: list[dict[str, Any]] = []
     for meta in pods:
@@ -257,6 +377,7 @@ def get_injection_state(
             continue
         is_injected = SIDECAR_NAME in _container_names(pod)
         url = _pushing_to(pod) if is_injected else None
+        started_at = _exporter_started_at(pod) if is_injected else None
         stale = bool(
             is_injected
             and expected_port is not None
@@ -268,13 +389,48 @@ def get_injection_state(
                 "pod": meta["name"],
                 "namespace": meta["namespace"],
                 "injected": is_injected,
+                "kind": _exporter_kind(pod),
                 "pushing_to": url,
                 "stale": stale,
+                "started_at": started_at.isoformat() if started_at else None,
+                "running_for": _running_for(started_at, now),
+                # Only meaningful when the caller supplied the live set; with no
+                # Prometheus to ask, nothing is known to be streaming.
+                "streaming": meta["name"] in live,
+                "last_push_error": None,
             }
         )
 
     injected = [e for e in entries if e["injected"]]
     stale = [e for e in entries if e["stale"]]
+    permanent = [e for e in injected if e["kind"] == KIND_PERMANENT]
+    silent = [e for e in injected if not e["streaming"]] if streaming_pods is not None else []
+
+    # The oldest exporter that is not delivering. Oldest, not newest: one pod
+    # injected ten seconds ago does not excuse a sibling that has been failing
+    # for an hour, and that sibling is the whole point of asking.
+    oldest_silent = max(
+        (e["running_for"] for e in silent if e["running_for"] is not None),
+        default=None,
+    )
+
+    verdict, detail = _verdict(
+        entries=entries,
+        injected=injected,
+        stale=stale,
+        silent=silent,
+        oldest_silent=oldest_silent,
+        cluster_streaming=cluster_streaming,
+        streaming_known=streaming_pods is not None,
+    )
+
+    # Only when something is wrong, and only for the pods that are wrong.
+    if verdict in (VERDICT_NOT_DELIVERING, VERDICT_PARTIAL_DELIVERY, VERDICT_STALE_TARGET):
+        for entry in silent or stale:
+            entry["last_push_error"] = _last_push_error(
+                core_v1, entry["pod"], entry["namespace"]
+            )
+
     return {
         "pods": entries,
         "tmm_pods": len(entries),
@@ -283,12 +439,96 @@ def get_injection_state(
         # clean while its siblings still carry the exporter.
         "injected": bool(injected) and len(injected) == len(entries),
         "partial": bool(injected) and len(injected) != len(entries),
+        # A permanent sidecar is not bnkscope's to remove: deleting the pod just
+        # brings it back, because it is in the template.
+        "permanent_pods": len(permanent),
+        "streaming_pods": sum(1 for e in entries if e["streaming"]),
+        "silent_pods": len(silent),
         "stale_pods": len(stale),
         # Injected, running, and pushing at a port that is no longer listening.
         "stale": bool(stale),
         "stale_target": stale[0]["pushing_to"] if stale else None,
         "expected_port": expected_port,
+        "verdict": verdict,
+        "verdict_detail": detail,
+        "settle_seconds": SETTLE_SECONDS,
     }
+
+
+def _verdict(
+    *,
+    entries: list[dict[str, Any]],
+    injected: list[dict[str, Any]],
+    stale: list[dict[str, Any]],
+    silent: list[dict[str, Any]],
+    oldest_silent: float | None,
+    cluster_streaming: bool | None,
+    streaming_known: bool,
+) -> tuple[str, str]:
+    """One verdict per cluster, ordered so the most actionable answer wins.
+
+    The ordering matters more than the individual cases. "Installed but no
+    metrics" used to be a single optimistic state that read "waiting for the
+    first metrics, this takes a few seconds" forever; splitting it by *why*
+    is the whole point, because only one of the reasons is fixed by
+    re-installing the exporter.
+    """
+    if not entries:
+        return VERDICT_NO_TMM, "No running f5-tmm pods on this cluster."
+
+    if not injected:
+        return (
+            VERDICT_NOT_INSTALLED,
+            f"None of the {len(entries)} f5-tmm pod(s) carry the exporter.",
+        )
+
+    if stale:
+        target = stale[0]["pushing_to"]
+        return (
+            VERDICT_STALE_TARGET,
+            f"The exporter is pushing to {target}, which is not where Prometheus "
+            "is listening any more. The address is fixed when the exporter is "
+            "installed, so this one does need re-installing.",
+        )
+
+    if not streaming_known:
+        # No Prometheus to ask. Say what is installed and claim nothing else.
+        return (
+            VERDICT_SETTLING,
+            "The exporter is installed, but there is no Prometheus to check "
+            "whether its metrics are arriving.",
+        )
+
+    if not silent:
+        return (
+            VERDICT_STREAMING,
+            f"All {len(injected)} exporter(s) are delivering.",
+        )
+
+    if oldest_silent is not None and oldest_silent < SETTLE_SECONDS:
+        return (
+            VERDICT_SETTLING,
+            f"The exporter started {int(oldest_silent)}s ago and its first "
+            "metrics have not arrived yet. This takes a few seconds.",
+        )
+
+    where = silent[0].get("pushing_to") or "its configured collector"
+    age = f"{int(oldest_silent // 60)}m" if oldest_silent else "some time"
+    if cluster_streaming:
+        return (
+            VERDICT_PARTIAL_DELIVERY,
+            f"{len(silent)} of {len(injected)} exporter(s) stopped delivering "
+            f"— the rest of the cluster is still streaming. The silent one(s) "
+            f"have been running {age} and are pushing to {where}, so the "
+            "exporter is installed and the path to it is what broke.",
+        )
+    return (
+        VERDICT_NOT_DELIVERING,
+        f"The exporter has been running {age} and pushing to {where}, and "
+        "nothing has arrived. The address matches where Prometheus is "
+        "listening, so re-installing will not change anything — the pod cannot "
+        "reach it.",
+    )
 
 
 def inject(
@@ -391,6 +631,23 @@ def remove(api_client: k8s_client.ApiClient) -> dict[str, Any]:
 
         # Only disturb pods that actually carry it.
         if SIDECAR_NAME not in _container_names(pod):
+            continue
+
+        # A permanent sidecar is in the pod template. Deleting the pod drops
+        # dataplane traffic and the exporter comes straight back with the
+        # replacement — all cost, no effect. Removing that one means editing
+        # whatever owns the template, which is not bnkscope's to do.
+        if _exporter_kind(pod) == KIND_PERMANENT:
+            failed.append(
+                {
+                    "pod": name,
+                    "error": (
+                        "the exporter is a permanent sidecar in this pod's "
+                        "template — recreating the pod would bring it back. "
+                        "Remove it where it is defined (`tmmscope eject`)."
+                    ),
+                }
+            )
             continue
 
         try:

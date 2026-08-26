@@ -14,10 +14,26 @@
  * "Injected" is not read from a config file here. It means Prometheus is
  * holding `f5tmm_up` series for this cluster's label right now, which is the
  * only claim that cannot be stale.
+ *
+ * Installed and delivering are separate facts, and the page keeps them
+ * separate. An exporter that is present, running and pushing into a black hole
+ * used to render as "waiting for the first metrics — this takes a few seconds"
+ * indefinitely, which is the most confident possible way to be wrong. The
+ * backend now returns a verdict naming *why* nothing is arriving, because only
+ * one of the reasons (a stale target address) is fixed by re-installing.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Copy, ExternalLink, Check, Download, RefreshCw, Terminal } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  Copy,
+  ExternalLink,
+  Check,
+  Download,
+  RefreshCw,
+  Terminal,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -44,6 +60,8 @@ import { DestructiveConfirmDialog } from '@/components/ui/destructive-confirm-di
 import { useTheme } from '@/context/ThemeContext';
 import { useSelectedCluster } from '@/hooks/useSelectedCluster';
 import { notify } from '@/lib/notify';
+import { formatDuration } from '@/lib/time-utils';
+import type { InjectionState } from '@/types/tmmscope';
 
 /** A command the operator runs on the host, with a copy button. */
 function HostCommand({ command, hint }: { command: string; hint: string }) {
@@ -71,6 +89,35 @@ function HostCommand({ command, hint }: { command: string; hint: string }) {
           {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** What the exporter itself last said, verbatim.
+ *
+ * The whole reason "installed but silent" was hard to diagnose is that every
+ * symptom lives inside the pod. The exporter logs the reason on every failed
+ * push — "connection refused", "context deadline exceeded", a 4xx — and one of
+ * those lines is worth more than any amount of state bnkscope can infer from
+ * outside.
+ */
+function PushError({ pods }: { pods: InjectionState['pods'] }) {
+  const failing = pods.filter((p) => p.last_push_error);
+  if (failing.length === 0) return null;
+
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-muted-foreground">
+        Last error from the exporter:
+      </p>
+      {failing.map((p) => (
+        <pre
+          key={p.pod}
+          className="overflow-x-auto rounded border border-border bg-muted/30 px-2 py-1.5 font-mono text-[11px] text-muted-foreground"
+        >
+          {p.pod}: {p.last_push_error}
+        </pre>
+      ))}
     </div>
   );
 }
@@ -104,21 +151,31 @@ export default function TmmLive() {
   // Patching the pod and the first metrics arriving are seconds apart. Poll
   // fast across that gap, or the page sits unchanged for up to a SLOW interval
   // and the obvious move is to press inject again.
-  const settling = injectExporter.isSuccess;
-  const { data: telemetry } = useClusterTelemetry(selectedCluster, theme, settling);
-  const { data: injection } = useInjectionState(selectedCluster, settling);
+  const justInjected = injectExporter.isSuccess;
+  const { data: telemetry } = useClusterTelemetry(selectedCluster, theme, justInjected);
+  const { data: injection } = useInjectionState(selectedCluster, justInjected);
   const bindLabel = useBindTmmscopeLabel(theme);
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   // Metrics arrived — stop polling fast.
   useEffect(() => {
-    if (settling && telemetry?.streaming) injectExporter.reset();
-  }, [settling, telemetry?.streaming, injectExporter]);
+    if (justInjected && telemetry?.streaming) injectExporter.reset();
+  }, [justInjected, telemetry?.streaming, injectExporter]);
 
-  // Injected, but nothing is arriving yet. Derived from the data rather than
-  // from "did I just click", so a reload mid-wait still explains itself.
-  const awaitingMetrics =
-    !!injection?.injected_pods && !!telemetry && !telemetry.streaming;
+  // One verdict, from the backend, naming *why* metrics are or are not
+  // arriving. Replaces a local `injected && !streaming` guess that could only
+  // ever mean "still settling" — and so said so forever.
+  // The backend verdict is the refined answer; `telemetry.streaming` is the
+  // base fact it refines. Falling back matters when the injection probe has not
+  // answered yet, or cannot: reporting a fault bnkscope has not established is
+  // the same class of mistake as the optimism this replaces, pointed the other
+  // way.
+  const verdict =
+    injection?.verdict ?? (telemetry?.streaming ? ('streaming' as const) : undefined);
+  // A permanent sidecar lives in the pod template. Recreating the pod drops
+  // dataplane traffic and brings the exporter straight back, so the remove
+  // affordance must not be offered for one.
+  const removable = !!injection?.injected_pods && injection.permanent_pods === 0;
 
   const cluster = clusters.find((c) => c.id === selectedCluster);
   // Recorded by discovery when it finds the DPF operator — the same signal
@@ -139,10 +196,42 @@ export default function TmmLive() {
         onRefresh={() => void refetchStatus()}
         isRefreshing={isFetching}
       >
+        {/* Two facts, two badges. One green "telemetry up" for the *stack*
+            answering its own health check read as "telemetry is arriving" and
+            stayed green through a cluster that had stopped delivering entirely.
+            The stack badge is now neutral, and the green one is about this
+            cluster's metrics. */}
         {status?.running && (
-          <Badge variant="success">
+          <Badge variant="muted">
             <Activity className="mr-1 h-3 w-3" />
-            telemetry up
+            stack up
+          </Badge>
+        )}
+        {status?.running && telemetry && (
+          <Badge
+            variant={
+              verdict === 'streaming'
+                ? 'success'
+                : verdict === 'settling'
+                  ? 'info'
+                  : verdict === 'no_tmm' || verdict === 'not_installed'
+                    ? 'muted'
+                    : 'warning'
+            }
+          >
+            {verdict === 'streaming'
+              ? 'streaming'
+              : verdict === 'partial_delivery'
+                ? `${injection?.silent_pods} of ${injection?.injected_pods} silent`
+                : verdict === 'settling'
+                  ? 'starting up'
+                  : verdict === 'not_installed'
+                    ? 'no exporter'
+                    : verdict === 'no_tmm'
+                      ? 'no TMM'
+                      : typeof telemetry.last_seen_age === 'number'
+                        ? `stopped ${formatDuration(telemetry.last_seen_age)} ago`
+                        : 'not delivering'}
           </Badge>
         )}
         {status?.grafana_url && (
@@ -187,12 +276,37 @@ export default function TmmLive() {
       {status?.running && telemetry?.streaming && telemetry.dashboard_url && (
         <>
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            <Badge variant="success">streaming</Badge>
             <span>
               as <code className="font-mono text-foreground">{telemetry.streaming_as}</code>
               {telemetry.label_pinned && ' (bound manually)'}
             </span>
           </div>
+
+          {/* The cluster is streaming, but not from every pod. This is the
+              state a reinstalled node leaves behind: its siblings keep the
+              cluster-level answer green while it delivers nothing, and the
+              dashboard below is simply missing a node with no hint of it. */}
+          {verdict === 'partial_delivery' && injection && (
+            <div className="space-y-3 rounded-md border border-warning/30 bg-warning/10 p-3">
+              <p className="flex items-start gap-2 text-sm text-foreground">
+                <AlertTriangle
+                  className="mt-0.5 h-4 w-4 flex-none text-warning"
+                  aria-hidden="true"
+                />
+                <span>{injection.verdict_detail}</span>
+              </p>
+              <ul className="space-y-0.5 text-xs text-muted-foreground">
+                {injection.pods
+                  .filter((p) => p.injected && !p.streaming)
+                  .map((p) => (
+                    <li key={p.pod} className="font-mono">
+                      {p.pod} — running {formatDuration(p.running_for)}
+                    </li>
+                  ))}
+              </ul>
+              <PushError pods={injection.pods} />
+            </div>
+          )}
 
           <div className="overflow-hidden rounded-lg border border-border">
             <iframe
@@ -283,11 +397,28 @@ export default function TmmLive() {
             </p>
           )}
 
+          {/* It streamed once and stopped. Without this the page reads the
+              same as one that never streamed at all, which sends you looking
+              for a missing exporter that is in fact installed and running. */}
+          {typeof telemetry.last_seen_age === 'number' && (
+            <p className="mb-3 text-sm text-foreground">
+              This cluster last delivered metrics{' '}
+              <strong>{formatDuration(telemetry.last_seen_age)} ago</strong>
+              {telemetry.streaming_as && (
+                <>
+                  , as <code className="font-mono">{telemetry.streaming_as}</code>
+                </>
+              )}
+              .
+            </p>
+          )}
+
           <div className="mt-2 space-y-4">
-            {injection?.stale ? (
+            {verdict === 'stale_target' && injection ? (
               // Injected, running, and pushing into a closed socket. Without
               // saying so this is indistinguishable from never having injected
-              // — the exporter looks healthy and no metrics ever arrive.
+              // — the exporter looks healthy and no metrics ever arrive. This
+              // is the one case re-installing actually fixes.
               <div className="space-y-3 rounded-md border border-warning/30 bg-warning/10 p-3">
                 <p className="text-sm text-foreground">
                   The exporter is running in {injection.stale_pods} pod
@@ -297,18 +428,52 @@ export default function TmmLive() {
                   <code className="font-mono">{injection.expected_port}</code>.
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  The address is fixed when the exporter is injected and an ephemeral
-                  container cannot be edited, so this needs the TMM pods recreated:
-                  remove the exporter, then add it again. Removing restarts TMM and
-                  drops traffic.
+                  The address is fixed when the exporter is injected and cannot be
+                  edited in place, so this needs the TMM pods recreated: remove the
+                  exporter, then add it again. Removing restarts TMM and drops
+                  traffic.
                 </p>
-                <Button variant="outline" size="sm" onClick={() => setConfirmRemove(true)}>
-                  Remove the exporter — restarts TMM
-                </Button>
+                <PushError pods={injection.pods} />
+                {removable ? (
+                  <Button variant="outline" size="sm" onClick={() => setConfirmRemove(true)}>
+                    Remove the exporter — restarts TMM
+                  </Button>
+                ) : (
+                  <HostCommand
+                    command={telemetry.inject_command}
+                    hint="The exporter is part of the pod template here, so re-installing it is a host command:"
+                  />
+                )}
               </div>
-            ) : awaitingMetrics ? (
+            ) : verdict === 'not_delivering' && injection ? (
+              // Installed, running, pushing at the right address, and nothing
+              // arrives. Re-installing changes nothing — the pod cannot reach
+              // the collector — so this state deliberately offers no button
+              // that pretends otherwise.
+              <div className="space-y-3 rounded-md border border-warning/30 bg-warning/10 p-3">
+                <p className="flex items-start gap-2 text-sm text-foreground">
+                  <AlertTriangle
+                    className="mt-0.5 h-4 w-4 flex-none text-warning"
+                    aria-hidden="true"
+                  />
+                  <span>{injection.verdict_detail}</span>
+                </p>
+                <PushError pods={injection.pods} />
+                <p className="text-xs text-muted-foreground">
+                  Check the path from the TMM pod to{' '}
+                  <code className="font-mono">
+                    {injection.pods.find((p) => p.pushing_to)?.pushing_to ?? 'the collector'}
+                  </code>
+                  : the exporter shares the TMM pod's network namespace, so it egresses
+                  the way TMM does. A node that reaches Prometheus while its TMM pod
+                  does not is a dataplane routing problem, not a telemetry one.
+                </p>
+              </div>
+            ) : verdict === 'settling' && injection ? (
               // The exporter is in the pods but Prometheus has nothing yet.
               // Showing the inject button here is what got it pressed twice.
+              // Bounded by the backend: past the settle window this becomes one
+              // of the two states above instead of spinning forever.
               <div className="flex flex-wrap items-center gap-3">
                 <RefreshCw
                   className="h-4 w-4 animate-spin text-muted-foreground"
@@ -345,14 +510,17 @@ export default function TmmLive() {
                       ` — ${injection.injected_pods} already carry it`}
                   </span>
                 )}
+                {/* Belongs with the button it describes. Under
+                    `not_delivering` the exporter is already there and working,
+                    and offering to add another is the same wrong answer the old
+                    spinner gave, in more words. */}
+                <p className="w-full text-xs text-muted-foreground">
+                  Adds the exporter as an <strong>ephemeral container</strong>, which does
+                  not restart TMM. It is transient: it does not survive a pod restart, and
+                  nothing re-adds it.
+                </p>
               </div>
             )}
-
-            <p className="text-xs text-muted-foreground">
-              Adds the exporter as an <strong>ephemeral container</strong>, which does not
-              restart TMM. It is transient: it does not survive a pod restart, and nothing
-              re-adds it.
-            </p>
 
             <details className="text-xs text-muted-foreground">
               <summary className="cursor-pointer">Or run it on the host</summary>
@@ -387,7 +555,7 @@ export default function TmmLive() {
             Stop streaming from this cluster
           </summary>
           <div className="mt-3 space-y-4">
-            {injection?.injected_pods ? (
+            {removable ? (
               <>
                 <p className="text-sm text-muted-foreground">
                   An ephemeral container cannot be removed from a running pod. Clearing the
@@ -405,12 +573,12 @@ export default function TmmLive() {
               </>
             ) : (
               <p className="text-sm text-muted-foreground">
-                bnkscope did not inject this cluster's exporter, so there is nothing here to
-                remove. If a durable sidecar was installed with{' '}
-                <code>tmmscope inject --permanent</code>, remove it the same way:
+                {injection?.permanent_pods
+                  ? "This cluster's exporter is a permanent sidecar in the TMM pod template — recreating the pods would only bring it back. Remove it where it is defined:"
+                  : "bnkscope did not inject this cluster's exporter, so there is nothing here to remove. If a durable sidecar was installed with `tmmscope inject --permanent`, remove it the same way:"}
               </p>
             )}
-            {!injection?.injected_pods && (
+            {!removable && (
               <HostCommand
                 command={telemetry.eject_command}
                 hint="Run on the host:"

@@ -11,6 +11,7 @@ The two things worth guarding here are the ones that are silent when wrong:
 """
 
 import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -33,23 +34,48 @@ def make_pod(
     annotations=None,
     node_name="node-1",
     pushing_to="http://172.18.0.1:9491/api/v1/write",
+    started_ago=None,
 ):
+    """Enough of a V1Pod for the code under test.
+
+    ``containers`` may name the exporter too — that is a *permanent* sidecar,
+    which is what the cluster builders install and what every DPF cluster runs.
+    ``started_ago`` gives it a running container status that many seconds old,
+    which is what bounds "settling".
+    """
+
     def ec(cname):
         env = (
             [SimpleNamespace(name="TMSTAT_REMOTE_WRITE_URL", value=pushing_to)]
-            if cname == "tmm-stat-exporter" and pushing_to
+            if cname == inject_svc.SIDECAR_NAME and pushing_to
             else []
         )
         return SimpleNamespace(name=cname, env=env)
 
+    statuses = []
+    if started_ago is not None:
+        statuses.append(
+            SimpleNamespace(
+                name=inject_svc.SIDECAR_NAME,
+                state=SimpleNamespace(
+                    running=SimpleNamespace(
+                        started_at=datetime.now(UTC) - timedelta(seconds=started_ago)
+                    )
+                ),
+            )
+        )
+
     return SimpleNamespace(
         metadata=SimpleNamespace(name=name, namespace=namespace, annotations=annotations or {}),
         spec=SimpleNamespace(
-            containers=[SimpleNamespace(name=c) for c in containers],
+            containers=[ec(c) for c in containers],
             ephemeral_containers=[ec(c) for c in ephemeral] or None,
             init_containers=None,
             volumes=[SimpleNamespace(name=v) for v in volumes],
             node_name=node_name,
+        ),
+        status=SimpleNamespace(
+            container_statuses=statuses, ephemeral_container_statuses=[]
         ),
     )
 
@@ -475,3 +501,282 @@ class TestStaleInjection:
 
         assert state["stale"] is False
         assert state["pods"][0]["pushing_to"] is None
+
+
+class TestPermanentSidecar:
+    """The exporter that is part of the pod template.
+
+    ``_pushing_to`` read only ``ephemeral_containers``, so every permanently
+    injected cluster — which is all of DPF, where the exporter rides the
+    DaemonSet's pod template — reported no push target at all. It could never be
+    judged stale, and it was invisible in every way except a name in a container
+    list.
+    """
+
+    def test_its_push_url_is_readable(self):
+        pod = make_pod(containers=("f5-tmm", inject_svc.SIDECAR_NAME))
+        assert inject_svc._pushing_to(pod) == "http://172.18.0.1:9491/api/v1/write"
+        assert inject_svc._exporter_kind(pod) == inject_svc.KIND_PERMANENT
+
+    def test_an_ephemeral_one_still_reads(self):
+        pod = make_pod(ephemeral=(inject_svc.SIDECAR_NAME,))
+        assert inject_svc._pushing_to(pod) == "http://172.18.0.1:9491/api/v1/write"
+        assert inject_svc._exporter_kind(pod) == inject_svc.KIND_EPHEMERAL
+
+    def test_carrying_both_reports_the_durable_one(self):
+        # Injected over a cluster that already had the sidecar. The permanent
+        # one is the fact that outlives the pod.
+        pod = make_pod(
+            containers=("f5-tmm", inject_svc.SIDECAR_NAME),
+            ephemeral=(inject_svc.SIDECAR_NAME,),
+        )
+        assert inject_svc._exporter_kind(pod) == inject_svc.KIND_PERMANENT
+
+    def test_no_exporter_reads_as_nothing(self):
+        pod = make_pod()
+        assert inject_svc._pushing_to(pod) is None
+        assert inject_svc._exporter_kind(pod) is None
+
+    def test_started_at_comes_from_the_container_status(self):
+        pod = make_pod(containers=("f5-tmm", inject_svc.SIDECAR_NAME), started_ago=120)
+        started = inject_svc._exporter_started_at(pod)
+        assert 119 <= (datetime.now(UTC) - started).total_seconds() <= 130
+
+
+class TestVerdict:
+    """Why nothing is arriving, not just that nothing is.
+
+    "Injected but not streaming" was one state, rendered as "waiting for the
+    first metrics — this takes a few seconds", forever. It is at least four
+    states, and only one of them is fixed by re-installing the exporter, so the
+    ordering below is what decides whether an operator is sent to the right
+    repair or the wrong one.
+    """
+
+    @staticmethod
+    def _entry(**kwargs):
+        base = {
+            "pod": "f5-tmm-1",
+            "namespace": "ns",
+            "injected": True,
+            "kind": inject_svc.KIND_PERMANENT,
+            "pushing_to": "http://192.168.68.113:9491/api/v1/write",
+            "stale": False,
+            "started_at": None,
+            "running_for": 600.0,
+            "streaming": False,
+            "last_push_error": None,
+        }
+        base.update(kwargs)
+        return base
+
+    def _verdict(self, entries, *, cluster_streaming=False, streaming_known=True):
+        injected = [e for e in entries if e["injected"]]
+        stale = [e for e in entries if e["stale"]]
+        silent = [e for e in injected if not e["streaming"]] if streaming_known else []
+        oldest = max(
+            (e["running_for"] for e in silent if e["running_for"] is not None),
+            default=None,
+        )
+        return inject_svc._verdict(
+            entries=entries,
+            injected=injected,
+            stale=stale,
+            silent=silent,
+            oldest_silent=oldest,
+            cluster_streaming=cluster_streaming,
+            streaming_known=streaming_known,
+        )
+
+    def test_no_tmm_pods_at_all(self):
+        assert self._verdict([])[0] == inject_svc.VERDICT_NO_TMM
+
+    def test_pods_without_the_exporter(self):
+        entries = [self._entry(injected=False, kind=None)]
+        assert self._verdict(entries)[0] == inject_svc.VERDICT_NOT_INSTALLED
+
+    def test_delivering(self):
+        entries = [self._entry(streaming=True)]
+        assert self._verdict(entries)[0] == inject_svc.VERDICT_STREAMING
+
+    def test_freshly_started_is_settling_not_broken(self):
+        entries = [self._entry(running_for=10.0)]
+        assert self._verdict(entries)[0] == inject_svc.VERDICT_SETTLING
+
+    def test_running_past_the_settle_window_is_a_fault(self):
+        """The whole point. Ten minutes in, "a few seconds" is a lie."""
+        entries = [self._entry(running_for=inject_svc.SETTLE_SECONDS + 1)]
+        verdict, detail = self._verdict(entries)
+        assert verdict == inject_svc.VERDICT_NOT_DELIVERING
+        # And says so, rather than sending the operator round the loop again.
+        assert "re-installing will not change anything" in detail
+
+    def test_a_moved_target_outranks_a_settle_window_that_has_not_elapsed(self):
+        # The only verdict re-installing actually fixes, so it must win.
+        entries = [self._entry(stale=True, running_for=5.0)]
+        assert self._verdict(entries)[0] == inject_svc.VERDICT_STALE_TARGET
+
+    def test_one_silent_pod_among_streaming_siblings(self):
+        """A reinstalled node. The cluster keeps streaming from the others, so
+        a cluster-level answer reports everything as fine while one node
+        delivers nothing — and the dashboard is simply missing a line."""
+        entries = [
+            self._entry(pod="f5-tmm-1", streaming=True),
+            self._entry(pod="f5-tmm-2", streaming=False, running_for=600.0),
+        ]
+        verdict, _ = self._verdict(entries, cluster_streaming=True)
+        assert verdict == inject_svc.VERDICT_PARTIAL_DELIVERY
+
+    def test_the_oldest_silent_exporter_decides_not_the_newest(self):
+        # One pod injected seconds ago does not excuse a sibling that has been
+        # failing for an hour — and that sibling is the reason for asking.
+        entries = [
+            self._entry(pod="f5-tmm-1", running_for=5.0),
+            self._entry(pod="f5-tmm-2", running_for=3600.0),
+        ]
+        assert self._verdict(entries)[0] == inject_svc.VERDICT_NOT_DELIVERING
+
+    def test_no_prometheus_claims_nothing(self):
+        # With no collector to ask, a working exporter and a broken one look
+        # identical. "Not delivering" there would be a guess.
+        entries = [self._entry(running_for=9999.0)]
+        verdict, _ = self._verdict(entries, streaming_known=False)
+        assert verdict == inject_svc.VERDICT_SETTLING
+
+
+class TestDeliveryState:
+    """get_injection_state, with Prometheus's per-pod answer folded in."""
+
+    @pytest.fixture()
+    def patched(self, monkeypatch):
+        core = MagicMock()
+        monkeypatch.setattr(inject_svc.k8s_client, "CoreV1Api", lambda _c: core)
+        return core
+
+    def _targets(self, monkeypatch, *pods):
+        monkeypatch.setattr(
+            inject_svc,
+            "find_tmm_pods",
+            lambda _c: [
+                {"name": p.metadata.name, "namespace": p.metadata.namespace, "phase": "Running"}
+                for p in pods
+            ],
+        )
+
+    def test_a_permanent_sidecar_at_the_right_port_is_not_stale_but_is_broken(
+        self, patched, monkeypatch
+    ):
+        # The live case: installed, running, correct address, nothing arriving.
+        pod = make_pod(containers=("f5-tmm", inject_svc.SIDECAR_NAME), started_ago=600)
+        self._targets(monkeypatch, pod)
+        patched.read_namespaced_pod.return_value = pod
+
+        state = inject_svc.get_injection_state(
+            MagicMock(), expected_port=9491, streaming_pods=set()
+        )
+
+        assert state["injected_pods"] == 1
+        assert state["permanent_pods"] == 1
+        assert state["pods"][0]["pushing_to"] == "http://172.18.0.1:9491/api/v1/write"
+        assert state["stale"] is False
+        assert state["verdict"] == inject_svc.VERDICT_NOT_DELIVERING
+
+    def test_reads_the_exporter_log_when_something_is_wrong(self, patched, monkeypatch):
+        # Every symptom of this lives inside the pod, and the exporter logs the
+        # reason on every failed push. That line is worth more than anything
+        # bnkscope can infer from outside.
+        pod = make_pod(containers=("f5-tmm", inject_svc.SIDECAR_NAME), started_ago=600)
+        self._targets(monkeypatch, pod)
+        patched.read_namespaced_pod.return_value = pod
+        patched.read_namespaced_pod_log.return_value = (
+            "2026/08/26 08:32:40 remote_write: Post \"http://h:9491/api/v1/write\": "
+            "dial tcp: connect: connection refused\n"
+        )
+
+        state = inject_svc.get_injection_state(
+            MagicMock(), expected_port=9491, streaming_pods=set()
+        )
+
+        assert "connection refused" in state["pods"][0]["last_push_error"]
+
+    def test_a_working_exporter_costs_no_log_request(self, patched, monkeypatch):
+        pod = make_pod(containers=("f5-tmm", inject_svc.SIDECAR_NAME), started_ago=600)
+        self._targets(monkeypatch, pod)
+        patched.read_namespaced_pod.return_value = pod
+
+        state = inject_svc.get_injection_state(
+            MagicMock(),
+            expected_port=9491,
+            streaming_pods={pod.metadata.name},
+            cluster_streaming=True,
+        )
+
+        assert state["verdict"] == inject_svc.VERDICT_STREAMING
+        patched.read_namespaced_pod_log.assert_not_called()
+
+    def test_counts_delivery_per_pod(self, patched, monkeypatch):
+        pods = [
+            make_pod(
+                name=f"f5-tmm-{i}",
+                containers=("f5-tmm", inject_svc.SIDECAR_NAME),
+                started_ago=600,
+            )
+            for i in (1, 2)
+        ]
+        self._targets(monkeypatch, *pods)
+        patched.read_namespaced_pod.side_effect = lambda name, namespace: next(
+            p for p in pods if p.metadata.name == name
+        )
+
+        state = inject_svc.get_injection_state(
+            MagicMock(),
+            expected_port=9491,
+            streaming_pods={"f5-tmm-1"},
+            cluster_streaming=True,
+        )
+
+        assert (state["streaming_pods"], state["silent_pods"]) == (1, 1)
+        assert state["verdict"] == inject_svc.VERDICT_PARTIAL_DELIVERY
+
+
+class TestRemovePermanent:
+    @pytest.fixture()
+    def patched(self, monkeypatch):
+        core = MagicMock()
+        monkeypatch.setattr(inject_svc.k8s_client, "CoreV1Api", lambda _c: core)
+        return core
+
+    def _targets(self, monkeypatch, *pods):
+        monkeypatch.setattr(
+            inject_svc,
+            "find_tmm_pods",
+            lambda _c: [
+                {"name": p.metadata.name, "namespace": p.metadata.namespace, "phase": "Running"}
+                for p in pods
+            ],
+        )
+
+    def test_refuses_to_recreate_pods_for_a_sidecar_in_the_template(
+        self, patched, monkeypatch
+    ):
+        """Recreating the pod drops dataplane traffic and the exporter comes
+        back with the replacement — all cost, no effect."""
+        pod = make_pod(containers=("f5-tmm", inject_svc.SIDECAR_NAME))
+        self._targets(monkeypatch, pod)
+        patched.read_namespaced_pod.return_value = pod
+
+        result = inject_svc.remove(MagicMock())
+
+        patched.delete_namespaced_pod.assert_not_called()
+        assert result["deleted"] == []
+        assert "permanent sidecar" in result["failed"][0]["error"]
+
+    def test_still_recreates_for_an_ephemeral_one(self, patched, monkeypatch):
+        pod = make_pod(ephemeral=(inject_svc.SIDECAR_NAME,))
+        self._targets(monkeypatch, pod)
+        patched.read_namespaced_pod.return_value = pod
+
+        result = inject_svc.remove(MagicMock())
+
+        patched.delete_namespaced_pod.assert_called_once()
+        assert result["deleted"] == [pod.metadata.name]

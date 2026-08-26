@@ -169,7 +169,38 @@ dropped. It reads the shared `tmstat` segment read-only and pushes outbound. The
 image is pinned by bnkscope and is not something a request can choose.
 
 **It is transient.** An ephemeral container does not survive a pod restart, and
-nothing re-adds it. Re-inject after a TMM restart.
+nothing re-adds it. Re-inject after a TMM restart — the page says **no exporter**
+when that has happened.
+
+### When nothing arrives
+
+Installed and delivering are different facts, and the page keeps them apart.
+The header carries two badges: **stack up** means Grafana answered its own
+health check, and says nothing about metrics; the badge beside it is about the
+cluster you are looking at.
+
+| What you see | What it means | What to do |
+|---|---|---|
+| **streaming** | Every exporter is delivering | Nothing |
+| **starting up** | Installed seconds ago, first metrics not in yet | Wait — this really does take a few seconds |
+| **no exporter** | No `f5-tmm` pod carries it | **Add the exporter** |
+| **N of M silent** | The cluster is streaming, but not from every pod | Check the named pod's path to Prometheus |
+| **stopped Nm ago** | It delivered once and no longer does | Read the reason on the card below |
+
+For the last two the page shows the exporter's own last `remote_write` error —
+`connection refused`, `context deadline exceeded`, a 4xx — because every symptom
+otherwise lives inside the pod.
+
+Two causes look identical from outside and are not:
+
+- **The address moved.** The exporter is pushing at a port Prometheus is no
+  longer on. That address is fixed when the exporter is installed and cannot be
+  edited, so this one genuinely needs re-installing, and the page offers it.
+- **The address is right and the pod cannot reach it.** Re-installing changes
+  nothing, so the page does not offer it. The exporter shares the TMM pod's
+  network namespace and egresses the way TMM does — a node that reaches
+  Prometheus while its TMM pod does not is a dataplane routing problem, not a
+  telemetry one.
 
 ### Removing it
 
@@ -177,6 +208,12 @@ An ephemeral container cannot be removed from a running pod. The only way to
 clear one is to **recreate the TMM pods**, which drops dataplane traffic — so
 removal asks you to type the cluster name first, while adding is a single click.
 That asymmetry is deliberate.
+
+If the exporter is a **permanent sidecar** — installed by `tmmscope inject
+--permanent`, or built into the pod template by the cluster builder, which is
+how DPF clusters run it — bnkscope will not offer to recreate the pods. It is in
+the template, so the replacement pod comes back carrying it: all cost, no
+effect. Remove it where it is defined, with `tmmscope eject`.
 
 If you would rather not restart anything, leave it: it disappears on its own at
 the pod's next restart.

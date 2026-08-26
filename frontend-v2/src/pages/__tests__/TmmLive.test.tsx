@@ -49,6 +49,7 @@ function serveStatus(overrides: Record<string, unknown> = {}) {
         prometheus_url: 'http://localhost:9491',
         updated_at: '2026-08-23T00:00:00Z',
         streaming_clusters: ['dpu-cplane-tenant1'],
+        last_seen: { 'dpu-cplane-tenant1': 3 },
         dashboards: [
           { uid: 'tmm-realtime', title: 'TMM Real-Time', description: 'counters' },
         ],
@@ -82,6 +83,12 @@ function serveInjection(overrides: Record<string, unknown> = {}) {
         stale_pods: 0,
         stale_target: null,
         expected_port: 9491,
+        permanent_pods: 0,
+        streaming_pods: 0,
+        silent_pods: 0,
+        verdict: null,
+        verdict_detail: null,
+        settle_seconds: 90,
         ...overrides,
       }),
     ),
@@ -99,6 +106,7 @@ function serveTelemetry(overrides: Record<string, unknown> = {}) {
         streaming: true,
         label_pinned: false,
         available_labels: ['dpu-cplane-tenant1'],
+        last_seen_age: 3,
         dashboard_url:
           'http://localhost:3000/d/tmm-realtime?var-cluster=dpu-cplane-tenant1&theme=dark&kiosk',
         inject_command:
@@ -185,6 +193,29 @@ describe('TmmLive', () => {
       expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
     });
 
+    it('does not let the stack answering its own health check read as metrics', async () => {
+      // One green "telemetry up" badge meant only that Grafana answered
+      // /api/health. It stayed green through a cluster that had stopped
+      // delivering entirely, which is the most confident possible way to be
+      // wrong about the one thing the page is for.
+      serveStatus({ streaming_clusters: [], last_seen: { 'dpu-cplane-tenant1': 543 } });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: 543,
+      });
+      serveInjection({ tmm_pods: 1, injected_pods: 1, injected: true, verdict: 'not_delivering' });
+
+      render(<TmmLive />);
+
+      await waitFor(() =>
+        expect(screen.getByText('stopped 9m ago')).toBeInTheDocument(),
+      );
+      expect(screen.getByText('stack up')).toBeInTheDocument();
+      expect(screen.queryByText('telemetry up')).not.toBeInTheDocument();
+    });
+
     it('names the label the telemetry arrives under', async () => {
       serveStatus();
       serveTelemetry();
@@ -193,6 +224,79 @@ describe('TmmLive', () => {
 
       await waitFor(() => expect(screen.getByText('streaming')).toBeInTheDocument());
       expect(screen.getAllByText('dpu-cplane-tenant1').length).toBeGreaterThan(0);
+    });
+
+    it('names the one node that went silent while the cluster kept streaming', async () => {
+      // Reinstall one DPU of several and the cluster-level answer stays green:
+      // its siblings are still pushing. The dashboard is simply missing a node,
+      // with nothing on the page to say which or why.
+      serveStatus();
+      serveTelemetry();
+      serveInjection({
+        tmm_pods: 2,
+        injected_pods: 2,
+        injected: true,
+        streaming_pods: 1,
+        silent_pods: 1,
+        verdict: 'partial_delivery',
+        verdict_detail: '1 of 2 exporter(s) stopped delivering.',
+        pods: [
+          {
+            pod: 'tmm-alive',
+            namespace: 'ns',
+            injected: true,
+            kind: 'permanent',
+            pushing_to: 'http://192.168.68.113:9491/api/v1/write',
+            stale: false,
+            started_at: null,
+            running_for: 4000,
+            streaming: true,
+            last_push_error: null,
+          },
+          {
+            pod: 'tmm-reinstalled',
+            namespace: 'ns',
+            injected: true,
+            kind: 'permanent',
+            pushing_to: 'http://192.168.68.113:9491/api/v1/write',
+            stale: false,
+            started_at: null,
+            running_for: 600,
+            streaming: false,
+            last_push_error: 'remote_write: connect: connection refused',
+          },
+        ],
+      });
+
+      render(<TmmLive />);
+
+      await waitFor(() =>
+        expect(screen.getByText(/stopped delivering/i)).toBeInTheDocument(),
+      );
+      // Named in the list of silent pods, and again on its own error line.
+      expect(screen.getAllByText(/tmm-reinstalled/).length).toBeGreaterThan(0);
+      expect(screen.getByText(/connection refused/)).toBeInTheDocument();
+      // The one that is fine is not called out as a problem.
+      expect(screen.queryByText(/tmm-alive/)).not.toBeInTheDocument();
+    });
+
+    it('will not offer to recreate pods for a sidecar it did not put there', async () => {
+      // A permanent sidecar is in the pod template. Deleting the pod drops
+      // dataplane traffic and the exporter comes back with the replacement —
+      // all cost, no effect.
+      serveStatus();
+      serveTelemetry();
+      serveInjection({ injected_pods: 2, injected: true, permanent_pods: 2 });
+
+      render(<TmmLive />);
+
+      await waitFor(() =>
+        expect(screen.getByText('Stop streaming from this cluster')).toBeInTheDocument(),
+      );
+      expect(
+        screen.queryByRole('button', { name: /remove the exporter/i }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/permanent sidecar in the TMM pod template/i)).toBeInTheDocument();
     });
 
     it('keeps removal behind a fold', async () => {
@@ -261,6 +365,7 @@ describe('TmmLive', () => {
         streaming_as: null,
         available_labels: [],
         dashboard_url: null,
+        last_seen_age: null,
       });
 
       render(<TmmLive />);
@@ -280,8 +385,19 @@ describe('TmmLive', () => {
       // Prometheus has nothing yet, and the page went back to showing an
       // inviting "Add the exporter" as though the click had done nothing.
       serveStatus({ streaming_clusters: [] });
-      serveTelemetry({ streaming: false, available_labels: [], dashboard_url: null });
-      serveInjection({ tmm_pods: 3, injected_pods: 3, injected: true });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: null,
+      });
+      serveInjection({
+        tmm_pods: 3,
+        injected_pods: 3,
+        injected: true,
+        verdict: 'settling',
+        verdict_detail: 'The exporter started 12s ago.',
+      });
 
       render(<TmmLive />);
 
@@ -295,8 +411,19 @@ describe('TmmLive', () => {
 
     it('says how many pods are already carrying it while waiting', async () => {
       serveStatus({ streaming_clusters: [] });
-      serveTelemetry({ streaming: false, available_labels: [], dashboard_url: null });
-      serveInjection({ tmm_pods: 3, injected_pods: 3, injected: true });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: null,
+      });
+      serveInjection({
+        tmm_pods: 3,
+        injected_pods: 3,
+        injected: true,
+        verdict: 'settling',
+        verdict_detail: 'The exporter started 12s ago.',
+      });
 
       render(<TmmLive />);
 
@@ -313,7 +440,12 @@ describe('TmmLive', () => {
       // pushing into a closed socket. Every graph said "no data" and the page
       // offered no way to tell that apart from never having injected.
       serveStatus({ streaming_clusters: [] });
-      serveTelemetry({ streaming: false, available_labels: [], dashboard_url: null });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: null,
+      });
       serveInjection({
         tmm_pods: 3,
         injected_pods: 3,
@@ -322,6 +454,8 @@ describe('TmmLive', () => {
         stale_pods: 3,
         stale_target: 'http://192.168.99.1:9492/api/v1/write',
         expected_port: 9491,
+        verdict: 'stale_target',
+        verdict_detail: 'The exporter is pushing to a port nothing is listening on.',
       });
 
       render(<TmmLive />);
@@ -340,7 +474,12 @@ describe('TmmLive', () => {
 
     it('says how many pods it would touch', async () => {
       serveStatus({ streaming_clusters: [] });
-      serveTelemetry({ streaming: false, available_labels: [], dashboard_url: null });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: null,
+      });
       serveInjection({ tmm_pods: 3 });
 
       render(<TmmLive />);
@@ -354,7 +493,12 @@ describe('TmmLive', () => {
       // A disabled "Add the exporter" under copy reading "Add the exporter to
       // this cluster's TMM pods" is an instruction that cannot be followed.
       serveStatus({ streaming_clusters: [] });
-      serveTelemetry({ streaming: false, available_labels: [], dashboard_url: null });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: null,
+      });
       serveInjection({ tmm_pods: 0 });
 
       render(<TmmLive />);
@@ -381,7 +525,12 @@ describe('TmmLive', () => {
         },
       ]);
       serveStatus({ streaming_clusters: [] });
-      serveTelemetry({ streaming: false, available_labels: [], dashboard_url: null });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: null,
+      });
       serveInjection({ tmm_pods: 0 });
 
       render(<TmmLive />);
@@ -397,7 +546,12 @@ describe('TmmLive', () => {
     it('says plainly that the injection is transient', async () => {
       // The one property an operator must not have to discover for themselves.
       serveStatus({ streaming_clusters: [] });
-      serveTelemetry({ streaming: false, available_labels: [], dashboard_url: null });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: null,
+      });
 
       render(<TmmLive />);
 
@@ -409,9 +563,93 @@ describe('TmmLive', () => {
       expect(screen.getByText(/does not\s+restart TMM/)).toBeInTheDocument();
     });
 
+    it('stops claiming the metrics are on their way once they plainly are not', async () => {
+      // The bug: an exporter installed, running, and pushing at the right
+      // address into a black hole rendered as "waiting for the first metrics —
+      // this takes a few seconds", forever. Re-installing it fixes nothing, so
+      // the page must say what is actually wrong instead of offering hope.
+      serveStatus({ streaming_clusters: [], last_seen: { 'dpu-cplane-tenant1': 543 } });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: 543,
+      });
+      serveInjection({
+        tmm_pods: 1,
+        injected_pods: 1,
+        injected: true,
+        permanent_pods: 1,
+        silent_pods: 1,
+        verdict: 'not_delivering',
+        verdict_detail:
+          'The exporter has been running 9m and pushing to ' +
+          'http://192.168.68.113:9491/api/v1/write, and nothing has arrived.',
+        pods: [
+          {
+            pod: 'tmm-j7mxf',
+            namespace: 'dpf-operator-system',
+            injected: true,
+            kind: 'permanent',
+            pushing_to: 'http://192.168.68.113:9491/api/v1/write',
+            stale: false,
+            started_at: '2026-08-26T08:20:15Z',
+            running_for: 600,
+            streaming: false,
+            last_push_error:
+              'remote_write: Post "http://192.168.68.113:9491/api/v1/write": ' +
+              'dial tcp: connect: connection refused',
+          },
+        ],
+      });
+
+      render(<TmmLive />);
+
+      await waitFor(() =>
+        expect(screen.getByText(/nothing has arrived/i)).toBeInTheDocument(),
+      );
+      // The exporter's own words. Every symptom of this lives inside the pod,
+      // and this line is the one that names the cause.
+      expect(screen.getByText(/connection refused/)).toBeInTheDocument();
+      expect(screen.queryByText(/waiting for the first metrics/i)).not.toBeInTheDocument();
+      // Neither offered action would change anything here.
+      expect(
+        screen.queryByRole('button', { name: /add the exporter/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /remove the exporter/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('says when it last delivered, not just that it is not delivering now', async () => {
+      // Prometheus drops a series once it goes stale, so "not streaming" alone
+      // reads identically for a cluster that stopped nine minutes ago and one
+      // that never streamed — and sends you hunting a missing exporter that is
+      // in fact installed and running.
+      serveStatus({ streaming_clusters: [] });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: 543,
+      });
+
+      render(<TmmLive />);
+
+      await waitFor(() =>
+        expect(screen.getByText(/last delivered metrics/i)).toBeInTheDocument(),
+      );
+      expect(screen.getByText('9m ago')).toBeInTheDocument();
+    });
+
     it('keeps the host command as an escape hatch', async () => {
       serveStatus({ streaming_clusters: [] });
-      serveTelemetry({ streaming: false, available_labels: [], dashboard_url: null });
+      serveTelemetry({
+        streaming: false,
+        available_labels: [],
+        dashboard_url: null,
+        last_seen_age: null,
+      });
 
       render(<TmmLive />);
 

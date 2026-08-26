@@ -53,6 +53,11 @@ class TmmscopeStatusResponse(BaseModel):
     # cluster= label values Prometheus holds f5tmm_up series for. This, not the
     # discovery file, is what "injected" actually means.
     streaming_clusters: list[str] = Field(default_factory=list)
+    # cluster= label -> seconds since its last sample, over the last few hours.
+    # Carries labels that have *stopped*, which `streaming_clusters` cannot:
+    # Prometheus drops a series from the instant vector after its staleness
+    # window, so a cluster that died looks like one that never existed.
+    last_seen: dict[str, float] = Field(default_factory=dict)
     dashboards: list[TmmscopeDashboard] = Field(default_factory=list)
     detail: str | None = None
 
@@ -74,6 +79,10 @@ class ClusterTelemetryResponse(BaseModel):
     # Every label Prometheus currently holds TMM series for. Lets the UI offer
     # a picker when the automatic match found nothing.
     available_labels: list[str] = Field(default_factory=list)
+    # Seconds since this cluster's most recent sample, whether or not it is
+    # still streaming. None means nothing has arrived under this label within
+    # the lookback window at all.
+    last_seen_age: float | None = None
     # Embeddable, kiosk-mode, scoped to `streaming_as`.
     dashboard_url: str | None = None
     # Commands the operator runs on the host to start/stop streaming.
@@ -142,7 +151,13 @@ def get_cluster_telemetry(
 
     status = tmmscope_service.get_status()
     pinned = (cluster.meta_data or {}).get(_LABEL_KEY)
-    streaming_as = _match_label(cluster, status.streaming_clusters)
+    # Match over labels seen *recently*, not only those live this instant.
+    # Matching on the live set alone means a cluster loses its own identity the
+    # moment it stops streaming — the page forgets which label it was, and can
+    # no longer say when it stopped.
+    known = sorted(set(status.streaming_clusters) | set(status.last_seen))
+    label = _match_label(cluster, known)
+    streaming_as = label if label in status.streaming_clusters else None
 
     url = None
     if status.running and status.grafana_url and streaming_as:
@@ -162,10 +177,11 @@ def get_cluster_telemetry(
         "cluster_id": cluster.id,
         "cluster_name": cluster.name,
         "context": cluster.context,
-        "streaming_as": streaming_as,
+        "streaming_as": streaming_as or label,
         "streaming": streaming_as is not None,
-        "label_pinned": bool(pinned) and streaming_as == pinned,
+        "label_pinned": bool(pinned) and label == pinned,
         "available_labels": status.streaming_clusters,
+        "last_seen_age": status.last_seen.get(label) if label else None,
         "dashboard_url": url,
         "inject_command": tmmscope_service.inject_command(context, cluster.name),
         "eject_command": tmmscope_service.eject_command(context),
@@ -208,9 +224,22 @@ class InjectionPod(BaseModel):
     pod: str
     namespace: str
     injected: bool
+    # "permanent" (in the pod template — what the cluster builders install) or
+    # "ephemeral" (what bnkscope injects). Only the ephemeral one can be cleared
+    # by recreating the pod; a permanent one comes straight back.
+    kind: str | None = None
     # The remote-write URL baked into the exporter. Immutable once injected.
     pushing_to: str | None = None
     stale: bool = False
+    started_at: str | None = None
+    # Seconds the exporter container has been running. Bounds "settling".
+    running_for: float | None = None
+    # Prometheus holds live series for *this pod*. Installed and delivering are
+    # different facts, and one pod of several can lose the second one.
+    streaming: bool = False
+    # The exporter's own last remote_write complaint, read only when something
+    # is wrong. This is the line that names the actual cause.
+    last_push_error: str | None = None
 
 
 class InjectionStateResponse(BaseModel):
@@ -231,6 +260,18 @@ class InjectionStateResponse(BaseModel):
     stale_pods: int = 0
     stale_target: str | None = None
     expected_port: int | None = None
+    # Exporters that are part of the pod template rather than injected here.
+    permanent_pods: int = 0
+    # Delivering / installed-but-silent, per pod.
+    streaming_pods: int = 0
+    silent_pods: int = 0
+    # One of: no_tmm, not_installed, settling, streaming, partial_delivery,
+    # stale_target, not_delivering. Exactly one holds, and each names a
+    # different action — only `stale_target` is fixed by re-installing.
+    verdict: str | None = None
+    verdict_detail: str | None = None
+    # How long an exporter may run without metrics before that is a fault.
+    settle_seconds: int | None = None
     added: list[str] = Field(default_factory=list)
     skipped: list[str] = Field(default_factory=list)
     deleted: list[str] = Field(default_factory=list)
@@ -256,6 +297,29 @@ class InjectRequest(BaseModel):
     remote_write_url: str | None = None
 
 
+def _delivery_facts(cluster: KubernetesCluster) -> tuple[set[str] | None, bool | None]:
+    """(pods delivering right now, whether the cluster is streaming at all).
+
+    ``None`` for both when there is no Prometheus to ask — which is different
+    from "nothing is streaming", and the caller must not conflate them: with no
+    collector reachable, an exporter that is working looks identical to one that
+    is not.
+    """
+    status = tmmscope_service.get_status()
+    if not status.running or not status.prometheus_url:
+        return None, None
+    known = sorted(set(status.streaming_clusters) | set(status.last_seen))
+    label = _match_label(cluster, known)
+    if not label:
+        # Nothing has ever arrived under a label this cluster answers to, so no
+        # pod of it can be streaming. That is a real, empty answer.
+        return set(), False
+    return (
+        tmmscope_service.streaming_pods(status.prometheus_url, label),
+        label in status.streaming_clusters,
+    )
+
+
 def _cluster_client(cluster_id: int, db: Session):
     """(cluster, api_client) — KubernetesService raises NotFound for us."""
     k8s = KubernetesService(db)
@@ -267,10 +331,14 @@ def _cluster_client(cluster_id: int, db: Session):
 @handle_route_errors("read tmmscope injection state")
 def get_injection(cluster_id: int, db: Session = Depends(get_db)):
     """Which of this cluster's f5-tmm pods currently carry the exporter."""
-    _cluster, api_client = _cluster_client(cluster_id, db)
+    cluster, api_client = _cluster_client(cluster_id, db)
     ingest = tmmscope_service.prometheus_ingest()
+    live, cluster_streaming = _delivery_facts(cluster)
     state = tmmscope_inject_service.get_injection_state(
-        api_client, expected_port=ingest[0] if ingest else None
+        api_client,
+        expected_port=ingest[0] if ingest else None,
+        streaming_pods=live,
+        cluster_streaming=cluster_streaming,
     )
     return {"cluster_id": cluster_id, **state}
 
@@ -315,8 +383,12 @@ def inject_exporter(
         prometheus_port=port,
         remote_write_path=path,
     )
+    live, cluster_streaming = _delivery_facts(cluster)
     state = tmmscope_inject_service.get_injection_state(
-        api_client, expected_port=port
+        api_client,
+        expected_port=port,
+        streaming_pods=live,
+        cluster_streaming=cluster_streaming,
     )
     return {
         "cluster_id": cluster_id,
@@ -340,11 +412,15 @@ def remove_exporter(cluster_id: int, db: Session = Depends(get_db)):
     only way — and it drops dataplane traffic while the pods come back. The UI
     confirms explicitly before calling this.
     """
-    _cluster, api_client = _cluster_client(cluster_id, db)
+    cluster, api_client = _cluster_client(cluster_id, db)
     result = tmmscope_inject_service.remove(api_client)
     ingest = tmmscope_service.prometheus_ingest()
+    live, cluster_streaming = _delivery_facts(cluster)
     state = tmmscope_inject_service.get_injection_state(
-        api_client, expected_port=ingest[0] if ingest else None
+        api_client,
+        expected_port=ingest[0] if ingest else None,
+        streaming_pods=live,
+        cluster_streaming=cluster_streaming,
     )
     return {
         "cluster_id": cluster_id,

@@ -41,6 +41,22 @@ def _no_ambient_config(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """No test here may reach a real Prometheus.
+
+    Not hypothetical: these run on the same machine as the stack they describe,
+    so an unpatched probe quietly answered from the operator's *live* telemetry
+    and a test asserting "nothing is streaming" failed with a real cluster name
+    in the message. A test that passes only when the host is idle is not a test.
+    """
+
+    def _refuse(*args, **kwargs):
+        raise requests.ConnectionError("no network in tests")
+
+    monkeypatch.setattr(svc.requests, "get", _refuse)
+
+
 def _live_doc(grafana_port=3000, prometheus_port=9491):
     """The shape `tmmscope up` writes."""
     return {
@@ -97,6 +113,7 @@ class TestGetStatus:
         endpoints_at(_live_doc())
         monkeypatch.setattr(svc, "_grafana_healthy", lambda url: True)
         monkeypatch.setattr(svc, "_streaming_clusters", lambda url: ["lab-a"])
+        monkeypatch.setattr(svc, "last_seen_ages", lambda url: {"lab-a": 2.0})
 
         status = svc.get_status()
         assert status.configured is True
@@ -123,6 +140,7 @@ class TestGetStatus:
         endpoints_at(_live_doc())
         monkeypatch.setattr(svc, "_grafana_healthy", lambda url: True)
         monkeypatch.setattr(svc, "_streaming_clusters", lambda url: [])
+        monkeypatch.setattr(svc, "last_seen_ages", lambda url: {})
 
         status = svc.get_status()
         assert status.running is True
@@ -136,6 +154,7 @@ class TestGetStatus:
         endpoints_at(_live_doc(grafana_port=3005, prometheus_port=9495))
         monkeypatch.setattr(svc, "_grafana_healthy", lambda url: True)
         monkeypatch.setattr(svc, "_streaming_clusters", lambda url: [])
+        monkeypatch.setattr(svc, "last_seen_ages", lambda url: {})
 
         status = svc.get_status()
         assert status.grafana_url == "http://localhost:3005"
@@ -151,6 +170,7 @@ class TestGetStatus:
         endpoints_at(_live_doc())
         monkeypatch.setattr(svc, "_grafana_healthy", lambda url: True)
         monkeypatch.setattr(svc, "_streaming_clusters", lambda url: ["lab-a"])
+        monkeypatch.setattr(svc, "last_seen_ages", lambda url: {"lab-a": 2.0})
 
         payload = svc.get_status().as_dict()
         assert [d["uid"] for d in payload["dashboards"]] == ["tmm-realtime", "tmm-ai-tokens"]
@@ -288,6 +308,189 @@ class TestStreamingClusters:
 
         monkeypatch.setattr(svc.requests, "get", _boom)
         assert svc._streaming_clusters("http://localhost:9491") == []
+
+
+class TestLastSeen:
+    """When a cluster last delivered, as opposed to whether it is delivering.
+
+    Prometheus drops a series from the instant vector once nothing has arrived
+    for its staleness window, so five minutes after a cluster stops it becomes
+    indistinguishable from one that never streamed at all. That gap is what let
+    a dead exporter read as "waiting for the first metrics".
+    """
+
+    @staticmethod
+    def _serve(monkeypatch, by_query):
+        """Answer each of the two queries with its own result rows."""
+        seen = []
+
+        class _Resp:
+            def __init__(self, body):
+                self.status_code = 200
+                self._body = body
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"status": "success", "data": {"result": self._body}}
+
+        def _get(url, params=None, timeout=None):
+            query = params["query"]
+            seen.append(query)
+            rows = next(
+                (v for k, v in by_query.items() if k in query),
+                [],
+            )
+            return _Resp(rows)
+
+        monkeypatch.setattr(svc.requests, "get", _get)
+        return seen
+
+    def test_reports_age_per_cluster(self, monkeypatch):
+        rows = [
+            {"metric": {"cluster": "lab-a"}, "value": [0, "543.2"]},
+            {"metric": {"cluster": "lab-b"}, "value": [0, "2.1"]},
+        ]
+        self._serve(monkeypatch, {"max_over_time": rows, "timestamp(f5tmm_up))": rows})
+
+        ages = svc.last_seen_ages("http://localhost:9491")
+        assert round(ages["lab-a"]) == 543
+        assert round(ages["lab-b"]) == 2
+
+    def test_asks_over_a_window_not_an_instant(self, monkeypatch):
+        """`timestamp(last_over_time(...))` is the obvious spelling and returns
+        the *evaluation* time — always now, for every cluster. The subquery is
+        the one that answers when the sample actually landed."""
+        seen = self._serve(monkeypatch, {})
+        svc.last_seen_ages("http://localhost:9491")
+
+        assert any("max_over_time(timestamp(f5tmm_up)" in q for q in seen)
+        assert not any("last_over_time" in q for q in seen)
+
+    def test_a_stream_that_just_restarted_is_not_reported_as_long_dead(
+        self, monkeypatch
+    ):
+        """A subquery evaluates on absolute step boundaries, so a stream that
+        started after the last boundary is invisible to it and the answer falls
+        back to the *previous* stream's last sample. Observed live: a TMM pod
+        recreated a minute earlier and pushing happily reported as "last
+        delivered 29m ago" — the same lie this exists to fix, pointed the other
+        way."""
+        self._serve(
+            monkeypatch,
+            {
+                # The subquery still sees only the dead predecessor.
+                "max_over_time": [
+                    {"metric": {"cluster": "lab-a"}, "value": [0, "1741"]}
+                ],
+                # The instant query, with no step to fall between, sees the new one.
+                "timestamp(f5tmm_up))": [
+                    {"metric": {"cluster": "lab-a"}, "value": [0, "2.1"]}
+                ],
+            },
+        )
+
+        assert round(svc.last_seen_ages("http://localhost:9491")["lab-a"]) == 2
+
+    def test_a_cluster_only_the_window_can_see_still_gets_an_age(self, monkeypatch):
+        """The converse: stopped hours ago, so the instant query has dropped it
+        entirely. The window is the only thing that still knows when."""
+        self._serve(
+            monkeypatch,
+            {
+                "max_over_time": [
+                    {"metric": {"cluster": "lab-a"}, "value": [0, "9000"]}
+                ],
+                "timestamp(f5tmm_up))": [],
+            },
+        )
+
+        assert round(svc.last_seen_ages("http://localhost:9491")["lab-a"]) == 9000
+
+    def test_an_unreachable_prometheus_is_empty_not_an_exception(self, monkeypatch):
+        def _boom(*a, **k):
+            raise requests.ConnectionError("refused")
+
+        monkeypatch.setattr(svc.requests, "get", _boom)
+        assert svc.last_seen_ages("http://localhost:9491") == {}
+
+
+class TestStreamingPods:
+    """Delivery is a per-pod fact.
+
+    A cluster with several TMM pods keeps streaming when one of them stops, so
+    the cluster-level answer stays green while one node delivers nothing —
+    which is exactly what a reinstalled DPU looks like.
+    """
+
+    def test_returns_the_pods_delivering_under_that_label(self, monkeypatch):
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "status": "success",
+                    "data": {
+                        "result": [
+                            {"metric": {"pod": "tmm-a"}, "value": [0, "1"]},
+                            {"metric": {"pod": "tmm-b"}, "value": [0, "1"]},
+                        ]
+                    },
+                }
+
+        monkeypatch.setattr(svc.requests, "get", lambda *a, **k: _Resp())
+        assert svc.streaming_pods("http://localhost:9491", "lab-a") == {
+            "tmm-a",
+            "tmm-b",
+        }
+
+    def test_scopes_the_query_to_the_cluster_label(self, monkeypatch):
+        seen = {}
+
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"status": "success", "data": {"result": []}}
+
+        def _get(url, params=None, timeout=None):
+            seen["query"] = params["query"]
+            return _Resp()
+
+        monkeypatch.setattr(svc.requests, "get", _get)
+        svc.streaming_pods("http://localhost:9491", "lab-a")
+
+        assert seen["query"] == 'count by (pod) (f5tmm_up{cluster="lab-a"})'
+
+    def test_a_quote_in_the_label_cannot_break_out_of_the_matcher(self, monkeypatch):
+        """`tmmscope inject --cluster` names the label freely, so it reaches
+        here as operator input."""
+        seen = {}
+
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"status": "success", "data": {"result": []}}
+
+        def _get(url, params=None, timeout=None):
+            seen["query"] = params["query"]
+            return _Resp()
+
+        monkeypatch.setattr(svc.requests, "get", _get)
+        svc.streaming_pods("http://localhost:9491", 'lab"a')
+
+        assert seen["query"] == r'count by (pod) (f5tmm_up{cluster="lab\"a"})'
 
 
 class TestCommands:

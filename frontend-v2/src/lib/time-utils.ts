@@ -48,3 +48,22 @@ export function formatTimeAgo(timestamp: string | null | undefined): string {
   return `${age} ago`;
 }
 
+
+/**
+ * Format a duration already measured in seconds (e.g. "45s", "9m", "2.5h")
+ *
+ * The counterpart to formatAge for values that arrive as an elapsed count
+ * rather than a timestamp — Prometheus answers "how long since the last
+ * sample" that way, and round-tripping it through a Date only adds clock skew.
+ *
+ * @param seconds - elapsed seconds, null, or undefined
+ * @returns Compact duration string, or 'unknown' if not a finite number
+ */
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !isFinite(seconds)) return 'unknown';
+  const s = Math.max(0, seconds);
+  if (s < 90) return `${Math.floor(s)}s`;
+  if (s < 5400) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
