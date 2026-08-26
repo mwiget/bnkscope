@@ -69,7 +69,6 @@ class TestBuildDiagnosticMessage:
             icmp={"reachable": True, "latency_ms": 1.5},
             tcp={"open": True},
             k8s_api={"accessible": True, "version": "1.30"},
-            ssh_tunnel_enabled=False,
         )
         assert result["status"] == "connected"
         assert "1.30" in result["message"]
@@ -81,7 +80,6 @@ class TestBuildDiagnosticMessage:
             icmp={"reachable": False, "latency_ms": None},
             tcp={"open": True},
             k8s_api={"accessible": True, "version": "1.28"},
-            ssh_tunnel_enabled=False,
         )
         assert result["status"] == "connected"
         assert "Latency" not in result["message"]
@@ -92,7 +90,6 @@ class TestBuildDiagnosticMessage:
             icmp={"reachable": True, "latency_ms": 5.0},
             tcp={"open": True},
             k8s_api={"accessible": False},
-            ssh_tunnel_enabled=False,
         )
         assert result["status"] == "reachable"
         assert "6443" in result["message"]
@@ -104,23 +101,10 @@ class TestBuildDiagnosticMessage:
             icmp={"reachable": True, "latency_ms": 170.0},
             tcp={"open": False},
             k8s_api={"accessible": False},
-            ssh_tunnel_enabled=False,
         )
         assert result["status"] == "partial"
         assert "170ms" in result["message"]
         assert "firewall" in result["suggestion"].lower()
-
-    def test_partial_with_ssh_tunnel(self):
-        result = _build_diagnostic_message(
-            host="10.144.35.73", port=6443,
-            icmp={"reachable": True, "latency_ms": 170.0},
-            tcp={"open": False},
-            k8s_api={"accessible": False},
-            ssh_tunnel_enabled=True,
-        )
-        assert result["status"] == "partial"
-        assert "SSH tunnel" in result["message"]
-        assert "SSH credential" in result["suggestion"]
 
     def test_unreachable(self):
         result = _build_diagnostic_message(
@@ -128,23 +112,10 @@ class TestBuildDiagnosticMessage:
             icmp={"reachable": False, "latency_ms": None},
             tcp={"open": False},
             k8s_api={"accessible": False},
-            ssh_tunnel_enabled=False,
         )
         assert result["status"] == "unreachable"
         assert "10.0.0.99" in result["message"]
-        assert "SSH tunneling" in result["suggestion"]
-
-    def test_unreachable_with_ssh_tunnel(self):
-        result = _build_diagnostic_message(
-            host="10.0.0.99", port=6443,
-            icmp={"reachable": False, "latency_ms": None},
-            tcp={"open": False},
-            k8s_api={"accessible": False},
-            ssh_tunnel_enabled=True,
-        )
-        assert result["status"] == "unreachable"
-        assert "SSH tunnel" in result["message"]
-        assert "bastion" in result["suggestion"]
+        assert "10.0.0.99" in result["suggestion"]
 
     def test_unknown_no_host(self):
         result = _build_diagnostic_message(
@@ -152,7 +123,6 @@ class TestBuildDiagnosticMessage:
             icmp={"reachable": False},
             tcp={"open": False},
             k8s_api={"accessible": False},
-            ssh_tunnel_enabled=False,
         )
         assert result["status"] == "unknown"
         assert "No API server" in result["message"]
@@ -278,3 +248,71 @@ class TestProbeK8sApi:
             from services.connectivity_probe_service import _probe_k8s_api
             result = _probe_k8s_api("10.0.0.1", 6443)
             assert result["accessible"] is False
+
+
+# ---------------------------------------------------------------------------
+# _probe_cluster_obj — against a REAL model instance
+# ---------------------------------------------------------------------------
+
+class TestProbeClusterObj:
+    """The probe must run against the KubernetesCluster model as it actually is.
+
+    Every test above builds the diagnostic from plain kwargs, so all of them
+    stayed green while the live endpoint returned
+    `Probe error: 'KubernetesCluster' object has no attribute
+    'ssh_tunnel_enabled'` for every cluster — the probe read a column that the
+    SSH-tunnel removal had deleted. A real (unsaved) model instance is what
+    catches that class of drift; a MagicMock answers to any attribute and would
+    not.
+    """
+
+    def _service(self):
+        from unittest.mock import MagicMock
+
+        from services.connectivity_probe_service import ConnectivityProbeService
+
+        return ConnectivityProbeService(MagicMock())
+
+    def _cluster(self, api_server: str | None):
+        from models import KubernetesCluster
+
+        return KubernetesCluster(id=1, name="infra", context="infra", api_server=api_server)
+
+    def test_probe_real_model_no_api_server(self):
+        result = self._service()._probe_cluster_obj(self._cluster(None))
+        assert result["status"] == "unknown"
+        assert result["cluster_name"] == "infra"
+
+    def test_probe_real_model_unreachable(self):
+        from unittest.mock import patch
+
+        with patch(
+            "services.connectivity_probe_service._probe_icmp",
+            return_value={"reachable": False, "latency_ms": None},
+        ), patch(
+            "services.connectivity_probe_service._probe_tcp",
+            return_value={"open": False, "connect_ms": None},
+        ):
+            result = self._service()._probe_cluster_obj(self._cluster("https://10.0.0.99:6443"))
+
+        assert result["status"] == "unreachable"
+        assert result["api_server"] == "https://10.0.0.99:6443"
+
+    def test_probe_real_model_connected(self):
+        from unittest.mock import patch
+
+        with patch(
+            "services.connectivity_probe_service._probe_icmp",
+            return_value={"reachable": True, "latency_ms": 1.0},
+        ), patch(
+            "services.connectivity_probe_service._probe_tcp",
+            return_value={"open": True, "connect_ms": 2.0},
+        ), patch(
+            "services.connectivity_probe_service._probe_k8s_api",
+            return_value={"accessible": True, "version": "1.31", "status_code": 200},
+        ):
+            result = self._service()._probe_cluster_obj(self._cluster("https://10.0.0.1:6443"))
+
+        assert result["status"] == "connected"
+        assert result["k8s_api"]["version"] == "1.31"
+        assert result["tcp"]["port"] == 6443

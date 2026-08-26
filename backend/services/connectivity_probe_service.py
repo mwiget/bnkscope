@@ -212,7 +212,6 @@ def _probe_k8s_api(host: str, port: int, timeout: int = K8S_API_TIMEOUT) -> dict
 def _build_diagnostic_message(
     host: str | None, port: int,
     icmp: dict, tcp: dict, k8s_api: dict,
-    ssh_tunnel_enabled: bool,
 ) -> dict[str, Any]:
     """
     Build a human-readable diagnostic with status and actionable advice.
@@ -252,45 +251,24 @@ def _build_diagnostic_message(
 
     if icmp.get("reachable"):
         latency_info = f" ({icmp['latency_ms']:.0f}ms)" if icmp.get("latency_ms") else ""
-        if ssh_tunnel_enabled:
-            return {
-                "status": ConnectivityStatus.PARTIAL,
-                "message": f"Host responds to ping{latency_info} but port {port} is blocked. SSH tunnel is enabled.",
-                "suggestion": (
-                    f"The host {host} is reachable via ICMP{latency_info} but TCP port {port} is filtered. "
-                    f"Since SSH tunneling is enabled, ensure the SSH credential is configured and the "
-                    f"tunnel can reach the K8s API on the remote side."
-                ),
-            }
         return {
             "status": ConnectivityStatus.PARTIAL,
             "message": f"Host responds to ping{latency_info} but port {port} is blocked.",
             "suggestion": (
                 f"The host {host} is reachable via ICMP{latency_info} but TCP port {port} is filtered by a firewall. "
                 f"Options: (1) Request firewall rule to allow TCP {port} from this server to {host}. "
-                f"(2) Enable SSH tunneling with a jump host that can reach the cluster. "
-                f"(3) If the K8s API listens on a different port, update the cluster configuration."
+                f"(2) If the K8s API listens on a different port, update the cluster configuration."
             ),
         }
 
     # Nothing works
-    if ssh_tunnel_enabled:
-        return {
-            "status": ConnectivityStatus.UNREACHABLE,
-            "message": f"Host {host} is completely unreachable. SSH tunnel is enabled.",
-            "suggestion": (
-                f"Cannot reach {host} via ICMP or TCP. Since SSH tunneling is enabled, "
-                f"the connection will be routed through the SSH bastion. Ensure the SSH "
-                f"credential is valid and the bastion host can reach {host}:{port}."
-            ),
-        }
     return {
         "status": ConnectivityStatus.UNREACHABLE,
         "message": f"Host {host} is completely unreachable from this server.",
         "suggestion": (
             f"Cannot reach {host} via ICMP or TCP port {port}. "
-            f"Verify the API server URL is correct. If the cluster is on a different network, "
-            f"enable SSH tunneling with a jump host that has access to {host}."
+            f"Verify the API server URL is correct and that this server has a network "
+            f"path to {host}."
         ),
     }
 
@@ -367,7 +345,6 @@ class ConnectivityProbeService(BaseService):
         if not host:
             diag = _build_diagnostic_message(
                 host, port, {"reachable": False}, {"open": False}, {"accessible": False},
-                ssh_tunnel_enabled=cluster.ssh_tunnel_enabled,
             )
             return {
                 "cluster_id": cluster.id,
@@ -394,7 +371,6 @@ class ConnectivityProbeService(BaseService):
 
         diag = _build_diagnostic_message(
             host, port, icmp, tcp, k8s_api,
-            ssh_tunnel_enabled=cluster.ssh_tunnel_enabled,
         )
 
         return {

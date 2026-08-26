@@ -74,8 +74,6 @@ def _make_cluster(provider: str = "gke") -> MagicMock:
     cluster = MagicMock()
     cluster.kubeconfig_encrypted = "ignored-by-mock"
     cluster.cloud_provider = provider
-    cluster.ssh_tunnel_enabled = False
-    cluster.ssh_credential_id = None
     cluster.name = "spk-central"
     cluster.project = MagicMock(name="proj")
     cluster.project.name = "spk-dev"
