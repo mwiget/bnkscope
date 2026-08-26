@@ -8,12 +8,12 @@ set -euo pipefail
 # 1. GitHub Issue #<ID> created
 # 2. Run: ./scripts/new-adr.sh --issue <ID> --title "short description"
 # 3. Generates docs/adr/ADR-<ID>-<title>.md from template
-# 4. Creates git branch feat/adr-<ID>-<title> off staging
+# 4. Creates git branch feat/adr-<ID>-<title> off main
 # ==============================================================================
 
 ISSUE_ID=""
 TITLE=""
-BASE_BRANCH="staging"
+BASE_BRANCH="main"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h|--help)
-      echo "Usage: $0 --issue <issue_number> --title <short_title> [--base staging]"
+      echo "Usage: $0 --issue <issue_number> --title <short_title> [--base <branch>]"
       exit 0
       ;;
     *)
@@ -103,7 +103,7 @@ EOF
 fi
 
 git add "${ADR_FILE}"
-git commit -m "docs(adr): initialize ADR-${ISSUE_ID} for ${TITLE}"
+git commit -m "Start ADR-${ISSUE_ID}: ${TITLE}"
 
 echo "======================================================================"
 echo "SUCCESS: Branch '${BRANCH_NAME}' created and ADR initialized."

@@ -34,14 +34,14 @@ We follow a lightweight **Issue ➔ ADR ➔ Branch ➔ PR** design workflow for 
    ```bash
    ./scripts/new-adr.sh --issue 123 --title "feature description"
    ```
-   This generates `docs/adr/ADR-123-feature-description.md` and checks out branch `feat/adr-123-feature-description` off `staging`.
+   This generates `docs/adr/ADR-123-feature-description.md` and checks out branch `feat/adr-123-feature-description` off `main`.
 3. **Draft the Design & Code**: Fill in the ADR document and implement code changes.
 4. **Local Validation**: Run tests and linting:
    ```bash
    make quick-check
    make pre-push
    ```
-5. **Submit PR**: Open a Pull Request targeting `staging` referencing the issue and linking the ADR.
+5. **Submit PR**: Open a Pull Request targeting `main` referencing the issue and linking the ADR.
 
 ---
 
