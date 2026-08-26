@@ -34,9 +34,10 @@ on:
       - '.trivyignore'
       - 'USER_GUIDE.md'
   push:
-    # main (deploy trigger) + staging (release-automation preflight needs a
-    # push-triggered CI run to match by SHA — see release.yml preflight);
-    # develop skipped.
+    # main only — it is the deploy trigger and the only long-lived branch.
+    # release.yml's preflight matches this run by SHA, so every push that can
+    # release must produce a CI run here (paths-ignore below stays in sync
+    # with release.yml's).
     branches: [main]
     paths-ignore:
       - '**.md'

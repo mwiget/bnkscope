@@ -4,7 +4,9 @@
 
 Go to: **Settings → Branches → Branch protection rules**
 
-### Rule 1: Protect `main`
+### Protect `main`
+
+`main` is the only long-lived branch — there is no second rule to add.
 
 | Setting | Value |
 |---------|-------|
@@ -16,17 +18,6 @@ Go to: **Settings → Branches → Branch protection rules**
 | Require branches to be up to date | ✅ |
 | Require conversation resolution | ✅ |
 | Do not allow bypassing | ✅ (optional) |
-
-### Rule 2: Protect `staging`
-
-| Setting | Value |
-|---------|-------|
-| Branch name pattern | `staging` |
-| Require a pull request before merging | ✅ |
-| Required approvals | 1 (adjust as needed) |
-| Require status checks to pass before merging | ✅ |
-| **Required status checks** | **`CI Gate`** |
-| Require branches to be up to date | ✅ |
 
 ### How to configure required status checks
 
@@ -103,7 +94,7 @@ This means **`make pre-push` locally ≡ CI pipeline** — if pre-push passes, C
 
 | Event | Branches | Notes |
 |-------|----------|-------|
-| Pull Request | `main`, `staging`, `develop` | Main gate for feature branches |
+| Pull Request | `main` | Main gate for feature branches |
 | Push | `main` | Post-merge deploy triggers |
 | Manual | — | Release workflow |
 

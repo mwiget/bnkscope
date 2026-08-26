@@ -2,9 +2,12 @@
 # ║  bnkscope — Release Pipeline                                               ║
 # ║                                                                             ║
 # ║  Triggers:                                                                  ║
-# ║    • push to staging  → pre-release RC tag (no VERSION commit)             ║
 # ║    • push to main     → final release (VERSION bump + CHANGELOG commit)    ║
 # ║    • workflow_dispatch → manual override (keeps the original manual path)  ║
+# ║                                                                             ║
+# ║  The RC path fires on a push to any branch that is not main. Nothing does  ║
+# ║  today: main is the only branch and the only one in the push trigger, so   ║
+# ║  release-rc is dormant — kept for a future shared pre-release branch.      ║
 # ║                                                                             ║
 # ║  Version derivation: conventional commits since last final vX.Y.Z tag      ║
 # ║    feat! / BREAKING CHANGE → major                                         ║
@@ -120,10 +123,11 @@ jobs:
           # Match the CI run by the exact commit SHA that triggered this
           # release, not by "--limit=1 --branch=X" (which is racy: on main,
           # ci.yml and release.yml fire on the same push so --limit=1 can
-          # return this-same-push's still-running CI run; on staging, a
-          # branch-name lookup can return a stale run from an unrelated
-          # earlier push). ci.yml has a push:staging trigger specifically so
-          # every staging push gets its own CI run carrying that push's SHA.
+          # return this-same-push's still-running CI run; on any other branch,
+          # a branch-name lookup can return a stale run from an unrelated
+          # earlier push). Matching by SHA is what makes this correct on
+          # whatever branch releases from — it needs no per-branch trigger,
+          # only that ci.yml runs on that push at all.
           # Budget: last five green CI runs on this repo took ~18 min
           # end-to-end; 2700s (45 min) covers queue delays and future growth.
           TIMEOUT_SECONDS="$CI_POLL_TIMEOUT_SECONDS"
@@ -228,7 +232,7 @@ jobs:
           fi
           echo "Tag $TAG is available"
 
-  # ── RC Release (staging push) ────────────────────────────────────────────────
+  # ── RC Release (dormant — no branch but main pushes today) ──────────────────
   release-rc:
     name: "Pre-release RC v${{ needs.preflight.outputs.new_version }}"
     needs: preflight
