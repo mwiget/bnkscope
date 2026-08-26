@@ -282,11 +282,20 @@ bnkscope                   # the CLI: up · down · status · open · logs · en
 
 ## Git Workflow
 
-- `staging` is the shared integration branch; create feature branches from `staging` and merge back to `staging`.
-- `main` is protected and release-only — promotion path is `staging → main`.
-- Conventional commits: `feat: / fix: / docs: / refactor: / test: / chore: / perf:`.
-- Agent-generated branches use `agent/[item-id]`. Never force-push.
-- Update docs in the same commit as code changes (API_REFERENCE.md, TESTING.md, USER_GUIDE.md, openapi.json).
+- **`main` is the only long-lived branch.** It is where work lands and what CI
+  builds on every push; `origin` carries nothing else. There is no `staging` —
+  the `staging → main` promotion path went with bnk-forge's release process.
+- Small changes go straight onto `main`. Anything worth reviewing as a unit
+  gets a short-lived local branch — `feat/<topic>`, `agent/<topic>` — merged
+  back into `main` once it is green. Never force-push `main`.
+- **Commit subjects are prose, in the imperative**: "Retire the tunnel's port",
+  not `fix: retire tunnel port`. Say what changes for the reader and leave the
+  evidence for the body. Conventional-commit prefixes are not used here.
+- **Regenerate what is generated, in the same commit as the code.**
+  `backend/openapi.json`, the frontend types and `docs/API_REFERENCE.md` are
+  built from the routes (`make openapi-types`, `make api-docs`), and
+  `make quick-check` fails on drift. The hand-written docs — TESTING.md,
+  USER_GUIDE.md, this file — are yours to keep current.
 
 ```bash
 make quick-check           # before every commit (~15s)
