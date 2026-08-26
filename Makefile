@@ -645,24 +645,69 @@ pre-push: quick-check
 	@echo "  Pre-push checks passed — safe to push"
 	@echo "========================================="
 
+# How long to wait for GitHub to create a run for the commit just pushed.
+# A fixed `sleep 10` was not enough on its own: Actions normally lags a few
+# seconds, and can be down entirely for minutes.
+CI_WAIT_SECONDS ?= 90
+
+# Watch the run for *this* commit, and say which of the three things happened.
+#
+# `gh run watch` with no argument needs a TTY to show its picker — under `make`
+# it exits with a usage error, which the old `&& ... || ...` read as a failed
+# build. So a push during an Actions outage printed "CI RED — check failures",
+# naming a build that had never started. Report "did not run" as its own
+# outcome: it is not green, and it is not a red build either.
 push: pre-push
 	@echo ""
 	@echo "=== Pushing to origin ==="
 	@git push
-	@echo ""
-	@echo "=== Waiting for CI to start... ==="
-	@sleep 10
-	@echo "=== Watching CI (this may take a few minutes)... ==="
-	@gh run watch --exit-status && \
-	  echo "" && \
-	  echo "=========================================" && \
-	  echo "  CI GREEN — all checks passed" && \
-	  echo "=========================================" || \
-	  (echo "" && \
-	   echo "=========================================" && \
-	   echo "  CI RED — check failures with: gh run view" && \
-	   echo "=========================================" && \
-	   exit 1)
+	@sha=$$(git rev-parse HEAD); \
+	branch=$$(git rev-parse --abbrev-ref HEAD); \
+	echo ""; \
+	if ! command -v gh >/dev/null 2>&1; then \
+	  echo "  Pushed $$sha. gh is not installed, so CI status is unknown."; \
+	  exit 0; \
+	fi; \
+	if [ "$$branch" = "HEAD" ]; then branch_flag=""; else branch_flag="--branch $$branch"; fi; \
+	echo "=== Waiting up to $(CI_WAIT_SECONDS)s for CI to start on $$sha ==="; \
+	run=""; waited=0; \
+	while [ $$waited -lt $(CI_WAIT_SECONDS) ]; do \
+	  run=$$(gh run list $$branch_flag --limit 20 --json databaseId,headSha \
+	          --jq "map(select(.headSha==\"$$sha\")) | .[0].databaseId // empty" \
+	         2>/dev/null); \
+	  [ -n "$$run" ] && break; \
+	  sleep 5; waited=$$((waited + 5)); \
+	done; \
+	if [ -z "$$run" ]; then \
+	  echo ""; \
+	  echo "========================================="; \
+	  echo "  CI DID NOT RUN — nothing to watch"; \
+	  echo "========================================="; \
+	  echo "  Pushed $$sha, but GitHub created no run for it within"; \
+	  echo "  $(CI_WAIT_SECONDS)s. The push landed; the build is UNVERIFIED."; \
+	  echo ""; \
+	  echo "  Usual causes:"; \
+	  echo "    - Actions is degraded — https://www.githubstatus.com"; \
+	  echo "    - every changed path is in the workflow's paths-ignore"; \
+	  echo "    - Actions is disabled for this repo"; \
+	  echo ""; \
+	  echo "  Check again later:  gh run list $$branch_flag"; \
+	  echo "  Or wait longer:     make push CI_WAIT_SECONDS=300"; \
+	  exit 1; \
+	fi; \
+	echo "=== Watching run $$run (this may take a few minutes)... ==="; \
+	if gh run watch "$$run" --exit-status; then \
+	  echo ""; \
+	  echo "========================================="; \
+	  echo "  CI GREEN — all checks passed"; \
+	  echo "========================================="; \
+	else \
+	  echo ""; \
+	  echo "========================================="; \
+	  echo "  CI RED — inspect with: gh run view $$run --log-failed"; \
+	  echo "========================================="; \
+	  exit 1; \
+	fi
 
 # ─── Containerized Tests (no local venv / Node needed) ──────────────────────
 # Run tests and linting inside Docker images — matches CI Python 3.11 / Node 20
