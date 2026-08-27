@@ -14,7 +14,7 @@ is the evidence that it is there.
 import pytest
 import requests
 
-from services import tmmscope_service as svc
+from services import telemetry_service as svc
 
 
 @pytest.fixture()

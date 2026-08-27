@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from core.errors import handle_route_errors
 from database import get_db
 from models import KubernetesCluster
-from services import tmmscope_inject_service, tmmscope_service
+from services import telemetry_service, tmmscope_inject_service
 from services.kubernetes_service import KubernetesService
 
 logger = logging.getLogger(__name__)
@@ -122,10 +122,10 @@ def _browser_host(request: Request) -> str | None:
 @handle_route_errors("tmmscope status")
 def get_tmmscope_status(request: Request):
     """Whether tmmscope is up, where, and which clusters are streaming to it."""
-    status = tmmscope_service.get_status().as_dict()
+    status = telemetry_service.get_status().as_dict()
     host = _browser_host(request)
-    status["grafana_url"] = tmmscope_service.rebase_to_browser_host(status["grafana_url"], host)
-    status["prometheus_url"] = tmmscope_service.rebase_to_browser_host(
+    status["grafana_url"] = telemetry_service.rebase_to_browser_host(status["grafana_url"], host)
+    status["prometheus_url"] = telemetry_service.rebase_to_browser_host(
         status["prometheus_url"], host
     )
     return status
@@ -146,7 +146,7 @@ def get_cluster_telemetry(
     if cluster is None:
         raise NotFoundError("cluster", str(cluster_id))
 
-    status = tmmscope_service.get_status()
+    status = telemetry_service.get_status()
     pinned = (cluster.meta_data or {}).get(_LABEL_KEY)
     # Match over labels seen *recently*, not only those live this instant.
     # Matching on the live set alone means a cluster loses its own identity the
@@ -158,9 +158,9 @@ def get_cluster_telemetry(
 
     url = None
     if status.running and status.grafana_url and streaming_as:
-        url = tmmscope_service.dashboard_url(
+        url = telemetry_service.dashboard_url(
             status.grafana_url,
-            tmmscope_service.DASHBOARDS[0]["uid"],
+            telemetry_service.DASHBOARDS[0]["uid"],
             streaming_as,
             # Grafana understands exactly two; anything else renders unstyled.
             # Only an explicit "light" opts out — the parameter's own default
@@ -305,7 +305,7 @@ def _delivery_facts(cluster: KubernetesCluster) -> tuple[set[str] | None, bool |
     collector reachable, an exporter that is working looks identical to one that
     is not.
     """
-    status = tmmscope_service.get_status()
+    status = telemetry_service.get_status()
     if not status.running or not status.prometheus_url:
         return None, None
     known = sorted(set(status.streaming_clusters) | set(status.last_seen))
@@ -315,7 +315,7 @@ def _delivery_facts(cluster: KubernetesCluster) -> tuple[set[str] | None, bool |
         # pod of it can be streaming. That is a real, empty answer.
         return set(), False
     return (
-        tmmscope_service.streaming_pods(status.prometheus_url, label),
+        telemetry_service.streaming_pods(status.prometheus_url, label),
         label in status.streaming_clusters,
     )
 
@@ -332,7 +332,7 @@ def _cluster_client(cluster_id: int, db: Session):
 def get_injection(cluster_id: int, db: Session = Depends(get_db)):
     """Which of this cluster's f5-tmm pods currently carry the exporter."""
     cluster, api_client = _cluster_client(cluster_id, db)
-    ingest = tmmscope_service.prometheus_ingest()
+    ingest = telemetry_service.prometheus_ingest()
     live, cluster_streaming = _delivery_facts(cluster)
     state = tmmscope_inject_service.get_injection_state(
         api_client,
@@ -359,7 +359,7 @@ def inject_exporter(
     cluster, api_client = _cluster_client(cluster_id, db)
     body = body or InjectRequest()
 
-    ingest = tmmscope_service.prometheus_ingest()
+    ingest = telemetry_service.prometheus_ingest()
     if ingest is None and not body.remote_write_url:
         raise ValidationError(
             "No Prometheus is discoverable, so there is nowhere to push. Start "
@@ -372,7 +372,7 @@ def inject_exporter(
     # a re-injection lands on the same label rather than creating a second one.
     label = body.cluster_label
     if not label:
-        status = tmmscope_service.get_status()
+        status = telemetry_service.get_status()
         label = _match_label(cluster, status.streaming_clusters) or (
             cluster.context or cluster.name
         )
@@ -415,7 +415,7 @@ def remove_exporter(cluster_id: int, db: Session = Depends(get_db)):
     """
     cluster, api_client = _cluster_client(cluster_id, db)
     result = tmmscope_inject_service.remove(api_client)
-    ingest = tmmscope_service.prometheus_ingest()
+    ingest = telemetry_service.prometheus_ingest()
     live, cluster_streaming = _delivery_facts(cluster)
     state = tmmscope_inject_service.get_injection_state(
         api_client,

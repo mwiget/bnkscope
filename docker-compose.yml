@@ -83,7 +83,7 @@ services:
       BNKSCOPE_PROMETHEUS_PORT: ${BNKSCOPE_PROMETHEUS_PORT:-}
       BNKSCOPE_GRAFANA_PORT: ${BNKSCOPE_GRAFANA_PORT:-}
       # Grafana is published on this address only, so it is also the address
-      # the backend has to probe — see tmmscope_service._telemetry_host.
+      # the backend has to probe — see telemetry_service._telemetry_host.
       BNKSCOPE_UI_BIND: ${BNKSCOPE_UI_BIND:-127.0.0.1}
     volumes:
       - bnkscope-data:/app/data

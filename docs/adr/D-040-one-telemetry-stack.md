@@ -80,6 +80,10 @@ that already targets 9491.
 - Anyone still on tmmscope's stack must switch rather than coexist. That is the
   honest consequence of D-039 and this: bnkscope stopped being a thing that
   orchestrates tmmscope and became the thing itself.
-- `tmmscope_service.py` keeps its name. Renaming it would touch the routes, the
-  tests, the API path `/api/tmmscope/...` and the frontend types — a rename for
-  its own sake, with no behaviour behind it.
+- `tmmscope_service.py` is now `telemetry_service.py`, and its `TmmscopeStatus`
+  is `TelemetryStatus`. The module had stopped describing what it does: it reads
+  bnkscope's own stack and asks bnkscope's own Prometheus what is arriving.
+- The **route** module, the API path `/api/tmmscope/...`, and
+  `tmmscope_inject_service` keep their names. The path is a published contract
+  and renaming it breaks callers for a nicer noun; the inject service is named
+  after the operation it forked from tmmscope, which is still accurate.

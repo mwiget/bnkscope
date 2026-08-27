@@ -58,7 +58,7 @@ DASHBOARDS: tuple[dict[str, str], ...] = (
 
 
 @dataclass
-class TmmscopeStatus:
+class TelemetryStatus:
     """What bnkscope can say about the telemetry stack."""
 
     # The stack is enabled and its ports are known.
@@ -152,11 +152,11 @@ def read_endpoints() -> dict[str, Any] | None:
     }
 
 
-def get_status() -> TmmscopeStatus:
+def get_status() -> TelemetryStatus:
     """Whether tmmscope is up, where, and which clusters are streaming to it."""
     doc = read_endpoints()
     if doc is None:
-        return TmmscopeStatus(
+        return TelemetryStatus(
             detail=(
                 "No telemetry stack is running. Start it on the host with "
                 "`bnkscope up --telemetry`. It cannot be started from in here: "
@@ -166,7 +166,7 @@ def get_status() -> TmmscopeStatus:
 
     grafana = doc.get("grafana") or {}
     prometheus = doc.get("prometheus") or {}
-    status = TmmscopeStatus(
+    status = TelemetryStatus(
         configured=bool(doc.get("running")),
         grafana_url=grafana.get("url"),
         prometheus_url=prometheus.get("url"),

@@ -13,9 +13,9 @@ import pytest
 
 from models import KubernetesCluster
 from routes.tmmscope import _LABEL_KEY, _match_label
-from services.tmmscope_service import TmmscopeStatus
+from services.telemetry_service import TelemetryStatus
 
-_STATUS = "routes.tmmscope.tmmscope_service.get_status"
+_STATUS = "routes.tmmscope.telemetry_service.get_status"
 
 
 def _cluster(**kwargs) -> KubernetesCluster:
@@ -29,8 +29,8 @@ def _cluster(**kwargs) -> KubernetesCluster:
     return KubernetesCluster(**{**defaults, **kwargs})
 
 
-def _running(streaming: list[str]) -> TmmscopeStatus:
-    return TmmscopeStatus(
+def _running(streaming: list[str]) -> TelemetryStatus:
+    return TelemetryStatus(
         configured=True,
         running=True,
         grafana_url="http://localhost:3000",
@@ -93,7 +93,7 @@ class TestStatusRoute:
         assert [d["uid"] for d in body["dashboards"]] == ["tmm-realtime", "tmm-ai-tokens"]
 
     def test_reports_a_stack_that_was_never_started(self, client):
-        with patch(_STATUS, return_value=TmmscopeStatus(detail="not started")):
+        with patch(_STATUS, return_value=TelemetryStatus(detail="not started")):
             response = client.get("/api/tmmscope/status")
 
         assert response.status_code == 200
@@ -135,7 +135,7 @@ class TestClusterTelemetryRoute:
         assert "inject_command" not in body
 
     def test_no_dashboard_url_when_the_stack_is_down(self, client, cluster):
-        with patch(_STATUS, return_value=TmmscopeStatus(configured=True, running=False)):
+        with patch(_STATUS, return_value=TelemetryStatus(configured=True, running=False)):
             response = client.get(f"/api/tmmscope/clusters/{cluster.id}")
         assert response.json()["dashboard_url"] is None
 
