@@ -164,14 +164,38 @@ Object.defineProperty(window, 'sessionStorage', { value: makeStorage(), writable
 // focus-scope schedules a `setTimeout(0)` on unmount that does
 // `container.dispatchEvent(new CustomEvent(...))` (react-focus-scope index.mjs:90-92).
 // When that timer fires after a test has finished and jsdom is tearing the realm
-// down, the CustomEvent is no longer a valid Event in the dying realm and
-// dispatchEvent throws "parameter 1 is not of type 'Event'" — a worker-killing
-// unhandled error that fails the whole run even though every test passed. Drop any
-// dispatch whose argument isn't a real Event; legitimate dispatches always pass one.
+// down, dispatchEvent throws "parameter 1 is not of type 'Event'" — an uncaught
+// exception that vitest reports as an unhandled error and fails the whole run even
+// though every test passed.
+//
+// An `instanceof Event` check is NOT sufficient, and this failed in CI on
+// 2026-08-27 with all 1106 tests green. jsdom's `convert()` does not brand-check
+// with instanceof: it looks the wrapper up in its implementation-symbol table
+// (Event.js `exports.is`). A CustomEvent built by a torn-down realm still has
+// Event on its prototype chain — so it passes `instanceof` here — while jsdom has
+// already dropped its implementation entry, so `convert()` rejects it anyway.
+// The two checks disagree exactly in the window this guard exists to cover.
+//
+// So attempt the dispatch and swallow that one error. Keep the instanceof fast
+// path for the obvious garbage, but treat the try/catch as the real guard — it
+// is the only test that cannot disagree with what jsdom actually does.
+//
+// Match on the message, NOT `err instanceof TypeError`: jsdom throws
+// `globalObject.TypeError`, its own window's constructor, which is a different
+// object from this module's `TypeError`. An instanceof check here is false for
+// the very error we are trying to catch — the same cross-realm trap that made
+// the original guard useless. See src/test/__tests__/dispatch-guard.test.ts,
+// which fails if either half of this regresses.
 const realDispatchEvent = EventTarget.prototype.dispatchEvent;
 EventTarget.prototype.dispatchEvent = function (event: Event) {
   if (!(event instanceof Event)) return false;
-  return realDispatchEvent.call(this, event);
+  try {
+    return realDispatchEvent.call(this, event);
+  } catch (err) {
+    const message = (err as { message?: unknown } | null)?.message;
+    if (typeof message === 'string' && message.includes("not of type 'Event'")) return false;
+    throw err;
+  }
 };
 
 // Suppress console.error/warn noise in tests (optional, but keeps output clean)
