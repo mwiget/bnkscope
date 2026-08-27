@@ -9,6 +9,10 @@ bnkscope starts at **0.1.0**; nothing has been released yet.
 
 ---
 
+## v0.1.2 (2026-08-27)
+
+Publish the tmm-stat-exporter from this repository and inject it by default; sign every image in the release
+
 ## v0.1.1 (2026-08-27)
 
 Fork the tmm-stat-exporter into this repository, drop the tmmscope dependency, and name the node when it is NotReady
