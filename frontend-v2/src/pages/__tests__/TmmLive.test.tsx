@@ -124,8 +124,8 @@ beforeEach(() => {
 });
 
 describe('TmmLive', () => {
-  describe('when tmmscope is not running', () => {
-    it('offers bnkscope\'s own stack first, and tmmscope as an alternative', async () => {
+  describe('when the telemetry stack is not running', () => {
+    it('names the one command that starts it', async () => {
       serveStatus({ running: false, detail: 'No telemetry stack is running.' });
       serveTelemetry({ streaming: false, dashboard_url: null });
 
@@ -135,9 +135,9 @@ describe('TmmLive', () => {
         expect(screen.getByText('No telemetry stack is running')).toBeInTheDocument(),
       );
       expect(screen.getByText('bnkscope up --telemetry')).toBeInTheDocument();
-      // tmmscope still works — this absorbs the stack without breaking anyone
-      // already running it.
-      expect(screen.getByText('tmmscope up')).toBeInTheDocument();
+      // There is exactly one stack now. Offering `tmmscope up` as an
+      // alternative outlived the fallback that made it true.
+      expect(screen.queryByText('tmmscope up')).not.toBeInTheDocument();
       expect(screen.getByText(/needs the Docker socket/)).toBeInTheDocument();
     });
 

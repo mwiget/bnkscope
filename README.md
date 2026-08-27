@@ -120,7 +120,6 @@ Four directories, mounted **read-only**. Nothing is ever written back.
 | `~/.kube` | the cluster list itself |
 | `~/.aws` | boto3 reads it to mint EKS tokens natively — no AWS CLI in the image |
 | `~/.config/gcloud` | the same for GKE, via google-auth |
-| `~/.config/tmmscope` | tmmscope's stack, if you already run one instead |
 
 `./bnkscope up` creates any that are missing **as you**, because Docker would
 otherwise create them as empty root-owned directories inside your home. That is
@@ -158,8 +157,7 @@ host networking it shares the port space with everything else on the machine.
 When a port is taken it walks upward and *persists* the choice, so a running
 stack keeps its ports across re-runs — and reverts to the default once that
 frees up again, unless you asked for a specific port, in which case it stays
-put. Read them back with `bnkscope endpoint` rather than hard-coding them: the
-same contract tmmscope publishes, for the same reason.
+put. Read them back with `bnkscope endpoint` rather than hard-coding them.
 
 ```bash
 ./bnkscope up --listen 0.0.0.0           # reach it from another machine (see the warning above)
@@ -199,15 +197,15 @@ metrics and answers queries — it holds no credentials and can change nothing.
 
 ### Coming from tmmscope
 
-[tmmscope](https://github.com/mwiget/tmmscope) is where this came from, and it
-still works — if its stack is up, bnkscope finds and uses it instead of starting
-its own. Nothing here needs it installed, though: the injection is a Kubernetes
-API call bnkscope makes itself, the Prometheus and Grafana configuration is
-vendored in `telemetry/`, and the exporter is built from `tmm-stat-exporter/` in
-this repository.
+[tmmscope](https://github.com/mwiget/tmmscope) is where this came from, and
+nothing of it is needed here any more. The injection is a Kubernetes API call
+bnkscope makes itself, the Prometheus and Grafana configuration is vendored in
+`telemetry/`, and the exporter is built from `tmm-stat-exporter/` in this
+repository. bnkscope no longer reads tmmscope's discovery file, so running both
+stacks at once means running two — start bnkscope's and stop the other.
 
-What stays over there is `--permanent` injection. Both durable modes restart
-TMM, and the webhook mode installs a cluster-scoped
+The one thing that never came across is `--permanent` injection. Both durable
+modes restart TMM, and the webhook mode installs a cluster-scoped
 `MutatingWebhookConfiguration` with a 10-year self-signed CA — neither belongs
 behind a button in a troubleshooting tool.
 

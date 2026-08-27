@@ -1,46 +1,34 @@
-"""Orchestrate tmmscope; do not absorb it.
+"""Where the telemetry stack is, and what is actually streaming to it.
 
-tmmscope is a standalone Go binary that stands up Prometheus + Grafana on the
-operator's own machine and injects a `tmm-stat-exporter` sidecar into a
-cluster's `f5-tmm` pods. It already works without bnkscope, and it already has
-a published contract — so bnkscope reads that contract rather than
-reimplementing any of it.
+The stack is bnkscope's own: `bnkscope up` starts Prometheus and Grafana from
+`telemetry/` and passes their negotiated ports in as environment. That is the
+only source for *where* — there used to be a second one, tmmscope's
+``~/.config/tmmscope/endpoints.json``, read when bnkscope found no stack of its
+own. It was removed once nothing else here needed tmmscope (see D-040): a
+fallback nobody exercises is a second code path that can only rot.
 
-Everything here is **read-only**. Two sources, no side effects:
+Everything here is **read-only**. The interesting source is the Prometheus HTTP
+API, and it stayed interesting for the same reason it always was: "is this
+cluster injected?" has an exact answer — does Prometheus hold `f5tmm_up` series
+carrying its `cluster` label — and getting it needs no binary, no kubectl and no
+Docker socket. A config that says the stack is up is only a claim; series
+arriving in the last minute are evidence.
 
-  ``~/.config/tmmscope/endpoints.json``   written by `tmmscope up`; says whether
-                                          the stack is running and on which
-                                          ports (they move — see below)
-  the Prometheus HTTP API                 says which clusters are *actually*
-                                          streaming right now
-
-That second source is the useful one. "Is this cluster injected?" has an exact
-answer — does Prometheus have `f5tmm_up` series carrying its `cluster` label —
-and getting it needs no binary, no kubectl and no Docker socket. A file that
-says the stack is up is only a claim; series arriving in the last minute are
-evidence.
-
-Ports are discovered, never assumed. tmmscope prefers 9491/3000 but walks
+Ports are discovered, never assumed. `bnkscope up` prefers 9491/3000 but walks
 upward when they are taken and persists the choice, so hard-coding either is a
 bug that only shows up on a busy machine.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import requests
 
 logger = logging.getLogger(__name__)
-
-# Where the host's tmmscope config is mounted read-only (docker-compose.yml).
-# XDG_CONFIG_HOME wins when set, matching tmmscope's own resolution order.
-DEFAULT_ENDPOINTS_PATH = "/host/.config/tmmscope/endpoints.json"
 
 # The stack runs on the operator's machine. Under `network_mode: host` the
 # backend shares that network namespace, so loopback reaches it directly.
@@ -49,11 +37,12 @@ DEFAULT_ENDPOINTS_PATH = "/host/.config/tmmscope/endpoints.json"
 # There the compose overlay sets this to `host.docker.internal`, and it is
 # substituted when *probing* only — the URL handed to the browser keeps saying
 # localhost, which is what the browser needs.
-_PROBE_HOST_OVERRIDE = "BNKSCOPE_TMMSCOPE_PROBE_HOST"
+_PROBE_HOST_OVERRIDE = "BNKSCOPE_TELEMETRY_PROBE_HOST"
 _PROBE_TIMEOUT = 2.0
 
-# Dashboards tmmscope provisions. uid is stable; the title is what the operator
-# sees in Grafana's own UI, so keeping them in step avoids a confusing mismatch.
+# The dashboards provisioned from `telemetry/grafana/dashboards/`. uid is stable;
+# the title is what the operator sees in Grafana's own UI, so keeping them in
+# step avoids a confusing mismatch.
 DASHBOARDS: tuple[dict[str, str], ...] = (
     {
         "uid": "tmm-realtime",
@@ -70,12 +59,12 @@ DASHBOARDS: tuple[dict[str, str], ...] = (
 
 @dataclass
 class TmmscopeStatus:
-    """What bnkscope can say about the tmmscope stack."""
+    """What bnkscope can say about the telemetry stack."""
 
-    # The discovery file exists and claims the stack is up.
+    # The stack is enabled and its ports are known.
     configured: bool = False
-    # Grafana actually answered. `configured` without this means a stale file —
-    # the stack was stopped, or died, without rewriting it.
+    # Grafana actually answered. `configured` without this means the containers
+    # were stopped out from under a backend that is still running.
     running: bool = False
     grafana_url: str | None = None
     prometheus_url: str | None = None
@@ -103,17 +92,6 @@ class TmmscopeStatus:
         }
 
 
-def endpoints_path() -> Path:
-    """The discovery file to read, in tmmscope's own resolution order."""
-    override = os.getenv("BNKSCOPE_TMMSCOPE_ENDPOINTS")
-    if override:
-        return Path(override)
-    xdg = os.getenv("XDG_CONFIG_HOME")
-    if xdg:
-        return Path(xdg) / "tmmscope" / "endpoints.json"
-    return Path(DEFAULT_ENDPOINTS_PATH)
-
-
 def _telemetry_host() -> str:
     """A host that reaches the published telemetry ports, from here and from a
     browser.
@@ -134,16 +112,16 @@ def _telemetry_host() -> str:
     return bind
 
 
-def _own_stack() -> dict[str, Any] | None:
-    """bnkscope's own telemetry stack, when it is the one running.
+def read_endpoints() -> dict[str, Any] | None:
+    """Where the telemetry stack is, or None when there isn't one.
 
-    Set by `bnkscope up --telemetry`, which negotiates the ports and passes them
-    in. Preferred over tmmscope's discovery file: if both are up, the one this
-    process started is the one its own UI should point at.
+    Set by `bnkscope up`, which negotiates the ports and passes them in. Never
+    raises: this is read on every status poll, and an operator who ran
+    `--no-telemetry` is a normal case, not an error.
 
-    The shape deliberately matches tmmscope's file, so everything downstream —
-    dashboards, streaming detection, injection's remote-write URL — reads it
-    without a second code path.
+    The shape is the one tmmscope's discovery file used to have, and it is kept
+    because everything downstream — dashboards, streaming detection, injection's
+    remote-write URL — already reads it without a second code path. See D-040.
     """
     if os.getenv("BNKSCOPE_TELEMETRY", "off") != "on":
         return None
@@ -153,7 +131,7 @@ def _own_stack() -> dict[str, Any] | None:
     except (KeyError, ValueError):
         logger.warning(
             "BNKSCOPE_TELEMETRY is on but the Prometheus/Grafana ports are not "
-            "set — falling back to tmmscope's discovery file"
+            "set — treating the telemetry stack as absent"
         )
         return None
     host = _telemetry_host()
@@ -174,37 +152,15 @@ def _own_stack() -> dict[str, Any] | None:
     }
 
 
-def read_endpoints() -> dict[str, Any] | None:
-    """Where the telemetry stack is, or None when there isn't one.
-
-    Never raises. This is read on every status poll, and an operator who has run
-    neither stack is the normal case, not an error.
-    """
-    own = _own_stack()
-    if own is not None:
-        return own
-
-    path = endpoints_path()
-    try:
-        doc = json.loads(path.read_text())
-    except FileNotFoundError:
-        return None
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("tmmscope discovery file at %s is unreadable: %s", path, exc)
-        return None
-    return doc if isinstance(doc, dict) else None
-
-
 def get_status() -> TmmscopeStatus:
     """Whether tmmscope is up, where, and which clusters are streaming to it."""
     doc = read_endpoints()
     if doc is None:
         return TmmscopeStatus(
             detail=(
-                "No telemetry stack is running. Start bnkscope's own with "
-                "`bnkscope up --telemetry` on the host, or run `tmmscope up` if "
-                "you already use it — either way bnkscope finds it. It cannot "
-                "start one from in here: that needs the Docker socket."
+                "No telemetry stack is running. Start it on the host with "
+                "`bnkscope up --telemetry`. It cannot be started from in here: "
+                "that needs the Docker socket."
             )
         )
 
@@ -218,15 +174,15 @@ def get_status() -> TmmscopeStatus:
     )
 
     if not status.grafana_url:
-        status.detail = "The tmmscope discovery file names no Grafana URL."
+        status.detail = "The telemetry stack is up but names no Grafana URL."
         return status
 
     status.running = _grafana_healthy(status.grafana_url)
     if not status.running:
         status.detail = (
             f"A telemetry stack is recorded at {status.grafana_url}, but nothing "
-            "answered there. It may have been stopped — try `bnkscope up "
-            "--telemetry`, or `tmmscope up` if that is the one you use."
+            "answered there. It was most likely stopped out from under this "
+            "backend — try `bnkscope up --telemetry` on the host."
         )
         return status
 
@@ -259,10 +215,10 @@ def _ago(seconds: float) -> str:
 def prometheus_ingest() -> tuple[int, str] | None:
     """Where the exporter should push: (port, remote_write_path).
 
-    From tmmscope's own discovery file rather than a default — its Prometheus
-    does not run on 9090 when 9090 was taken, which is the whole reason the
-    file exists. The port is the *host* port; the address to reach that host
-    from inside the cluster is derived per-pod at injection time.
+    From the negotiated ports rather than a default — Prometheus does not run on
+    9491 when 9491 was taken, which is the whole reason they are discovered. The
+    port is the *host* port; the address to reach that host from inside the
+    cluster is derived per-pod at injection time.
     """
     doc = read_endpoints()
     if doc is None:

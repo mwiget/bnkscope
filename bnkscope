@@ -8,16 +8,11 @@
 #   bnkscope open      open the UI
 #   bnkscope logs      follow container logs
 #
-# The CLI shape mirrors tmmscope's on purpose: the two run side by side on the
-# same laptop, and an operator should not have to remember which one takes
-# `--purge` and which one takes `-v`.
-#
 # Ports are negotiated, not assumed. bnkscope wants 8080 (UI) and 8000 (API),
 # but under `network_mode: host` it shares the port space with everything else
-# on the machine — including tmmscope's Grafana, a dev server, or a second
-# bnkscope. When a preferred port is taken it walks upward and *persists* the
-# choice, so a running stack keeps its ports across re-runs. Same contract
-# tmmscope publishes, and for the same reason.
+# on the machine — a dev server, another Grafana, or a second bnkscope. When a
+# preferred port is taken it walks upward and *persists* the choice, so a
+# running stack keeps its ports across re-runs.
 
 set -euo pipefail
 
@@ -34,7 +29,7 @@ MAX_PORT_PROBE=50
 
 # regcachectl's docker.io pull-through cache. The cross-tool contract is the
 # container name and the in-container port — not a shared library — so this
-# must stay in step with regcachectl's layout. Same two constants tmmscope uses.
+# must stay in step with regcachectl's layout.
 REGCACHE_CONTAINER="regcache-dockerhub"
 REGCACHE_INTERNAL_PORT="5000/tcp"
 
@@ -178,8 +173,8 @@ if value not in (None, False):
 PY
 }
 
-# The discovery file. Same shape and purpose as tmmscope's: ports move, so
-# anything that wants to reach bnkscope reads them rather than guessing.
+# The discovery file. Ports move, so anything that wants to reach bnkscope reads
+# them rather than guessing.
 # `explicit` records *why* a port is what it is — asked for, or negotiated
 # around a conflict. Only the second kind reverts to the default later.
 write_endpoints() {
@@ -217,8 +212,7 @@ doc = {
     "updated_at": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
 if prom and graf:
-    # Same shape tmmscope publishes, so anything already reading its discovery
-    # file — including bnkscope's own backend — needs no second code path.
+    # The backend reads these back to find its own telemetry stack.
     doc["prometheus"] = {
         "port": int(prom),
         "url": f"http://localhost:{prom}",
@@ -272,12 +266,11 @@ advertised_host() {
 
 # Docker creates a missing bind-mount source as a root-owned directory inside
 # the user's home. The backend mounts these read-only to find clusters and mint
-# cloud tokens, and not everyone has all four — so create them as the user
+# cloud tokens, and not everyone has all three — so create them as the user
 # first, before compose gets the chance to create them as root.
 ensure_host_dirs() {
   mkdir -p "$HOME/.kube" "$HOME/.aws" \
-           "${XDG_CONFIG_HOME:-$HOME/.config}/gcloud" \
-           "${XDG_CONFIG_HOME:-$HOME/.config}/tmmscope"
+           "${XDG_CONFIG_HOME:-$HOME/.config}/gcloud"
 }
 
 # ---------------------------------------------------------------------------
@@ -424,8 +417,8 @@ cmd_up() {
   export BNKSCOPE_UI_PORT="$ui_port" BNKSCOPE_API_PORT="$api_port"
 
   # Telemetry ports, negotiated the same way. Prometheus defaults to 9491
-  # rather than 9090 because that is what tmmscope settled on, and an operator
-  # switching between them should not have to re-point anything.
+  # rather than 9090 — inherited from tmmscope, and kept so an operator moving
+  # off it does not have to re-point anything that already targets 9491.
   local prom_port="" graf_port=""
   if [ "$BNKSCOPE_TELEMETRY" = "on" ]; then
     local prom_claimed graf_claimed
@@ -638,7 +631,7 @@ cmd_logs() {
 }
 
 cmd_endpoint() {
-  # The producer contract, mirroring `tmmscope endpoint --json`.
+  # The producer contract: where this bnkscope landed, as JSON.
   if [ -f "$ENDPOINTS_FILE" ]; then
     cat "$ENDPOINTS_FILE"
   else

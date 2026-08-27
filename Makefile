@@ -418,7 +418,7 @@ shellcheck:
 # and not everyone has all three -- so create them here, as the user, before
 # compose gets the chance to create them as root.
 ensure-host-dirs:
-	@mkdir -p "$${HOME}/.kube" "$${HOME}/.aws" "$${HOME}/.config/gcloud" "$${HOME}/.config/tmmscope"
+	@mkdir -p "$${HOME}/.kube" "$${HOME}/.aws" "$${HOME}/.config/gcloud"
 
 # The lifecycle targets defer to ./bnkscope rather than driving compose.
 #

@@ -1,15 +1,15 @@
 """Reading the telemetry stack's contract.
 
-Two stacks can supply it: tmmscope's, discovered through its file, and
-bnkscope's own under `up --telemetry`. Both publish the same shape on purpose,
-so what is tested is the reading — the discovery, the Prometheus probe, the URLs
-built from both, and which one wins when both are up.
+There is one stack: bnkscope's own, started by `up --telemetry`, which passes
+the negotiated ports in as environment. There used to be a second — tmmscope's
+discovery file, read as a fallback — and these tests were mostly about which of
+the two won. D-040 removed it, so what is left is the reading: the probe, the
+URLs, and the distinction the file made worth keeping.
 
-The recurring theme is that a *file* saying the stack is up is only a claim; the
-tests pin the distinction between "configured" and "running".
+That distinction is between *configured* and *running*. Ports in the
+environment are only a claim about where the stack should be; Grafana answering
+is the evidence that it is there.
 """
-
-import json
 
 import pytest
 import requests
@@ -18,25 +18,23 @@ from services import tmmscope_service as svc
 
 
 @pytest.fixture()
-def endpoints_at(tmp_path, monkeypatch):
-    """Point the service at a discovery file written into tmp_path."""
+def stack_at(monkeypatch):
+    """Bring the telemetry stack up on given ports, the way `bnkscope up` does."""
 
-    def _write(doc):
-        path = tmp_path / "endpoints.json"
-        path.write_text(json.dumps(doc) if not isinstance(doc, str) else doc)
-        monkeypatch.setenv("BNKSCOPE_TMMSCOPE_ENDPOINTS", str(path))
-        return path
+    def _up(grafana_port=3000, prometheus_port=9491):
+        monkeypatch.setenv("BNKSCOPE_TELEMETRY", "on")
+        monkeypatch.setenv("BNKSCOPE_PROMETHEUS_PORT", str(prometheus_port))
+        monkeypatch.setenv("BNKSCOPE_GRAFANA_PORT", str(grafana_port))
 
-    return _write
+    return _up
 
 
 @pytest.fixture(autouse=True)
 def _no_ambient_config(monkeypatch):
-    monkeypatch.delenv("BNKSCOPE_TMMSCOPE_ENDPOINTS", raising=False)
-    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.delenv(svc._PROBE_HOST_OVERRIDE, raising=False)
-    # bnkscope's own telemetry stack, when `up --telemetry` started one. Cleared
-    # here so a test that sets it cannot leak into the rest of the file.
+    # Cleared so a test that starts the stack cannot leak into the rest of the
+    # file — and so a developer running these on the machine their own stack is
+    # up on gets the same answers as CI.
     for var in ("BNKSCOPE_TELEMETRY", "BNKSCOPE_PROMETHEUS_PORT", "BNKSCOPE_GRAFANA_PORT"):
         monkeypatch.delenv(var, raising=False)
 
@@ -57,60 +55,39 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(svc.requests, "get", _refuse)
 
 
-def _live_doc(grafana_port=3000, prometheus_port=9491):
-    """The shape `tmmscope up` writes."""
-    return {
-        "running": True,
-        "prometheus": {
-            "port": prometheus_port,
-            "url": f"http://localhost:{prometheus_port}",
-            "remote_write_url": f"http://localhost:{prometheus_port}/api/v1/write",
-        },
-        "grafana": {
-            "port": grafana_port,
-            "url": f"http://localhost:{grafana_port}",
-            "dashboard_url": f"http://localhost:{grafana_port}/d/tmm-realtime",
-        },
-        "updated_at": "2026-08-23T00:00:00Z",
-    }
-
-
-class TestEndpointsPath:
-    def test_explicit_override_wins(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("BNKSCOPE_TMMSCOPE_ENDPOINTS", str(tmp_path / "x.json"))
-        assert svc.endpoints_path() == tmp_path / "x.json"
-
-    def test_xdg_config_home_is_honoured(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-        assert svc.endpoints_path() == tmp_path / "tmmscope" / "endpoints.json"
-
-    def test_falls_back_to_the_mount(self):
-        assert str(svc.endpoints_path()) == svc.DEFAULT_ENDPOINTS_PATH
-
-
 class TestReadEndpoints:
-    def test_absent_file_is_not_an_error(self):
-        """An operator who has never run tmmscope is the normal case."""
+    def test_no_stack_is_not_an_error(self):
+        """An operator who ran `up --no-telemetry` is a normal case."""
         assert svc.read_endpoints() is None
 
-    def test_malformed_json_is_not_an_error(self, endpoints_at):
-        endpoints_at("{{{ not json")
+    def test_on_without_ports_reports_no_stack(self, monkeypatch):
+        """A broken launch. There is no second stack to fall back to any more,
+        so saying so plainly beats inventing a default port that is wrong."""
+        monkeypatch.setenv("BNKSCOPE_TELEMETRY", "on")
         assert svc.read_endpoints() is None
 
-    def test_a_non_mapping_document_is_rejected(self, endpoints_at):
-        endpoints_at("[1, 2, 3]")
-        assert svc.read_endpoints() is None
+    def test_publishes_the_shape_everything_downstream_reads(self, stack_at):
+        stack_at(grafana_port=13000, prometheus_port=19491)
+
+        doc = svc.read_endpoints()
+
+        assert doc["source"] == "bnkscope"
+        assert doc["prometheus"]["port"] == 19491
+        assert doc["grafana"]["port"] == 13000
+        assert doc["prometheus"]["remote_write_path"] == "/api/v1/write"
 
 
 class TestGetStatus:
-    def test_no_file_says_how_to_start_it(self):
+    def test_no_stack_says_how_to_start_it(self):
         status = svc.get_status()
         assert status.configured is False
         assert status.running is False
-        assert "tmmscope up" in status.detail
+        assert "bnkscope up --telemetry" in status.detail
+        # There is one stack now, and one command that starts it.
+        assert "tmmscope" not in status.detail
 
-    def test_reports_running_when_grafana_answers(self, endpoints_at, monkeypatch):
-        endpoints_at(_live_doc())
+    def test_reports_running_when_grafana_answers(self, stack_at, monkeypatch):
+        stack_at()
         monkeypatch.setattr(svc, "_grafana_healthy", lambda url: True)
         monkeypatch.setattr(svc, "_streaming_clusters", lambda url: ["lab-a"])
         monkeypatch.setattr(svc, "last_seen_ages", lambda url: {"lab-a": 2.0})
@@ -122,11 +99,11 @@ class TestGetStatus:
         assert status.streaming_clusters == ["lab-a"]
         assert status.detail is None
 
-    def test_a_stale_file_is_configured_but_not_running(self, endpoints_at, monkeypatch):
-        """The stack was stopped without rewriting the file. Saying "running"
-        on the strength of a file would send the operator hunting the wrong
-        thing."""
-        endpoints_at(_live_doc())
+    def test_a_dead_stack_is_configured_but_not_running(self, stack_at, monkeypatch):
+        """The containers were stopped out from under a backend that is still
+        running. Saying "running" on the strength of the ports it was launched
+        with would send the operator hunting the wrong thing."""
+        stack_at()
         monkeypatch.setattr(svc, "_grafana_healthy", lambda url: False)
 
         status = svc.get_status()
@@ -134,10 +111,10 @@ class TestGetStatus:
         assert status.running is False
         assert "nothing answered" in status.detail
 
-    def test_up_but_nothing_streaming_points_at_the_button(self, endpoints_at, monkeypatch):
+    def test_up_but_nothing_streaming_points_at_the_button(self, stack_at, monkeypatch):
         # Since D-036 injection is a control on the page, not a command to go
         # and type, so the detail must not send the operator to a terminal.
-        endpoints_at(_live_doc())
+        stack_at()
         monkeypatch.setattr(svc, "_grafana_healthy", lambda url: True)
         monkeypatch.setattr(svc, "_streaming_clusters", lambda url: [])
         monkeypatch.setattr(svc, "last_seen_ages", lambda url: {})
@@ -148,10 +125,10 @@ class TestGetStatus:
         assert "no cluster is streaming" in status.detail
         assert "tmmscope inject" not in status.detail
 
-    def test_negotiated_ports_are_read_not_assumed(self, endpoints_at, monkeypatch):
-        """tmmscope walks upward when 3000/9491 are taken and persists the
+    def test_negotiated_ports_are_read_not_assumed(self, stack_at, monkeypatch):
+        """`bnkscope up` walks upward when 3000/9491 are taken and persists the
         choice, so hard-coding either is a bug that only bites on a busy box."""
-        endpoints_at(_live_doc(grafana_port=3005, prometheus_port=9495))
+        stack_at(grafana_port=3005, prometheus_port=9495)
         monkeypatch.setattr(svc, "_grafana_healthy", lambda url: True)
         monkeypatch.setattr(svc, "_streaming_clusters", lambda url: [])
         monkeypatch.setattr(svc, "last_seen_ages", lambda url: {})
@@ -160,14 +137,17 @@ class TestGetStatus:
         assert status.grafana_url == "http://localhost:3005"
         assert status.prometheus_url == "http://localhost:9495"
 
-    def test_a_file_with_no_grafana_url_says_so(self, endpoints_at):
-        endpoints_at({"running": True, "grafana": {}})
+    def test_a_stack_with_no_grafana_url_says_so(self, monkeypatch):
+        # Not reachable through the environment any more — read_endpoints always
+        # builds a Grafana URL. Kept because the branch is still there, and a
+        # caller that loses it should get a sentence rather than a crash.
+        monkeypatch.setattr(svc, "read_endpoints", lambda: {"running": True, "grafana": {}})
         status = svc.get_status()
         assert status.running is False
         assert "no Grafana URL" in status.detail
 
-    def test_status_serialises_the_dashboards(self, endpoints_at, monkeypatch):
-        endpoints_at(_live_doc())
+    def test_status_serialises_the_dashboards(self, stack_at, monkeypatch):
+        stack_at()
         monkeypatch.setattr(svc, "_grafana_healthy", lambda url: True)
         monkeypatch.setattr(svc, "_streaming_clusters", lambda url: ["lab-a"])
         monkeypatch.setattr(svc, "last_seen_ages", lambda url: {"lab-a": 2.0})
@@ -493,60 +473,22 @@ class TestStreamingPods:
         assert seen["query"] == r'count by (pod) (f5tmm_up{cluster="lab\"a"})'
 
 
-class TestOwnStackPreference:
-    """bnkscope running its own Prometheus + Grafana (`up --telemetry`).
+class TestPrometheusIngest:
+    """Where injection is told to push."""
 
-    The stack is discovered through the same shape tmmscope publishes, so
-    nothing downstream needs a second code path. What is worth pinning is the
-    precedence: when both are up, the one this process started is the one its
-    own UI must point at — otherwise `--telemetry` appears to do nothing.
-    """
-
-    def test_prefers_its_own_over_tmmscopes_file(self, monkeypatch, endpoints_at):
-        endpoints_at(_live_doc(grafana_port=3000, prometheus_port=9491))
-        monkeypatch.setenv("BNKSCOPE_TELEMETRY", "on")
-        monkeypatch.setenv("BNKSCOPE_PROMETHEUS_PORT", "19491")
-        monkeypatch.setenv("BNKSCOPE_GRAFANA_PORT", "13000")
-
-        doc = svc.read_endpoints()
-
-        assert doc["source"] == "bnkscope"
-        assert doc["prometheus"]["port"] == 19491
-        assert doc["grafana"]["port"] == 13000
-
-    def test_falls_back_to_tmmscope_when_its_own_is_off(self, monkeypatch, endpoints_at):
-        endpoints_at(_live_doc(grafana_port=3000, prometheus_port=9491))
-        monkeypatch.setenv("BNKSCOPE_TELEMETRY", "off")
-        monkeypatch.setenv("BNKSCOPE_PROMETHEUS_PORT", "19491")
-
-        doc = svc.read_endpoints()
-
-        assert doc.get("source") != "bnkscope"
-        assert doc["prometheus"]["port"] == 9491
-
-    def test_falls_back_when_the_ports_are_missing(self, monkeypatch, endpoints_at):
-        # `on` without ports is a broken launch, not a reason to report no
-        # stack at all when tmmscope's is sitting right there.
-        endpoints_at(_live_doc(prometheus_port=9491))
-        monkeypatch.setenv("BNKSCOPE_TELEMETRY", "on")
-        monkeypatch.delenv("BNKSCOPE_PROMETHEUS_PORT", raising=False)
-        monkeypatch.delenv("BNKSCOPE_GRAFANA_PORT", raising=False)
-
-        doc = svc.read_endpoints()
-
-        assert doc["prometheus"]["port"] == 9491
-
-    def test_publishes_the_remote_write_path_injection_needs(self, monkeypatch):
-        monkeypatch.setenv("BNKSCOPE_TELEMETRY", "on")
-        monkeypatch.setenv("BNKSCOPE_PROMETHEUS_PORT", "9491")
-        monkeypatch.setenv("BNKSCOPE_GRAFANA_PORT", "3000")
-
+    def test_publishes_the_remote_write_path_injection_needs(self, stack_at):
+        stack_at(prometheus_port=9491)
         assert svc.prometheus_ingest() == (9491, "/api/v1/write")
 
-    def test_no_stack_at_all_is_not_an_error(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("BNKSCOPE_TELEMETRY", "off")
-        monkeypatch.setenv("BNKSCOPE_TMMSCOPE_ENDPOINTS", str(tmp_path / "absent.json"))
+    def test_follows_the_negotiated_port(self, stack_at):
+        """The port is baked into the exporter at injection and cannot be
+        edited afterwards, so reading the wrong one here is not a small miss —
+        it is an exporter pushing into a closed socket until someone recreates
+        the pods."""
+        stack_at(prometheus_port=19491)
+        assert svc.prometheus_ingest() == (19491, "/api/v1/write")
 
+    def test_no_stack_at_all_is_not_an_error(self):
         assert svc.read_endpoints() is None
         assert svc.prometheus_ingest() is None
 

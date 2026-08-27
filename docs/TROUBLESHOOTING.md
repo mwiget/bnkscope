@@ -233,7 +233,8 @@ TMM Live shows this as a partial state when only some pods came back clean.
 ### Ports moved
 
 Prometheus defaults to 9491 and Grafana to 3000, and both walk upward when taken
-— by another tool, or by a tmmscope stack still running. `./bnkscope status`
+— by another tool, or by a second telemetry stack still running.
+`./bnkscope status`
 prints where they landed. bnkscope will not move a *running* stack's ports back;
 `./bnkscope down` then `up` reclaims the defaults once they are free.
 
@@ -310,10 +311,9 @@ To skip the build entirely and use what you already have:
 
 ## Root-owned directories in my home
 
-`./bnkscope up` creates `~/.kube`, `~/.aws`, `~/.config/gcloud` and
-`~/.config/tmmscope` **as you** before starting the stack, because Docker would
-otherwise create the missing ones as empty root-owned directories inside your
-home. That is why it is the supported entry point rather than a bare
+`./bnkscope up` creates `~/.kube`, `~/.aws` and `~/.config/gcloud` **as you**
+before starting the stack, because Docker would otherwise create the missing
+ones as empty root-owned directories inside your home. That is why it is the supported entry point rather than a bare
 `docker compose up`.
 
 If a bare `docker compose up` already did this:

@@ -64,11 +64,11 @@ services:
       # In-container bind. The host-side exposure is the ports mapping above.
       BNKSCOPE_API_HOST: 0.0.0.0
       BNKSCOPE_API_PORT: 8000
-      # tmmscope runs on the host, and its discovery file says "localhost" —
-      # true for the browser, but not from inside a bridged container. The
-      # backend substitutes this host when probing; the URL handed to the
-      # browser is left alone.
-      BNKSCOPE_TMMSCOPE_PROBE_HOST: host.docker.internal
+      # Grafana runs on the host and its URL says "localhost" — true for the
+      # browser, but not from inside a bridged container. The backend
+      # substitutes this host when probing; the URL handed to the browser is
+      # left alone.
+      BNKSCOPE_TELEMETRY_PROBE_HOST: host.docker.internal
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/api/system/health"]
 

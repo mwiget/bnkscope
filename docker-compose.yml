@@ -73,10 +73,10 @@ services:
       # botocore would look for a profile named "" and raise ProfileNotFound.
       AWS_PROFILE:
       GOOGLE_APPLICATION_CREDENTIALS: /host/.config/gcloud/application_default_credentials.json
-      # When bnkscope runs its own telemetry stack (the `telemetry` profile),
-      # these say so. The backend prefers them over tmmscope's discovery file —
-      # passed as env rather than by mounting bnkscope's own config directory,
-      # since the CLI already knows the negotiated ports at `up` time.
+      # Where the telemetry stack landed (the `telemetry` profile). This is the
+      # only way the backend finds it — passed as env rather than by mounting a
+      # config directory, since the CLI already knows the negotiated ports at
+      # `up` time.
       BNKSCOPE_TELEMETRY: ${BNKSCOPE_TELEMETRY:-off}
       BNKSCOPE_LOKI_URL: http://127.0.0.1:${BNKSCOPE_LOKI_PORT:-3100}
       BNKSCOPE_LOKI_PUSH_URL: http://127.0.0.1:${BNKSCOPE_LOKI_PORT:-3100}/loki/api/v1/push
@@ -100,13 +100,9 @@ services:
       # ~/.aws     boto3's own resolution chain reads this to mint EKS tokens
       #            (services/kubernetes/_base.py::_generate_eks_token)
       # ~/.config/gcloud   the same, for GKE, via google-auth
-      # ~/.config/tmmscope tmmscope's discovery file — which ports its
-      #            Prometheus and Grafana landed on. They move when the
-      #            preferred ones are taken, so they must be read, not assumed.
       - ${BNKSCOPE_HOST_HOME:-$HOME}/.kube:/host/.kube:ro
       - ${BNKSCOPE_HOST_HOME:-$HOME}/.aws:/host/.aws:ro
       - ${BNKSCOPE_HOST_HOME:-$HOME}/.config/gcloud:/host/.config/gcloud:ro
-      - ${BNKSCOPE_HOST_HOME:-$HOME}/.config/tmmscope:/host/.config/tmmscope:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:${BNKSCOPE_API_PORT:-8000}/api/system/health"]

@@ -1,9 +1,9 @@
 /**
- * TMM Live — tmmscope's Grafana dashboard, embedded and scoped to one cluster.
+ * TMM Live — the TMM Grafana dashboard, embedded and scoped to one cluster.
  *
- * bnkscope orchestrates tmmscope rather than absorbing it: read the discovery
- * file, read Prometheus, embed the dashboard. `tmmscope up` is still a host
- * command, because starting the stack needs the Docker socket.
+ * The stack is bnkscope's own: `bnkscope up` starts Prometheus and Grafana, and
+ * that stays a host command because starting containers needs the Docker
+ * socket. This page reads Prometheus and embeds the dashboard.
  *
  * Injection is not (D-036). It is one Kubernetes API call against a cluster we
  * already hold a client for, so it is a button. Removal is deliberately harder:
@@ -189,7 +189,7 @@ export default function TmmLive() {
     <div className="space-y-4">
       <ResourcePageHeader
         title="TMM Live"
-        subtitle="Real-time TMM telemetry from tmmscope"
+        subtitle="Real-time TMM telemetry"
         clusters={clusters}
         selectedClusterId={selectedCluster}
         onClusterChange={setSelectedCluster}
@@ -259,12 +259,6 @@ export default function TmmLive() {
             command="bnkscope up --telemetry"
             hint="Start bnkscope's own Prometheus + Grafana:"
           />
-          <details className="mt-4 text-xs text-muted-foreground">
-            <summary className="cursor-pointer">Already using tmmscope?</summary>
-            <div className="mt-3">
-              <HostCommand command="tmmscope up" hint="That works too — bnkscope finds either:" />
-            </div>
-          </details>
           <p className="mt-4 text-xs text-muted-foreground">
             Starting containers needs the Docker socket, which an API with no authentication
             in front of it should not have — so this one stays a command you run.
@@ -365,10 +359,10 @@ export default function TmmLive() {
           {telemetry.available_labels.length > 0 ? (
             <>
               <p className="mb-3 text-sm text-muted-foreground">
-                tmmscope is receiving telemetry, but none of it is labelled for this
+                Prometheus is receiving telemetry, but none of it is labelled for this
                 cluster. bnkscope matches on the kube context, its <code>user@cluster</code>{' '}
-                half, and the namespace — <code>tmmscope inject --cluster</code> can use any
-                name, so pick the right one if it is here:
+                half, and the namespace — an exporter can be injected under any label at
+                all, so pick the right one if it is here:
               </p>
               <Select
                 onValueChange={(label) =>
@@ -392,8 +386,8 @@ export default function TmmLive() {
             </>
           ) : (
             <p className="mb-3 text-sm text-muted-foreground">
-              tmmscope is up but nothing is streaming to it yet. Add the exporter to this
-              cluster's TMM pods:
+              The telemetry stack is up but nothing is streaming to it yet. Add the
+              exporter to this cluster's TMM pods:
             </p>
           )}
 
@@ -626,11 +620,6 @@ export default function TmmLive() {
         />
       )}
 
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <RefreshCw className="h-3 w-3" aria-hidden="true" />
-        tmmscope runs independently of bnkscope — it works with neither this UI nor a
-        cluster registered here.
-      </p>
     </div>
   );
 }

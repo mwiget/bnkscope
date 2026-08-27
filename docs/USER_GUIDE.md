@@ -209,11 +209,11 @@ clear one is to **recreate the TMM pods**, which drops dataplane traffic — so
 removal asks you to type the cluster name first, while adding is a single click.
 That asymmetry is deliberate.
 
-If the exporter is a **permanent sidecar** — installed by `tmmscope inject
---permanent`, or built into the pod template by the cluster builder, which is
-how DPF clusters run it — bnkscope will not offer to recreate the pods. It is in
-the template, so the replacement pod comes back carrying it: all cost, no
-effect. Remove it where it is defined, with `tmmscope eject`.
+If the exporter is a **permanent sidecar** — built into the pod template by the
+cluster builder, which is how DPF clusters run it — bnkscope will not offer to
+recreate the pods. It is in the template, so the replacement pod comes back
+carrying it: all cost, no effect. The page names the workload that defines it;
+remove it there.
 
 If you would rather not restart anything, leave it: it disappears on its own at
 the pod's next restart.
@@ -229,12 +229,14 @@ no credentials and can change nothing. Retention is 24 hours.
 
 ### Already using tmmscope?
 
-[tmmscope](https://github.com/mwiget/tmmscope) still works — if its stack is
-running, bnkscope finds and uses it rather than starting its own. Nothing here
-requires it: the exporter is built from `tmm-stat-exporter/` in this repository
-and the Prometheus/Grafana configuration is vendored in `telemetry/`. What stays
-CLI-only is `--permanent` injection — both durable modes restart TMM, and one
-installs a cluster-scoped webhook with a 10-year CA.
+Stop it, and let bnkscope run the stack. Everything TMM Live needs is here — the
+exporter is built from `tmm-stat-exporter/`, the Prometheus and Grafana
+configuration is vendored in `telemetry/` — and bnkscope no longer looks for
+tmmscope's stack, so leaving both up means two Prometheuses competing for the
+same ports rather than one being found.
+
+What never came across is `--permanent` injection: both durable modes restart
+TMM, and one installs a cluster-scoped webhook with a 10-year CA.
 
 ---
 
@@ -418,8 +420,8 @@ you were away from a desk.
   the bind — see the
   [security posture](../README.md#security-posture-no-authentication-at-all).
   LAN access is for a private lab network or a VPN, nothing else.
-- **Write to your machine.** `~/.kube`, `~/.aws`, `~/.config/gcloud` and
-  `~/.config/tmmscope` are mounted **read-only**.
+- **Write to your machine.** `~/.kube`, `~/.aws` and `~/.config/gcloud` are
+  mounted **read-only**.
 - **Run cluster CLI tools.** No `kubectl`, no `aws`, no `gcloud` in the image —
   cloud tokens are minted in Python instead.
 
