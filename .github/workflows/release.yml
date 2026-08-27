@@ -211,10 +211,14 @@ jobs:
           fi
 
       - name: Update changelog
+        env:
+          # Same reason as the commit step: a `${{ }}` splice into a shell
+          # assignment breaks on a quote and executes on a backtick.
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          NEW_VERSION: ${{ needs.preflight.outputs.new_version }}
         run: |
-          NEW_VERSION="${{ needs.preflight.outputs.new_version }}"
           DATE=$(date +%Y-%m-%d)
-          NOTES="${{ inputs.release_notes }}"
+          NOTES="$RELEASE_NOTES"
 
           # See the "Update CHANGELOG.md" step above for why this
           # goes through a temp file + awk instead of an inline sed s-command
@@ -240,20 +244,45 @@ jobs:
           rm -f "$ENTRY_FILE"
 
       - name: Commit and tag
+        # Message and tag annotation both go through files, and release_notes
+        # arrives as env rather than as `${{ }}` spliced into the script.
+        #
+        # The old form opened `git commit -m "` and never closed it, so every
+        # run died on `unexpected EOF while looking for matching '"'` before it
+        # reached the push — release.yml had not cut a release since. The same
+        # splice was also an injection: a note containing a quote, a backtick
+        # or a `$(` ran as shell in a job with contents: write. The CHANGELOG
+        # step above already went to a temp file for exactly this reason.
+        env:
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          NEW_VERSION: ${{ needs.preflight.outputs.new_version }}
+          PREV_VERSION: ${{ needs.preflight.outputs.current_version }}
+          BUMP_TYPE: ${{ inputs.version_bump }}
         run: |
           git add VERSION CHANGELOG.md
           git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
 
-          git commit -m "release: v${{ needs.preflight.outputs.new_version }} [skip ci]
+          MSG_FILE=$(mktemp)
+          {
+            echo "release: v${NEW_VERSION} [skip ci]"
+            echo ""
+            echo "${RELEASE_NOTES}"
+            echo ""
+            echo "Bump: ${BUMP_TYPE}"
+            echo "Previous: v${PREV_VERSION}"
+            echo "CI: passed"
+          } > "$MSG_FILE"
+          git commit -F "$MSG_FILE"
 
-          ${{ inputs.release_notes }}
+          TAG_FILE=$(mktemp)
+          {
+            echo "Release v${NEW_VERSION}"
+            echo ""
+            echo "${RELEASE_NOTES}"
+          } > "$TAG_FILE"
+          git tag -a "v${NEW_VERSION}" -F "$TAG_FILE"
 
-          Bump: ${{ inputs.version_bump }}
-          Previous: v${{ needs.preflight.outputs.current_version }}
-          CI: passed
-
-          git tag -a "v${{ needs.preflight.outputs.new_version }}" \
-            -m "Release v${{ needs.preflight.outputs.new_version }}: ${{ inputs.release_notes }}"
+          rm -f "$MSG_FILE" "$TAG_FILE"
 
       - name: Push
         run: |
@@ -262,12 +291,14 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          gh release create "v${{ needs.preflight.outputs.new_version }}" \
-            --title "v${{ needs.preflight.outputs.new_version }}" \
-            --notes "${{ inputs.release_notes }}" \
+          gh release create "v${NEW_VERSION}" \
+            --title "v${NEW_VERSION}" \
+            --notes "$RELEASE_NOTES" \
             --target "${{ github.ref_name }}"
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          NEW_VERSION: ${{ needs.preflight.outputs.new_version }}
 
       - name: Release summary
         run: |
