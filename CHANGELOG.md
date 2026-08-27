@@ -9,6 +9,10 @@ bnkscope starts at **0.1.0**; nothing has been released yet.
 
 ---
 
+## v0.1.1 (2026-08-27)
+
+Fork the tmm-stat-exporter into this repository, drop the tmmscope dependency, and name the node when it is NotReady
+
 ## bnk-forge (v2.x) — kept for provenance
 
 Everything below this line is **[bnk-forge](https://github.com/f5devcentral/bnk-forge)'s**
