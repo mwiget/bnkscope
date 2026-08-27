@@ -2,9 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-05-26
-- **Source:** `.agent/audits/2026-05-26-static-vs-dynamic-audit.md` (whole-codebase audit, 7 agents, ~35 distinct findings)
+- **Source:** a whole-codebase audit run on 2026-05-26 (7 agents, ~35 distinct findings). Its report was working material and was never committed; what it found is summarised in Context below, which is now the record.
 - **Sibling principle ADR:** D-017 (success-contract — "HTTP 2xx ≠ operation success")
-- **Mechanism ADRs:** D-007 (K8sPayloadBuilder), D-010 (EngineRegistry), D-018 (dynamic CRD discovery — first instance)
+- **Mechanism ADRs:** D-018 (dynamic CRD discovery — first instance). D-007 (K8sPayloadBuilder) and D-010 (EngineRegistry) governed the catalog/engine layer, which the fork removed; neither record came across.
 - **Class of bug it governs:** static/hardcoded enumeration of state the live system already knows
 
 ## Context
@@ -80,6 +80,12 @@ Anything that **decides visibility, routability, validity, or health** of a live
 
 ## References
 
-- Audit: `.agent/audits/2026-05-26-static-vs-dynamic-audit.md`
-- Memory: `audit_static_vs_dynamic_2026-05-26`, `followup_static_registry_removal_migration`, `rfc_cnf_dashboard_dynamic_crd_llmtop` (D-018)
-- Vocabulary: `.agent/context/architecture-language.md`
+- Vocabulary (Module / Interface / Depth / Seam / Adapter, and the deletion test):
+  [`docs/adr/README.md`](README.md#vocabulary)
+- Related: [D-017](D-017-licensing-success-contract.md) (success contract),
+  [D-018](D-018-cnf-dashboard-dynamic-crd-llmtop.md) (dynamic CRD discovery)
+
+The audit report and the working notes this ADR was written from lived under
+`.agent/`, which is gitignored — they were never part of the repository and are
+not recoverable from it. This file is the durable record; where it summarises a
+finding, that summary is the source, not a pointer to one.
