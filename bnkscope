@@ -86,6 +86,18 @@ compose() {
   if [ -f "$REPO_DIR/docker-compose.override.yml" ]; then
     files+=(-f "$REPO_DIR/docker-compose.override.yml")
   fi
+  # One extra overlay, named by the caller. scripts/deploy-release.sh uses it to
+  # point the three services at published images instead of building them.
+  #
+  # Last, so it wins — and an env var rather than a flag because every
+  # subcommand needs it: `down` and `logs` have to resolve the same services
+  # `up` started, and a flag on `up` alone would leave the rest looking at a
+  # different compose project.
+  if [ -n "${BNKSCOPE_COMPOSE_EXTRA:-}" ]; then
+    [ -f "$BNKSCOPE_COMPOSE_EXTRA" ] || \
+      die "BNKSCOPE_COMPOSE_EXTRA points at a file that does not exist: $BNKSCOPE_COMPOSE_EXTRA"
+    files+=(-f "$BNKSCOPE_COMPOSE_EXTRA")
+  fi
   local profiles=()
   # Profiles have to be named on every invocation, not just `up`: without them
   # `down` and `ps` cannot see the containers they started.
@@ -676,6 +688,9 @@ Environment:
   BNKSCOPE_REGISTRY_CACHE      auto (default) | on | off — pull base images
                                through a local regcachectl docker.io cache
   BNKSCOPE_REGISTRY_CACHE_HOST host the build uses to reach it (default localhost)
+  BNKSCOPE_COMPOSE_EXTRA       one extra compose overlay, applied last. Set by
+                               scripts/deploy-release.sh to run published
+                               images; see `make deploy-release`.
 
 Discovery file: $ENDPOINTS_FILE
 EOF

@@ -1,0 +1,27 @@
+# Run published images instead of building from source.
+#
+# Applied last, on top of docker-compose.yml, by scripts/deploy-release.sh —
+# which sets BNKSCOPE_COMPOSE_EXTRA and then hands off to `./bnkscope up
+# --no-build`. Do not pass this to `docker compose` directly: the CLI negotiates
+# the ports, writes the discovery file, creates the host directories and loads
+# the Grafana password, and a bare compose call skips all four.
+#
+# Only `image` is overridden. Everything else — volumes, ports, healthchecks,
+# the environment, the profiles — stays in the base file, so this cannot drift
+# from what a source build runs.
+#
+# The base services still carry `build:`. That is harmless under `--no-build`,
+# and keeping it means one file describes each service rather than two.
+#
+#   BNKSCOPE_RELEASE_VERSION   image tag (default: latest)
+#   BNKSCOPE_RELEASE_REGISTRY  registry + namespace (default: ghcr.io/mwiget)
+
+services:
+  backend:
+    image: ${BNKSCOPE_RELEASE_REGISTRY:-ghcr.io/mwiget}/bnkscope-api:${BNKSCOPE_RELEASE_VERSION:-latest}
+
+  frontend:
+    image: ${BNKSCOPE_RELEASE_REGISTRY:-ghcr.io/mwiget}/bnkscope-frontend:${BNKSCOPE_RELEASE_VERSION:-latest}
+
+  mcp:
+    image: ${BNKSCOPE_RELEASE_REGISTRY:-ghcr.io/mwiget}/bnkscope-mcp:${BNKSCOPE_RELEASE_VERSION:-latest}

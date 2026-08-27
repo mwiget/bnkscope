@@ -20,7 +20,7 @@
 #   BNKSCOPE_REGISTRY=ghcr.io/your-org BNKSCOPE_VERSION=3.1.6 ./scripts/publish-signed-images.sh --execute
 #
 # Environment variables:
-#   BNKSCOPE_REGISTRY  — required; e.g. ghcr.io/jlcode-tech
+#   BNKSCOPE_REGISTRY  — required; e.g. ghcr.io/mwiget
 #   BNKSCOPE_VERSION   — optional; defaults to contents of ./VERSION
 #   DRY_RUN             — set to 0 to execute (equivalent to --execute)
 #

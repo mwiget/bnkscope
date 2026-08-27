@@ -5,6 +5,8 @@
 
 ## Image Hierarchy
 
+The three that run on your machine, plus the sidecar that runs in your clusters:
+
 ```
 python:3.11-slim (Debian bookworm-slim, ~150MB)
 │
@@ -18,6 +20,11 @@ node:20-alpine
     └──           → bnkscope-frontend:latest        nginx-unprivileged
 
 └──                → bnkscope-mcp:latest            read-only MCP tools (optional)
+
+scratch (nothing at all, ~10MB)
+└──                → bnkscope-tmm-stat-exporter      injected into f5-tmm pods,
+                                                     never run here — see
+                                                     tmm-stat-exporter/
 ```
 
 **No CLI tools in any of them.** Everything bnkscope does against a cluster goes
@@ -38,6 +45,32 @@ docker build --target api -t bnkscope-api backend/
 docker compose build          # api + frontend
 docker compose --profile mcp build
 ```
+
+## Running published images instead
+
+Building stays the default. On a host that only needs to run bnkscope, pull what
+a release already built:
+
+```bash
+make deploy-release                  # latest
+make deploy-release VERSION=0.1.2    # a specific release
+```
+
+`scripts/deploy-release.sh` pulls the three images, verifies their signatures
+when `cosign` is on PATH, then sets `BNKSCOPE_COMPOSE_EXTRA=docker-compose.release.yml`
+and runs `./bnkscope up --no-build`.
+
+It delegates rather than calling `docker compose` itself, and that is the whole
+design: the CLI negotiates the ports, writes the discovery file, creates the
+host mount directories as you rather than as root, and loads the Grafana
+password. A bare `docker compose up` skips all four and breaks a running
+install — the same reason `upgrade.sh` delegates.
+
+`docker-compose.release.yml` overrides exactly one key per service, `image`.
+Volumes, ports, healthchecks, environment and profiles stay in the base file, so
+a release install cannot drift from what a source build runs. `down`, `status`,
+`logs` and `endpoint` need no special handling: compose matches containers by
+project and service name, not by image.
 
 ## What Each Image Contains
 
@@ -83,35 +116,52 @@ The script signs each image by digest (not tag) and attaches two attestations:
 
 ### Verifying signatures (consumers)
 
-Replace `<signer-email>` with the email of the person who signed the images (visible in the
-Rekor transparency log entry), and `<digest>` with the image digest.
+Releases are signed by the release workflow, not by a person, so the identity to
+check is the workflow itself and the issuer is GitHub's Actions OIDC provider:
+
+```
+identity: https://github.com/mwiget/bnkscope/.github/workflows/release.yml@refs/heads/main
+issuer:   https://token.actions.githubusercontent.com
+```
+
+An earlier version of this page named `<signer-email>` and
+`https://github.com/login/oauth`, which is what a signature made by hand from a
+laptop looks like. No published image was ever signed that way, so those
+commands could not have verified anything.
 
 ```bash
+IMAGE=ghcr.io/mwiget/bnkscope-api:0.1.2
+IDENTITY='^https://github\.com/mwiget/bnkscope/'
+ISSUER=https://token.actions.githubusercontent.com
+
 # Verify the signature
 cosign verify \
-  ghcr.io/jlcode-tech/bnkscope-api@<digest> \
-  --certificate-identity <signer-email> \
-  --certificate-oidc-issuer https://github.com/login/oauth
+  --certificate-identity-regexp "$IDENTITY" \
+  --certificate-oidc-issuer "$ISSUER" \
+  "$IMAGE"
 
 # Verify + extract the SBOM attestation
 cosign verify-attestation \
   --type cyclonedx \
-  --certificate-identity <signer-email> \
-  --certificate-oidc-issuer https://github.com/login/oauth \
-  ghcr.io/jlcode-tech/bnkscope-api@<digest> \
-  | jq -r '.payload' | base64 -d | jq .
+  --certificate-identity-regexp "$IDENTITY" \
+  --certificate-oidc-issuer "$ISSUER" \
+  "$IMAGE" | jq -r '.payload' | base64 -d | jq .
 
 # Verify + extract the SLSA provenance attestation
 cosign verify-attestation \
   --type slsaprovenance \
-  --certificate-identity <signer-email> \
-  --certificate-oidc-issuer https://github.com/login/oauth \
-  ghcr.io/jlcode-tech/bnkscope-api@<digest> \
-  | jq -r '.payload' | base64 -d | jq .
+  --certificate-identity-regexp "$IDENTITY" \
+  --certificate-oidc-issuer "$ISSUER" \
+  "$IMAGE" | jq -r '.payload' | base64 -d | jq .
 ```
 
-Apply the same commands to the other image names: `bnkscope-frontend` and
-`bnkscope-mcp`.
+Apply the same commands to `bnkscope-frontend`, `bnkscope-mcp` and
+`bnkscope-tmm-stat-exporter`. A tag works as well as a digest here; pin to
+`@sha256:…` when you want the check to name one exact image.
+
+**Before v0.1.2 there is nothing to verify.** The signing step aborted on its
+first image every time it ran, so only v0.1.2 and later carry a full set — and
+v0.1.1's images have been withdrawn.
 
 ### OCI Labels
 

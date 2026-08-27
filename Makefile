@@ -124,7 +124,7 @@ PYTEST_COV  = --cov --cov-fail-under=0
 
 .PHONY: install update status logs \
         test test-backend test-backend-unit test-backend-component test-backend-legacy test-frontend \
-        test-contracts exporter-test exporter-vet exporter-image \
+        test-contracts exporter-test exporter-vet exporter-image deploy-release \
         test-integration test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
         lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
         dev-setup security-audit docker-check docker-verify docker-validate frontend-deps \
@@ -467,6 +467,22 @@ test-mcp:
 	@cd mcp-server && \
 	  if [ -d ".venv" ]; then source .venv/bin/activate; fi && \
 	  python -m pytest tests/ --tb=short -q
+
+# ─── Deploy from published images ────────────────────────────────────────────
+# The default everywhere else in this Makefile is to build from source, which is
+# right for a checkout you are working in. This is the other case: a host that
+# only wants to run bnkscope, without a Vite build and a Python image per
+# machine and per upgrade.
+#
+#   make deploy-release                 # the latest release
+#   make deploy-release VERSION=0.1.2   # a specific one
+#   make deploy-release ARGS="--listen 0.0.0.0"
+#
+# The script pulls, verifies signatures when cosign is present, and then hands
+# off to ./bnkscope up --no-build — it never drives compose itself.
+
+deploy-release:
+	@./scripts/deploy-release.sh $(VERSION) $(ARGS)
 
 # ─── tmm-stat-exporter (Go) ──────────────────────────────────────────────────
 # The sidecar TMM Live injects. Its own module, and the only Go in the repo, so
