@@ -6,8 +6,6 @@
 # backend/.dockerignore no longer takes effect for those builds — Docker only
 # reads the ignore file at the context root — so the backend-specific exclusions
 # that still matter are reproduced below with a backend/ prefix.
-#
-# bnk-operator/ still builds with its own context and its own .dockerignore.
 
 # Version control
 .git/
@@ -40,7 +38,6 @@ backend/.venv/
 backend/venv/
 backend/env/
 backend/tests/
-bnk-operator/tests/
 
 # Local runtime data under backend/ — mounted as volumes in production, never
 # part of an image. Previously excluded by backend/.dockerignore.

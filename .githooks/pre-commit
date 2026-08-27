@@ -33,13 +33,4 @@ if git diff --cached --name-only | grep -q "^frontend-v2/"; then
   # eslint exits 0 for warnings-only, non-zero for errors
 fi
 
-# Operator lint — only if operator files changed
-if git diff --cached --name-only | grep -q "^bnk-operator/"; then
-  if [ -d "bnk-operator/.venv" ]; then
-    echo "  Operator files changed — running ruff..."
-    cd bnk-operator && source .venv/bin/activate && python -m ruff check . 2>/dev/null || true
-    cd ..
-  fi
-fi
-
 echo "=== Lint passed ==="

@@ -209,10 +209,6 @@ node_modules/
 # Per-worktree agent state (not for merge)
 .agent-local/
 
-# Local multi-agent helper scripts at repo root (framework-managed; not committed)
-/bin/maf-*.sh
-/bin/lib/
-
 opencode.json
 
 # Per-developer scratch directory; not for shared code.
@@ -231,10 +227,9 @@ e2e-config.yaml
 # The Markdown sources are tracked; rendered PDFs are not.
 *.pdf
 
-# --- Added by multi-agent-framework installer ---
-# --- MAF downstream runtime artifacts (installer-managed) ---
-# Keep framework-managed tooling/scaffolding versioned (for example `bin/maf-*`,
-# `.agent/rules/*`, `.agent/templates/*`). Ignore only operational/runtime artifacts.
+# --- Agent runtime artifacts ---
+# Local agent/editor state. The directories themselves are ignored above; these
+# are the nested runtime paths worth naming explicitly.
 # OpenCode runtime state
 # Local provider override notes (per-machine, never committed)
 .opencode/PROVIDER-LOCAL.md
@@ -244,7 +239,7 @@ e2e-config.yaml
 .agent/cache/
 .agent/**/*.maf.new
 .agent/install-state.yaml
-# --- End MAF downstream runtime artifacts ---
+# --- End agent runtime artifacts ---
 
 # Experimental Go CLI — build artifacts, never commit the compiled binary
 cli/go/
