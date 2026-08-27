@@ -5,7 +5,7 @@ this directory listing is the index, and each filename carries the ID and title.
 
 Two ID prefixes appear here, both live:
 
-- **`D-NNN`** — decisions carried over from bnk-forge and continued here. Numbering is sequential and never reused; `D-005` onward are per-file (currently through `D-037`). `D-001`..`D-004` predate the per-file format and were never split out.
+- **`D-NNN`** — decisions carried over from bnk-forge and continued here. Numbering is sequential and never reused; `D-005` onward are per-file (currently through `D-038`). `D-001`..`D-004` predate the per-file format and were never split out.
 - **`ADR-NNN`** — newer records numbered after the GitHub issue they resolve, created by `scripts/new-adr.sh --issue N --title "..."`.
 
 ## Format

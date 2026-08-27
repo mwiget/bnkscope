@@ -76,8 +76,8 @@ CI passes.
 | Event | Branches | Notes |
 |-------|----------|-------|
 | Pull Request | `main` | The merge gate |
-| Push | `main` | Post-merge validation — and Release, unless the push is docs-only |
-| Manual | — | `workflow_dispatch` on Release, for an explicit bump/notes override |
+| Push | `main` | Post-merge validation |
+| Manual | — | Release — the only way to cut one |
 
 ### Path-based change detection
 
@@ -98,35 +98,32 @@ CI uses `dorny/paths-filter` to skip irrelevant jobs. The filters, verbatim from
 | File | Purpose | Trigger |
 |------|---------|---------|
 | `.github/workflows/ci.yml` | All jobs + `CI Gate` | Push, PR |
-| `.github/workflows/release.yml` | Release pipeline | **Push to `main`** (non-docs), or manual |
+| `.github/workflows/release.yml` | Release pipeline | `workflow_dispatch` **only** |
 
 ## Release process
 
-> **Releases are automatic.** Every push to `main` that touches something other
-> than docs runs Release alongside CI. There is no button to press and no
-> confirmation step — merging is the release. The `paths-ignore` list decides
-> what counts as docs, and it **must stay identical to `ci.yml`'s**: Release's
-> preflight matches its CI run by SHA, so a push that releases without a
-> matching CI run just times out waiting for one.
->
-> This bites on a first push. Recreating the repository on 2026-08-27 pushed all
-> 24 commits at once, which fired Release; it was cancelled before it cut a tag.
-> If you are importing history, expect it and cancel the run.
+> **Releases are dispatched, never automatic.** Merging to `main` does not cut
+> one. This changed on 2026-08-27 — the workflow used to fire on every non-docs
+> push to `main`, which is how bnk-forge shipped. See
+> [D-038](../docs/adr/D-038-releases-are-dispatched-not-pushed.md).
 
-On a normal push to `main`, Release will:
+1. Push your work to `main` and let `CI Gate` go green.
+2. **Actions → Release → Run workflow.**
+3. Choose the bump (`patch`/`minor`/`major`) and enter release notes.
 
-- ✅ Verify CI has passed for the same SHA
-- ✅ Derive the bump from conventional commits since the last final `vX.Y.Z` tag
-      (`feat!`/`BREAKING CHANGE` → major, `feat` → minor, anything else → patch)
-- ✅ Bump the `VERSION` file
-- ✅ Update `CHANGELOG.md` (inserted after its first `---`)
-- ✅ Commit `release: vX.Y.Z [skip ci]`, tag, push
+Release will then:
+
+- ✅ Verify CI passed **for that exact commit SHA**
+- ✅ Apply the bump you chose to the `VERSION` file
+- ✅ Update `CHANGELOG.md` (inserted after its first `---`, so leave that separator alone)
+- ✅ Commit, tag `vX.Y.Z`, push
 - ✅ Create a GitHub Release
+- ✅ Publish images to GHCR
 
-The commit it pushes starts with `release: ` and carries `[skip ci]`, which is
-what stops it from triggering itself.
+### It must be a commit CI ran on
 
-### Manual override
-
-**Actions → Release → Run workflow** takes an explicit bump type and release
-notes, for when the derived version is not what you want.
+Preflight matches its CI run by SHA, so you cannot release on top of a
+**docs-only commit** — `ci.yml` skips those via `paths-ignore`, that SHA has no
+CI run, and none is coming. Preflight says so after five minutes rather than
+polling the full 45-minute timeout. Push a code commit, or re-run CI for that
+SHA, then dispatch again.

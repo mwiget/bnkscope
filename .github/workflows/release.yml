@@ -1,41 +1,25 @@
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  bnkscope — Release Pipeline                                               ║
 # ║                                                                             ║
-# ║  Triggers:                                                                  ║
-# ║    • push to main     → final release (VERSION bump + CHANGELOG commit)    ║
-# ║    • workflow_dispatch → manual override (keeps the original manual path)  ║
+# ║  Trigger: workflow_dispatch ONLY. Releasing is a decision, not a side       ║
+# ║  effect of merging.                                                         ║
 # ║                                                                             ║
-# ║  The RC path fires on a push to any branch that is not main. Nothing does  ║
-# ║  today: main is the only branch and the only one in the push trigger, so   ║
-# ║  release-rc is dormant — kept for a future shared pre-release branch.      ║
+# ║  It used to also fire on every push to main. That is how bnk-forge shipped, ║
+# ║  and it surprised us on 2026-08-27: re-pushing the history into a fresh     ║
+# ║  repository looked like one enormous push to main and started a release of  ║
+# ║  someone else's commits. Dropped deliberately — see ADR D-038.              ║
 # ║                                                                             ║
-# ║  Version derivation: conventional commits since last final vX.Y.Z tag      ║
-# ║    feat! / BREAKING CHANGE → major                                         ║
-# ║    feat                    → minor                                          ║
-# ║    fix / other             → patch                                          ║
+# ║  Version: you choose the bump (patch/minor/major); the tag is derived from  ║
+# ║  the VERSION file, not from commit messages.                                ║
 # ║                                                                             ║
-# ║  Infinite-loop guard: commits starting with "release: " have [skip ci]    ║
-# ║  appended and are filtered out by the head-commit check below.             ║
+# ║  Precondition: ci.yml must already have a green run for the exact commit    ║
+# ║  you dispatch against. Docs-only commits do not run CI, so a release cannot ║
+# ║  be cut directly on top of one — push code, or re-run CI on that SHA.       ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 name: Release
 
 on:
-  push:
-    branches:
-      - main
-    # MUST stay in sync with ci.yml's push-trigger paths-ignore list — a
-    # divergence lets a push trigger Release without a matching CI run,
-    # which then times out the preflight SHA poll below (PR #297 review).
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.agent/**'
-      - '.opencode/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.trivyignore'
-      - 'USER_GUIDE.md'
   workflow_dispatch:
     inputs:
       version_bump:
@@ -44,9 +28,9 @@ on:
         default: "patch"
         type: choice
         options:
-          - patch   # 2.10.49 → 2.10.50
-          - minor   # 2.10.49 → 2.11.0
-          - major   # 2.10.49 → 3.0.0
+          - patch   # 0.1.0 → 0.1.1
+          - minor   # 0.1.0 → 0.2.0
+          - major   # 0.1.0 → 1.0.0
       release_notes:
         description: "Release notes (one-line summary)"
         required: true
@@ -57,32 +41,9 @@ concurrency:
   cancel-in-progress: false  # Never cancel a release in progress
 
 jobs:
-  # ── Guard: skip release: commits on main (prevents infinite loop) ────────────
-  guard:
-    name: "Loop guard"
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.check.outputs.should_run }}
-    steps:
-      - name: Check head commit
-        id: check
-        env:
-          HEAD_COMMIT_MSG: ${{ github.event.head_commit.message }}
-        run: |
-          MSG="$HEAD_COMMIT_MSG"
-          # Skip if triggered by our own release commit or [skip ci] sentinel
-          if echo "$MSG" | grep -qE '^release: |^\[skip ci\]|\[skip ci\]$'; then
-            echo "Skipping: head commit is a release commit or has [skip ci]"
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          fi
-
   # ── Pre-flight: verify CI passed + derive version ────────────────────────────
   preflight:
     name: "Pre-flight Checks"
-    needs: guard
-    if: needs.guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     # `actions: read` is load-bearing: the CI-status poll below calls
     # `gh run list`, and this repo's default workflow permission is "read",
@@ -97,22 +58,10 @@ jobs:
       current_version: ${{ steps.version.outputs.current }}
       new_version: ${{ steps.version.outputs.new }}
       bump_type: ${{ steps.version.outputs.bump_type }}
-      release_kind: ${{ steps.kind.outputs.kind }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Full history + tags needed for conventional-commit derivation
-
-      - name: Determine release kind
-        id: kind
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "kind=manual" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.ref_name }}" = "main" ]; then
-            echo "kind=final" >> "$GITHUB_OUTPUT"
-          else
-            echo "kind=rc" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Check CI status on this branch
         run: |
@@ -152,6 +101,17 @@ jobs:
 
             if [ -z "$RUN_JSON" ] || [ "$RUN_JSON" = "null" ]; then
               echo "[${ELAPSED}s] No CI run found yet for commit $SHA on branch '$BRANCH'"
+              # A CI run appears within seconds of the push that created it. If
+              # none exists after the grace window, none is coming — waiting the
+              # full timeout just to say so wastes 45 minutes. The usual cause is
+              # dispatching on top of a docs-only commit: ci.yml's paths-ignore
+              # skips those, so the SHA has no run and never will.
+              if [ "$ELAPSED" -ge "$NO_RUN_GRACE_SECONDS" ]; then
+                echo "::error::No CI run exists for commit $SHA on branch '$BRANCH' after ${ELAPSED}s, and one is not going to appear."
+                echo "If HEAD is a docs-only commit, ci.yml did not run for it (paths-ignore). Push a code commit, or re-run CI for this SHA, then dispatch again:"
+                echo "  https://github.com/${{ github.repository }}/actions/workflows/ci.yml"
+                exit 1
+              fi
             else
               RUN_STATUS=$(echo "$RUN_JSON" | jq -r '.status')
               RUN_CONCLUSION=$(echo "$RUN_JSON" | jq -r '.conclusion')
@@ -188,42 +148,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CI_POLL_TIMEOUT_SECONDS: 2700
+          # Long enough for a queued run to register, short enough that the
+          # "there is no run" case fails in minutes rather than in 45.
+          NO_RUN_GRACE_SECONDS: 300
 
-      - name: Derive version from conventional commits
+      # The bump comes from the dropdown, not from commit messages. Deriving it
+      # from conventional commits was the automated path's job, and that path
+      # is gone with the push trigger; scripts/compute_version_bump.sh is now
+      # only used by its own selftest.
+      - name: Apply the requested version bump
         id: version
         run: |
-          chmod +x scripts/compute_version_bump.sh
-
-          RELEASE_KIND="${{ steps.kind.outputs.kind }}"
           CURRENT=$(cat VERSION)
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
 
-          if [ "$RELEASE_KIND" = "manual" ]; then
-            # Manual override: use the dropdown input directly
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-            case "${{ inputs.version_bump }}" in
-              major) NEW="$((MAJOR + 1)).0.0" ;;
-              minor) NEW="${MAJOR}.$((MINOR + 1)).0" ;;
-              patch) NEW="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
-            esac
-            BUMP="${{ inputs.version_bump }}"
-          else
-            # Automated: derive from conventional commits.
-            # Capture output before eval — `eval $(cmd)` on its own returns
-            # eval's own exit status (almost always 0), swallowing a nonzero
-            # exit from compute_version_bump.sh (e.g. its fail-safe guard).
-            BUMP_OUTPUT=$(bash scripts/compute_version_bump.sh)
-            eval "$BUMP_OUTPUT"
-            NEW="$TARGET_VERSION"
-            BUMP="$BUMP_TYPE"
-          fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "${{ inputs.version_bump }}" in
+            major) NEW="$((MAJOR + 1)).0.0" ;;
+            minor) NEW="${MAJOR}.$((MINOR + 1)).0" ;;
+            patch) NEW="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+            *)     echo "::error::unknown version_bump '${{ inputs.version_bump }}'"; exit 1 ;;
+          esac
 
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
-          echo "bump_type=$BUMP" >> "$GITHUB_OUTPUT"
-          echo "Version: $CURRENT -> $NEW (bump: $BUMP)"
+          echo "bump_type=${{ inputs.version_bump }}" >> "$GITHUB_OUTPUT"
+          echo "Version: $CURRENT -> $NEW (bump: ${{ inputs.version_bump }})"
 
-      - name: Check final tag doesn't already exist
-        if: steps.kind.outputs.kind != 'rc'
+      - name: Check the tag doesn't already exist
         run: |
           TAG="v${{ steps.version.outputs.new }}"
           if git tag -l "$TAG" | grep -q "^${TAG}$"; then
@@ -232,273 +183,12 @@ jobs:
           fi
           echo "Tag $TAG is available"
 
-  # ── RC Release (dormant — no branch but main pushes today) ──────────────────
-  release-rc:
-    name: "Pre-release RC v${{ needs.preflight.outputs.new_version }}"
-    needs: preflight
-    if: needs.preflight.outputs.release_kind == 'rc'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Compute RC number
-        id: rc
-        run: |
-          TARGET="${{ needs.preflight.outputs.new_version }}"
-          # Count existing rc tags for this target version
-          RC_COUNT=$(git tag -l "v${TARGET}-rc.*" | wc -l | tr -d ' ')
-          RC_NUM=$((RC_COUNT + 1))
-          echo "rc_num=${RC_NUM}" >> "$GITHUB_OUTPUT"
-          echo "rc_tag=v${TARGET}-rc.${RC_NUM}" >> "$GITHUB_OUTPUT"
-          echo "RC tag will be: v${TARGET}-rc.${RC_NUM}"
-
-      - name: Create annotated RC tag
-        run: |
-          RC_TAG="${{ steps.rc.outputs.rc_tag }}"
-          TARGET="${{ needs.preflight.outputs.new_version }}"
-          BUMP="${{ needs.preflight.outputs.bump_type }}"
-
-          git tag -a "$RC_TAG" \
-            -m "Pre-release ${RC_TAG}
-          Target: v${TARGET} (${BUMP} bump)
-          Branch: ${{ github.ref_name }}
-          Commit: ${{ github.sha }}"
-
-          git push origin "$RC_TAG"
-
-      - name: Generate RC release notes
-        id: notes
-        run: |
-          TARGET="${{ needs.preflight.outputs.new_version }}"
-          BUMP="${{ needs.preflight.outputs.bump_type }}"
-          RC_TAG="${{ steps.rc.outputs.rc_tag }}"
-
-          # Find last final tag for commit range
-          LAST_FINAL=$(git tag -l 'v*' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V | tail -1)
-
-          NOTES="## Pre-release ${RC_TAG}
-
-          **Target release:** v${TARGET} (${BUMP} bump)
-          **Branch:** ${{ github.ref_name }}
-          **Commit:** ${{ github.sha }}
-
-          ### Commits since ${LAST_FINAL:-initial}
-          "
-
-          if [ -n "$LAST_FINAL" ]; then
-            COMMIT_LOG=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" | head -40)
-            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
-          else
-            COMMIT_LOG=$(git log --pretty=format:"- %s" | head -40)
-            BREAKING=""
-          fi
-
-          if [ -n "$BREAKING" ]; then
-            printf '%s\n\n%s\n\n%s' "$NOTES" "$BREAKING" "$COMMIT_LOG" > /tmp/rc_notes.md
-          else
-            printf '%s\n\n%s' "$NOTES" "$COMMIT_LOG" > /tmp/rc_notes.md
-          fi
-          echo "notes_file=/tmp/rc_notes.md" >> "$GITHUB_OUTPUT"
-
-      - name: Create GitHub pre-release
-        run: |
-          gh release create "${{ steps.rc.outputs.rc_tag }}" \
-            --title "${{ steps.rc.outputs.rc_tag }}" \
-            --notes-file "${{ steps.notes.outputs.notes_file }}" \
-            --prerelease \
-            --target "${{ github.ref_name }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: RC release summary
-        run: |
-          echo "## Pre-release ${{ steps.rc.outputs.rc_tag }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| RC Tag | ${{ steps.rc.outputs.rc_tag }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Target Version | v${{ needs.preflight.outputs.new_version }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Bump Type | ${{ needs.preflight.outputs.bump_type }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Branch | ${{ github.ref_name }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Commit | ${{ github.sha }} |" >> "$GITHUB_STEP_SUMMARY"
-
-  # ── Final Release (main push) ─────────────────────────────────────────────────
-  release-final:
-    name: "Final Release v${{ needs.preflight.outputs.new_version }}"
-    needs: preflight
-    if: needs.preflight.outputs.release_kind == 'final'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Bump VERSION file
-        run: |
-          NEW="${{ needs.preflight.outputs.new_version }}"
-          echo "$NEW" > VERSION
-          # Update dist/VERSION if it is tracked
-          if git ls-files --error-unmatch dist/VERSION 2>/dev/null; then
-            echo "$NEW" > dist/VERSION
-          fi
-
-      - name: Update CHANGELOG.md
-        run: |
-          NEW="${{ needs.preflight.outputs.new_version }}"
-          DATE=$(date +%Y-%m-%d)
-          BUMP="${{ needs.preflight.outputs.bump_type }}"
-
-          # Find last final tag for commit range (exclude the one we're about to create)
-          LAST_FINAL=$(git tag -l 'v*' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V | tail -1)
-
-          if [ -n "$LAST_FINAL" ]; then
-            COMMITS=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
-            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
-          else
-            COMMITS=$(git log --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
-            BREAKING=""
-          fi
-
-          # Build the entry in a temp file rather than interpolating COMMITS
-          # (multi-line, and any commit subject containing |, &, \, or
-          # newlines) into a sed s-command — that breaks with "unterminated
-          # `s' command". Insert via awk instead: it reads the entry from a
-          # file, so no commit content ever passes through a shell/sed
-          # expression.
-          ENTRY_FILE=$(mktemp)
-          {
-            echo "## v${NEW} (${DATE}) — ${BUMP} bump"
-            echo ""
-            if [ -n "$BREAKING" ]; then
-              echo "$BREAKING"
-              echo ""
-            fi
-            echo "$COMMITS"
-          } > "$ENTRY_FILE"
-
-          # Insert after the FIRST "---" separator only.
-          awk -v entry="$ENTRY_FILE" '
-            !done && /^---$/ {
-              print
-              print ""
-              while ((getline line < entry) > 0) print line
-              done = 1
-              next
-            }
-            { print }
-          ' CHANGELOG.md > CHANGELOG.md.new
-          mv CHANGELOG.md.new CHANGELOG.md
-          rm -f "$ENTRY_FILE"
-
-      - name: Commit and tag
-        run: |
-          NEW="${{ needs.preflight.outputs.new_version }}"
-          BUMP="${{ needs.preflight.outputs.bump_type }}"
-
-          # Stage VERSION, dist/VERSION (if tracked), CHANGELOG
-          git add VERSION CHANGELOG.md
-          git ls-files --error-unmatch dist/VERSION 2>/dev/null && git add dist/VERSION || true
-
-          git commit -m "release: v${NEW} [skip ci]
-
-          Automated release commit.
-          Bump: ${BUMP}
-          Previous: v${{ needs.preflight.outputs.current_version }}
-          CI: passed"
-
-          git tag -a "v${NEW}" \
-            -m "Release v${NEW} (${BUMP} bump)"
-
-      - name: Push commit and tag
-        run: |
-          git push origin "${{ github.ref_name }}"
-          git push origin "v${{ needs.preflight.outputs.new_version }}"
-
-      - name: Generate final release notes
-        id: notes
-        run: |
-          NEW="${{ needs.preflight.outputs.new_version }}"
-          BUMP="${{ needs.preflight.outputs.bump_type }}"
-
-          LAST_FINAL=$(git tag -l 'v*' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V | tail -2 | head -1)
-
-          if [ -n "$LAST_FINAL" ]; then
-            COMMITS=$(git log "${LAST_FINAL}..HEAD" --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
-            BREAKING=$(bash scripts/extract-breaking-changes.sh "$LAST_FINAL" HEAD || true)
-          else
-            COMMITS=$(git log --pretty=format:"- %s" \
-              | grep -v "^- release: " | head -50)
-            BREAKING=""
-          fi
-
-          {
-            echo "## v${NEW} — ${BUMP} bump"
-            echo ""
-            if [ -n "$BREAKING" ]; then
-              echo "$BREAKING"
-              echo ""
-            fi
-            echo "$COMMITS"
-          } > /tmp/release_notes.md
-
-          echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
-
-      - name: Create GitHub Release
-        run: |
-          gh release create "v${{ needs.preflight.outputs.new_version }}" \
-            --title "v${{ needs.preflight.outputs.new_version }}" \
-            --notes-file "${{ steps.notes.outputs.notes_file }}" \
-            --target "${{ github.ref_name }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Final release summary
-        run: |
-          echo "## Release v${{ needs.preflight.outputs.new_version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Version | ${{ needs.preflight.outputs.current_version }} -> v${{ needs.preflight.outputs.new_version }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Bump | ${{ needs.preflight.outputs.bump_type }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Branch | ${{ github.ref_name }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Commit | ${{ github.sha }} |" >> "$GITHUB_STEP_SUMMARY"
-
   # ── Manual Release (workflow_dispatch) ───────────────────────────────────────
   release-manual:
     name: "Manual Release v${{ needs.preflight.outputs.new_version }}"
     needs:
       - preflight
-    if: |
-      always() &&
-      needs.preflight.outputs.release_kind == 'manual' &&
-      needs.preflight.result == 'success'
+    if: needs.preflight.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -526,7 +216,7 @@ jobs:
           DATE=$(date +%Y-%m-%d)
           NOTES="${{ inputs.release_notes }}"
 
-          # See the "Update CHANGELOG.md" step in release-final for why this
+          # See the "Update CHANGELOG.md" step above for why this
           # goes through a temp file + awk instead of an inline sed s-command
           # (release_notes can contain multi-line text or |, &, \).
           ENTRY_FILE=$(mktemp)
@@ -597,7 +287,7 @@ jobs:
   #      container images — no ghcr images existed per release.
   #   2. The frontend bakes its displayed version (__APP_VERSION__, from the
   #      root VERSION file) at image-build time. Checking out the just-created
-  #      release tag (VERSION already bumped by release-final/release-manual)
+  #      release tag (VERSION already bumped by release-manual)
   #      and building from THIS commit makes the baked UI version equal the
   #      release tag instead of drifting from it.
   # Keyless cosign signing (Sigstore/Fulcio/Rekor via OIDC) needs no secrets
@@ -607,12 +297,8 @@ jobs:
     name: "Publish images v${{ needs.preflight.outputs.new_version }}"
     needs:
       - preflight
-      - release-final
       - release-manual
-    if: |
-      always() &&
-      (needs.preflight.outputs.release_kind == 'final' || needs.preflight.outputs.release_kind == 'manual') &&
-      (needs.release-final.result == 'success' || needs.release-manual.result == 'success')
+    if: needs.release-manual.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
