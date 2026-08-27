@@ -131,6 +131,18 @@ resolve_digest() {
 
 # ─── Provenance predicate (minimal SLSA Build L1) ────────────────────────────
 # Written to a temp file and attached via cosign attest --type slsaprovenance.
+#
+# The file holds the **predicate only**. cosign builds the in-toto statement
+# itself — it sets `_type`, `predicateType`, and the `subject` from the image
+# digest it is attesting. This used to write the whole statement, so cosign took
+# that object as the predicate, looked for `builder` among `_type`/`subject`/
+# `predicateType`, and failed every release with
+#
+#   provenance predicate: required field builder missing
+#
+# which reads as "your builder field is absent" when it was there all along, one
+# level down. The SBOM attestation never hit this because syft emits a bare
+# CycloneDX document, which is already just a predicate.
 
 write_provenance() {
   local image_ref="$1"
@@ -153,36 +165,28 @@ write_provenance() {
 
   cat > "$out_file" <<PROVENANCE
 {
-  "_type": "https://slsa.dev/provenance/v0.2",
-  "subject": [
-    {
-      "name": "${image_ref}",
-      "digest": { "sha256": "${digest#sha256:}" }
+  "builder": { "id": "${repo_url}/blob/main/scripts/publish-signed-images.sh" },
+  "buildType": "${repo_url}/blob/main/scripts/publish-signed-images.sh",
+  "invocation": {
+    "configSource": {
+      "uri": "${repo_url}",
+      "digest": { "sha1": "${git_sha}" },
+      "entryPoint": "scripts/publish-signed-images.sh"
     }
-  ],
-  "predicateType": "https://slsa.dev/provenance/v0.2",
-  "predicate": {
-    "builder": { "id": "manual-publish-script" },
-    "buildType": "${repo_url}/blob/main/scripts/publish-signed-images.sh",
-    "invocation": {
-      "configSource": {
-        "uri": "${repo_url}",
-        "digest": { "sha1": "${git_sha}" },
-        "entryPoint": "scripts/publish-signed-images.sh"
-      }
+  },
+  "buildConfig": {
+    "version": "${VERSION}",
+    "image": "${image_ref}",
+    "digest": "${digest}"
+  },
+  "metadata": {
+    "buildStartedOn": "${build_ts}",
+    "completeness": {
+      "parameters": false,
+      "environment": false,
+      "materials": false
     },
-    "buildConfig": {
-      "version": "${VERSION}"
-    },
-    "metadata": {
-      "buildStartedOn": "${build_ts}",
-      "completeness": {
-        "parameters": false,
-        "environment": false,
-        "materials": false
-      },
-      "reproducible": false
-    }
+    "reproducible": false
   }
 }
 PROVENANCE

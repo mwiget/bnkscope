@@ -53,14 +53,22 @@ ovs-doca exporter, and `internal/promwrite` — the exporter carries its own cop
 of the remote_write encoder in `remotewrite.go`, so the shared package was only
 ever for the ovs exporter.
 
-### The pin does not move yet
+### The pin moves once the name exists
 
-`EXPORTER_IMAGE` still names `ghcr.io/mwiget/tmm-stat-exporter:latest`.
-`ghcr.io/mwiget/bnkscope-tmm-stat-exporter` does not exist until a release
-publishes it, and repointing a pinned image at a tag that is not there turns
-every injection into an `ImagePullBackOff` — for anyone who upgrades in the
-window, on clusters that were streaming fine. The flip is a one-line change in
-the release that follows the first publish.
+`EXPORTER_IMAGE` kept naming `ghcr.io/mwiget/tmm-stat-exporter:latest` in the
+commit that landed this ADR: repointing a pinned image at a tag that is not
+there turns every injection into an `ImagePullBackOff`, for anyone who upgrades
+in the window, on clusters that were streaming fine.
+
+**Done in v0.1.2.** v0.1.1 published `ghcr.io/mwiget/bnkscope-tmm-stat-exporter`
+for `linux/amd64` and `linux/arm64`, and the pin now names it.
+
+The tag stays `:latest` rather than tracking bnkscope's own version. Deriving it
+from `VERSION` would mean a working tree whose version has not been released yet
+injects a tag that does not exist — and an `ImagePullBackOff` inside TMM's pod
+is a poor way to find that out. The two are coupled only through the
+remote_write contract, which belongs to Prometheus rather than to either of
+them.
 
 ### Licence
 

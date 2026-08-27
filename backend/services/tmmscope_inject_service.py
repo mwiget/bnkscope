@@ -46,14 +46,19 @@ logger = logging.getLogger(__name__)
 
 #: Pinned, and not a parameter. See the module docstring.
 #:
-#: The exporter's source now lives in this repository (`tmm-stat-exporter/`,
-#: forked from tmmscope) and `docker-bake.hcl` publishes it as
-#: `bnkscope-tmm-stat-exporter` alongside the other images. This still points at
-#: the tmmscope-built image on purpose: it is the one that exists in GHCR today,
-#: and repointing it before a release has pushed the new name would turn every
-#: injection into an ImagePullBackOff. Flip it in the same change that follows
-#: the first release publishing `bnkscope-tmm-stat-exporter`.
-EXPORTER_IMAGE = "ghcr.io/mwiget/tmm-stat-exporter:latest"
+#: Built from `tmm-stat-exporter/` in this repository and published by
+#: `docker-bake.hcl` with the other images (D-039). It pointed at tmmscope's
+#: `ghcr.io/mwiget/tmm-stat-exporter` until v0.1.1 put this name in GHCR; that
+#: image still exists and still works, but nothing can rebuild it — the
+#: repository it came from is archived.
+#:
+#: `:latest` rather than bnkscope's own version, deliberately. Deriving the tag
+#: from the VERSION file would mean a working tree whose version has not been
+#: released yet injects a tag that does not exist, and an ImagePullBackOff
+#: inside TMM's pod is a poor way to discover that. The cost is that a very old
+#: bnkscope injects a current exporter; they share only the remote_write
+#: contract, which is Prometheus's, not ours.
+EXPORTER_IMAGE = "ghcr.io/mwiget/bnkscope-tmm-stat-exporter:latest"
 
 SIDECAR_NAME = "tmm-stat-exporter"
 

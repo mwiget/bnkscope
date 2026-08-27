@@ -112,7 +112,9 @@ class TestSidecarSpec:
     def test_pins_the_image(self):
         spec = inject_svc.build_sidecar("infra", "http://h/w")
         assert spec["image"] == inject_svc.EXPORTER_IMAGE
-        assert spec["image"].startswith("ghcr.io/mwiget/tmm-stat-exporter")
+        # The one bnkscope builds and publishes, not the one from the archived
+        # repository it was forked out of.
+        assert spec["image"].startswith("ghcr.io/mwiget/bnkscope-tmm-stat-exporter")
 
     def test_mounts_tmstat_read_only(self):
         spec = inject_svc.build_sidecar("infra", "http://h/w")
