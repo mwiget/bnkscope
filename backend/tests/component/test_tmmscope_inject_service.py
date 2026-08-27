@@ -577,6 +577,11 @@ class TestVerdict:
             "running_for": 600.0,
             "streaming": False,
             "last_push_error": None,
+            "log_unavailable": None,
+            "node": "node-1",
+            # The common case, and the one that must not be inferred from
+            # absence: a node nobody asked about is not a node that is down.
+            "node_ready": True,
         }
         base.update(kwargs)
         return base
@@ -597,6 +602,7 @@ class TestVerdict:
             oldest_silent=oldest,
             cluster_streaming=cluster_streaming,
             streaming_known=streaming_known,
+            not_ready=[e for e in entries if e["node_ready"] is False],
         )
 
     def test_no_tmm_pods_at_all(self):
@@ -645,6 +651,42 @@ class TestVerdict:
             self._entry(pod="f5-tmm-1", running_for=5.0),
             self._entry(pod="f5-tmm-2", running_for=3600.0),
         ]
+        assert self._verdict(entries)[0] == inject_svc.VERDICT_NOT_DELIVERING
+
+    def test_a_not_ready_node_outranks_not_delivering(self):
+        """Observed on 2026-08-27: the machine hosting both DPUs was switched
+        off. Both exporters kept reporting Running — the control plane cannot
+        know a container died, only that the kubelet went quiet — so the page
+        said "the pod cannot reach it", which sends an operator to hunt a
+        network path when the answer is that the node is gone."""
+        entries = [
+            self._entry(pod="f5-tmm-1", node="dpu-node-a", node_ready=False),
+            self._entry(pod="f5-tmm-2", node="dpu-node-a", node_ready=False),
+        ]
+        verdict, detail = self._verdict(entries)
+        assert verdict == inject_svc.VERDICT_NODE_NOT_READY
+        assert "dpu-node-a" in detail
+        assert "NotReady" in detail
+
+    def test_one_silent_pod_on_a_healthy_node_still_reports_delivery(self):
+        """`all`, not `any`. A genuine delivery fault on a working node must
+        not be buried under a sibling whose node happens to be down."""
+        entries = [
+            self._entry(pod="f5-tmm-1", node="dpu-node-a", node_ready=False),
+            self._entry(pod="f5-tmm-2", node="dpu-node-b", node_ready=True),
+        ]
+        assert self._verdict(entries)[0] == inject_svc.VERDICT_NOT_DELIVERING
+
+    def test_delivering_from_a_not_ready_node_is_not_a_complaint(self):
+        """Readiness lags reality in both directions. Metrics arriving is the
+        stronger evidence, so it wins."""
+        entries = [self._entry(streaming=True, node_ready=False)]
+        assert self._verdict(entries)[0] == inject_svc.VERDICT_STREAMING
+
+    def test_unknown_readiness_is_not_a_fault(self):
+        """Nodes could not be listed. Absence of an answer must not become an
+        accusation — fall through to the delivery verdicts."""
+        entries = [self._entry(node_ready=None)]
         assert self._verdict(entries)[0] == inject_svc.VERDICT_NOT_DELIVERING
 
     def test_no_prometheus_claims_nothing(self):
@@ -748,6 +790,41 @@ class TestDeliveryState:
 
         assert (state["streaming_pods"], state["silent_pods"]) == (1, 1)
         assert state["verdict"] == inject_svc.VERDICT_PARTIAL_DELIVERY
+
+
+class TestApiErrorDetail:
+    """What bnkscope says when it cannot read the exporter's log.
+
+    Live on 2026-08-27, against a cluster whose DPU host was powered off: the
+    reason phrase was "Internal Server Error", while the body carried
+    `dial tcp 192.168.68.71:10250: connect: no route to host` — the actual
+    answer, and the only one that names the node.
+    """
+
+    def test_prefers_the_body_message_over_the_reason_phrase(self):
+        exc = ApiException(status=500, reason="Internal Server Error")
+        exc.body = json.dumps(
+            {
+                "kind": "Status",
+                "message": (
+                    'Get "https://192.168.68.71:10250/containerLogs/ns/pod/c": '
+                    "dial tcp 192.168.68.71:10250: connect: no route to host"
+                ),
+            }
+        )
+        detail = inject_svc._api_error_detail(exc)
+        assert "no route to host" in detail
+        assert detail != "Internal Server Error"
+
+    def test_falls_back_to_the_reason_when_there_is_no_body(self):
+        exc = ApiException(status=403, reason="Forbidden")
+        exc.body = None
+        assert inject_svc._api_error_detail(exc) == "Forbidden"
+
+    def test_a_body_that_is_not_json_is_not_an_error(self):
+        exc = ApiException(status=500, reason="Internal Server Error")
+        exc.body = "<html>gateway timeout</html>"
+        assert inject_svc._api_error_detail(exc) == "Internal Server Error"
 
 
 class TestRemovePermanent:

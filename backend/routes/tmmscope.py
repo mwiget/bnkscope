@@ -226,6 +226,11 @@ class InjectionPod(BaseModel):
     # only place it can actually be removed. None for an ephemeral one, which
     # bnkscope removes itself.
     owner: str | None = None
+    # The node this pod is on, and whether Kubernetes reports it Ready. None
+    # readiness means unknown — the nodes could not be listed — which must not
+    # read as "not ready".
+    node: str | None = None
+    node_ready: bool | None = None
     # The remote-write URL baked into the exporter. Immutable once injected.
     pushing_to: str | None = None
     stale: bool = False
@@ -238,6 +243,11 @@ class InjectionPod(BaseModel):
     # The exporter's own last remote_write complaint, read only when something
     # is wrong. This is the line that names the actual cause.
     last_push_error: str | None = None
+    # Why that line could not be read. The read goes through the kubelet, so a
+    # node that is gone breaks it for the same reason the metrics stopped —
+    # and staying silent about that made it look like the exporter simply had
+    # nothing to complain about.
+    log_unavailable: str | None = None
 
 
 class InjectionStateResponse(BaseModel):
@@ -258,6 +268,10 @@ class InjectionStateResponse(BaseModel):
     stale_pods: int = 0
     stale_target: str | None = None
     expected_port: int | None = None
+    # Pods whose node Kubernetes reports NotReady. Not a telemetry fault, and
+    # the one cause the exporter's own log cannot describe.
+    not_ready_pods: int = 0
+    not_ready_nodes: list[str] = Field(default_factory=list)
     # Exporters that are part of the pod template rather than injected here.
     permanent_pods: int = 0
     # The workload that defines them, when there is one to name.
@@ -266,8 +280,9 @@ class InjectionStateResponse(BaseModel):
     streaming_pods: int = 0
     silent_pods: int = 0
     # One of: no_tmm, not_installed, settling, streaming, partial_delivery,
-    # stale_target, not_delivering. Exactly one holds, and each names a
-    # different action — only `stale_target` is fixed by re-installing.
+    # stale_target, node_not_ready, not_delivering. Exactly one holds, and each
+    # names a different action — only `stale_target` is fixed by re-installing,
+    # and `node_not_ready` is not a telemetry fault at all.
     verdict: str | None = None
     verdict_detail: str | None = None
     # How long an exporter may run without metrics before that is a fault.

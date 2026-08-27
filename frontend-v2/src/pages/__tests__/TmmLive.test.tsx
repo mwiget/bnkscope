@@ -83,6 +83,8 @@ function serveInjection(overrides: Record<string, unknown> = {}) {
         stale_pods: 0,
         stale_target: null,
         expected_port: 9491,
+        not_ready_pods: 0,
+        not_ready_nodes: [],
         permanent_pods: 0,
         permanent_owner: null,
         streaming_pods: 0,
@@ -276,6 +278,56 @@ describe('TmmLive', () => {
       expect(screen.getByText(/connection refused/)).toBeInTheDocument();
       // The one that is fine is not called out as a problem.
       expect(screen.queryByText(/tmm-alive/)).not.toBeInTheDocument();
+    });
+
+    it('blames the node, not the network, when the node is gone', async () => {
+      // Observed on 2026-08-27: the machine hosting both DPUs was switched
+      // off. The pods still reported Running, so every reading looked healthy
+      // and the page sent the operator after a network path that was fine.
+      serveStatus({ streaming_clusters: [] });
+      serveTelemetry({ streaming: false, dashboard_url: null });
+      serveInjection({
+        injected_pods: 2,
+        injected: true,
+        streaming_pods: 0,
+        silent_pods: 2,
+        not_ready_pods: 2,
+        not_ready_nodes: ['dpu-node-a'],
+        verdict: 'node_not_ready',
+        verdict_detail:
+          'The 2 silent exporter(s) are on dpu-node-a, which Kubernetes reports NotReady.',
+        pods: [
+          {
+            pod: 'tmm-1',
+            namespace: 'ns',
+            injected: true,
+            kind: 'permanent',
+            owner: 'DaemonSet f5-tmm',
+            node: 'dpu-node-a',
+            node_ready: false,
+            pushing_to: 'http://192.168.68.113:9491/api/v1/write',
+            stale: false,
+            started_at: null,
+            running_for: 23000,
+            streaming: false,
+            last_push_error: null,
+            // The read goes through the kubelet, which is exactly what is gone.
+            log_unavailable: 'dial tcp 192.168.68.71:10250: connect: no route to host',
+          },
+        ],
+      });
+
+      render(<TmmLive />);
+
+      await waitFor(() =>
+        expect(screen.getByText(/reports NotReady/)).toBeInTheDocument(),
+      );
+      // The failed log read is shown as bnkscope's, not put in the exporter's
+      // mouth — and no longer silently dropped.
+      expect(screen.getByText(/could not be read/i)).toBeInTheDocument();
+      expect(screen.getByText(/no route to host/)).toBeInTheDocument();
+      // Nothing to re-install: the exporter comes back with the node.
+      expect(screen.getByText(/resumes on its own/)).toBeInTheDocument();
     });
 
     it('will not offer to recreate pods for a sidecar it did not put there', async () => {

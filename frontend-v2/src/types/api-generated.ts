@@ -3583,6 +3583,10 @@ export interface components {
             kind?: string | null;
             /** Owner */
             owner?: string | null;
+            /** Node */
+            node?: string | null;
+            /** Node Ready */
+            node_ready?: boolean | null;
             /** Pushing To */
             pushing_to?: string | null;
             /**
@@ -3601,6 +3605,8 @@ export interface components {
             streaming: boolean;
             /** Last Push Error */
             last_push_error?: string | null;
+            /** Log Unavailable */
+            log_unavailable?: string | null;
         };
         /**
          * InjectionStateResponse
@@ -3650,6 +3656,13 @@ export interface components {
             stale_target?: string | null;
             /** Expected Port */
             expected_port?: number | null;
+            /**
+             * Not Ready Pods
+             * @default 0
+             */
+            not_ready_pods: number;
+            /** Not Ready Nodes */
+            not_ready_nodes?: string[];
             /**
              * Permanent Pods
              * @default 0

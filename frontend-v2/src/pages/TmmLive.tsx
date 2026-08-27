@@ -93,31 +93,58 @@ function HostCommand({ command, hint }: { command: string; hint: string }) {
   );
 }
 
-/** What the exporter itself last said, verbatim.
+/** What the exporter itself last said, verbatim — or why it could not be asked.
  *
  * The whole reason "installed but silent" was hard to diagnose is that every
  * symptom lives inside the pod. The exporter logs the reason on every failed
  * push — "connection refused", "context deadline exceeded", a 4xx — and one of
  * those lines is worth more than any amount of state bnkscope can infer from
  * outside.
+ *
+ * The read goes through the kubelet, though, so the one failure it cannot
+ * describe is a node that is gone: the log request fails for the same reason
+ * the metrics stopped. Saying so is better than the blank this used to render.
  */
 function PushError({ pods }: { pods: InjectionState['pods'] }) {
   const failing = pods.filter((p) => p.last_push_error);
-  if (failing.length === 0) return null;
+  // Kept apart from the exporter's own words on purpose: this is bnkscope
+  // failing to read, not the exporter reporting. Conflating them would put a
+  // sentence in the exporter's mouth at exactly the moment it cannot speak.
+  const unreadable = pods.filter((p) => !p.last_push_error && p.log_unavailable);
+  if (failing.length === 0 && unreadable.length === 0) return null;
 
   return (
     <div className="space-y-1">
-      <p className="text-xs font-medium text-muted-foreground">
-        Last error from the exporter:
-      </p>
-      {failing.map((p) => (
-        <pre
-          key={p.pod}
-          className="overflow-x-auto rounded border border-border bg-muted/30 px-2 py-1.5 font-mono text-[11px] text-muted-foreground"
-        >
-          {p.pod}: {p.last_push_error}
-        </pre>
-      ))}
+      {failing.length > 0 && (
+        <>
+          <p className="text-xs font-medium text-muted-foreground">
+            Last error from the exporter:
+          </p>
+          {failing.map((p) => (
+            <pre
+              key={p.pod}
+              className="overflow-x-auto rounded border border-border bg-muted/30 px-2 py-1.5 font-mono text-[11px] text-muted-foreground"
+            >
+              {p.pod}: {p.last_push_error}
+            </pre>
+          ))}
+        </>
+      )}
+      {unreadable.length > 0 && (
+        <>
+          <p className="text-xs font-medium text-muted-foreground">
+            The exporter&apos;s log could not be read:
+          </p>
+          {unreadable.map((p) => (
+            <pre
+              key={p.pod}
+              className="overflow-x-auto rounded border border-border bg-muted/30 px-2 py-1.5 font-mono text-[11px] text-muted-foreground"
+            >
+              {p.pod}: {p.log_unavailable}
+            </pre>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -452,6 +479,26 @@ export default function TmmLive() {
                     roll it.
                   </p>
                 )}
+              </div>
+            ) : verdict === 'node_not_ready' && injection ? (
+              // Not a telemetry fault at all. The pods still say Running —
+              // the control plane cannot know a container died, only that the
+              // kubelet went quiet — so every other reading here looks healthy
+              // and the page used to send the operator after a network path.
+              <div className="space-y-3 rounded-md border border-warning/30 bg-warning/10 p-3">
+                <p className="flex items-start gap-2 text-sm text-foreground">
+                  <AlertTriangle
+                    className="mt-0.5 h-4 w-4 flex-none text-warning"
+                    aria-hidden="true"
+                  />
+                  <span>{injection.verdict_detail}</span>
+                </p>
+                <PushError pods={injection.pods} />
+                <p className="text-xs text-muted-foreground">
+                  Bring the node{injection.not_ready_nodes.length === 1 ? '' : 's'} back
+                  and the exporter resumes on its own — it is part of the pod, and the
+                  pod comes back with the node. Nothing needs re-installing.
+                </p>
               </div>
             ) : verdict === 'not_delivering' && injection ? (
               // Installed, running, pushing at the right address, and nothing

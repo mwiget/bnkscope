@@ -8987,6 +8987,28 @@
             ],
             "title": "Owner"
           },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "node_ready": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Ready"
+          },
           "pushing_to": {
             "anyOf": [
               {
@@ -9040,6 +9062,17 @@
               }
             ],
             "title": "Last Push Error"
+          },
+          "log_unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Unavailable"
           }
         },
         "type": "object",
@@ -9119,6 +9152,18 @@
               }
             ],
             "title": "Expected Port"
+          },
+          "not_ready_pods": {
+            "type": "integer",
+            "title": "Not Ready Pods",
+            "default": 0
+          },
+          "not_ready_nodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Not Ready Nodes"
           },
           "permanent_pods": {
             "type": "integer",

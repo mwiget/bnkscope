@@ -55,6 +55,7 @@ export type InjectionVerdict =
   | 'streaming'
   | 'partial_delivery'
   | 'stale_target'
+  | 'node_not_ready'
   | 'not_delivering';
 
 export interface InjectionPod {
@@ -67,6 +68,10 @@ export interface InjectionPod {
   /** For a permanent sidecar, the workload whose pod template defines it —
    *  the only place it can actually be removed. Null for an ephemeral one. */
   owner: string | null;
+  /** The node this pod is on, and whether Kubernetes reports it Ready. Null
+   *  readiness is unknown, which must not render as "not ready". */
+  node: string | null;
+  node_ready: boolean | null;
   /** The remote-write URL baked in at injection. Immutable once injected. */
   pushing_to: string | null;
   stale: boolean;
@@ -78,6 +83,9 @@ export interface InjectionPod {
   /** The exporter's own last remote_write complaint — the line that names the
    *  actual cause. Populated only when something is wrong. */
   last_push_error: string | null;
+  /** Why that line could not be read. The read goes through the kubelet, so a
+   *  node that is gone breaks it for the same reason the metrics stopped. */
+  log_unavailable: string | null;
 }
 
 export interface InjectionState {
@@ -95,6 +103,9 @@ export interface InjectionState {
   stale_pods: number;
   stale_target: string | null;
   expected_port: number | null;
+  /** Pods whose node Kubernetes reports NotReady. Not a telemetry fault. */
+  not_ready_pods: number;
+  not_ready_nodes: string[];
   /** Exporters that are part of the pod template rather than injected here. */
   permanent_pods: number;
   /** The workload that defines them, when there is one to name. */

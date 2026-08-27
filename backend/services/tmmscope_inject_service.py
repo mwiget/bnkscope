@@ -29,6 +29,7 @@ anything a caller can influence: accepting an image would turn this endpoint int
 "run an arbitrary container inside TMM's pod with its tmstat segment mounted".
 """
 
+import json
 import logging
 from typing import Any
 
@@ -340,6 +341,9 @@ VERDICT_STREAMING = "streaming"
 VERDICT_PARTIAL_DELIVERY = "partial_delivery"
 VERDICT_STALE_TARGET = "stale_target"
 VERDICT_NOT_DELIVERING = "not_delivering"
+#: The pods are on nodes Kubernetes reports NotReady. Nothing about the exporter
+#: explains the silence, and nothing about the exporter fixes it.
+VERDICT_NODE_NOT_READY = "node_not_ready"
 
 
 def _running_for(started_at: Any, now: Any) -> float | None:
@@ -351,10 +355,60 @@ def _running_for(started_at: Any, now: Any) -> float | None:
         return None
 
 
+def node_readiness(core_v1: k8s_client.CoreV1Api) -> dict[str, bool]:
+    """node name -> whether Kubernetes currently reports it Ready.
+
+    A pod on a node that has stopped answering stays `Running` in the API for a
+    long time — the control plane cannot know the container died, only that the
+    kubelet went quiet. So "the exporter is running and nothing arrives" reads
+    identically for a broken network path and for a machine that is switched
+    off, and the page said "the pod cannot reach it" for both. One of those two
+    has nothing to do with the exporter.
+
+    One list call, not one read per pod: several f5-tmm pods usually sit on the
+    same handful of nodes.
+
+    Empty when the nodes cannot be listed — an unknown readiness must not be
+    reported as a fault, so callers treat a missing entry as "no reason to
+    doubt it".
+    """
+    try:
+        nodes = core_v1.list_node()
+    except ApiException:
+        logger.debug("Could not list nodes for readiness", exc_info=True)
+        return {}
+
+    ready: dict[str, bool] = {}
+    for node in nodes.items or []:
+        conditions = (node.status.conditions or []) if node.status else []
+        status = next((c.status for c in conditions if c.type == "Ready"), None)
+        # "True" / "False" / "Unknown" — and Unknown is what a node whose
+        # kubelet stopped reporting becomes, which is exactly this case.
+        ready[node.metadata.name] = status == "True"
+    return ready
+
+
+def _api_error_detail(exc: ApiException) -> str:
+    """The sentence in an ApiException, not its HTTP reason phrase.
+
+    `exc.reason` for a failed pod-log read is "Internal Server Error", which
+    says nothing — the apiserver puts the useful line in the body\'s `message`,
+    and for an unreachable node that line is
+    `dial tcp 10.0.0.1:10250: connect: no route to host`. Reporting the reason
+    phrase would have been a longer way of saying nothing.
+    """
+    try:
+        message = json.loads(exc.body or "{}").get("message")
+    except (ValueError, TypeError):
+        message = None
+    detail = (message or exc.reason or str(exc.status) or "unknown error").strip()
+    return detail[:300]
+
+
 def _last_push_error(
     core_v1: k8s_client.CoreV1Api, name: str, namespace: str
-) -> str | None:
-    """The exporter's own last complaint, verbatim.
+) -> tuple[str | None, str | None]:
+    """(the exporter's own last complaint, why it could not be read).
 
     The exporter logs every failed `remote_write` with the reason — "connection
     refused", "context deadline exceeded", a 4xx from Prometheus. That one line
@@ -362,6 +416,12 @@ def _last_push_error(
     pod: wrong address, no route, and a collector that is rejecting the write.
     Read only when something is actually wrong, because it is a log request per
     pod and the answer is uninteresting when metrics are arriving.
+
+    The second half exists because the read goes through the *kubelet*, so the
+    one failure it cannot describe is the one where the node is gone: the log
+    request fails for the same reason the metrics stopped, and returning None
+    made that indistinguishable from an exporter with nothing to complain
+    about. Silence about a failed read is the worst of the three answers.
     """
     try:
         log = core_v1.read_namespaced_pod_log(
@@ -371,13 +431,13 @@ def _last_push_error(
             tail_lines=20,
             timestamps=False,
         )
-    except ApiException:
+    except ApiException as exc:
         logger.debug("Could not read exporter log from %s", name, exc_info=True)
-        return None
+        return None, _api_error_detail(exc)
     for line in reversed((log or "").splitlines()):
         if "remote_write" in line:
-            return line.strip()[:500]
-    return None
+            return line.strip()[:500], None
+    return None, None
 
 
 def get_injection_state(
@@ -408,6 +468,7 @@ def get_injection_state(
     pods = find_tmm_pods(api_client)
     now = datetime.now(UTC)
     live = streaming_pods if streaming_pods is not None else set()
+    ready_nodes = node_readiness(core_v1)
 
     entries: list[dict[str, Any]] = []
     for meta in pods:
@@ -431,6 +492,7 @@ def get_injection_state(
             and _port_of(url) is not None
             and _port_of(url) != expected_port
         )
+        node = getattr(pod.spec, "node_name", None)
         entries.append(
             {
                 "pod": meta["name"],
@@ -438,6 +500,10 @@ def get_injection_state(
                 "injected": is_injected,
                 "kind": kind,
                 "owner": owner,
+                # None when the node's readiness is unknown — which must not
+                # read as "not ready".
+                "node": node,
+                "node_ready": ready_nodes.get(node) if node else None,
                 "pushing_to": url,
                 "stale": stale,
                 "started_at": started_at.isoformat() if started_at else None,
@@ -446,12 +512,14 @@ def get_injection_state(
                 # Prometheus to ask, nothing is known to be streaming.
                 "streaming": meta["name"] in live,
                 "last_push_error": None,
+                "log_unavailable": None,
             }
         )
 
     injected = [e for e in entries if e["injected"]]
     stale = [e for e in entries if e["stale"]]
     permanent = [e for e in injected if e["kind"] == KIND_PERMANENT]
+    not_ready = [e for e in entries if e["node_ready"] is False]
     silent = [e for e in injected if not e["streaming"]] if streaming_pods is not None else []
 
     # The oldest exporter that is not delivering. Oldest, not newest: one pod
@@ -470,12 +538,18 @@ def get_injection_state(
         oldest_silent=oldest_silent,
         cluster_streaming=cluster_streaming,
         streaming_known=streaming_pods is not None,
+        not_ready=not_ready,
     )
 
     # Only when something is wrong, and only for the pods that are wrong.
-    if verdict in (VERDICT_NOT_DELIVERING, VERDICT_PARTIAL_DELIVERY, VERDICT_STALE_TARGET):
+    if verdict in (
+        VERDICT_NOT_DELIVERING,
+        VERDICT_PARTIAL_DELIVERY,
+        VERDICT_STALE_TARGET,
+        VERDICT_NODE_NOT_READY,
+    ):
         for entry in silent or stale:
-            entry["last_push_error"] = _last_push_error(
+            entry["last_push_error"], entry["log_unavailable"] = _last_push_error(
                 core_v1, entry["pod"], entry["namespace"]
             )
 
@@ -487,6 +561,10 @@ def get_injection_state(
         # clean while its siblings still carry the exporter.
         "injected": bool(injected) and len(injected) == len(entries),
         "partial": bool(injected) and len(injected) != len(entries),
+        # Pods whose node Kubernetes reports NotReady. Not a telemetry fault,
+        # and the one cause the exporter's own log cannot describe.
+        "not_ready_pods": len(not_ready),
+        "not_ready_nodes": sorted({e["node"] for e in not_ready if e["node"]}),
         # A permanent sidecar is not bnkscope's to remove: deleting the pod just
         # brings it back, because it is in the template. The owner is what the
         # operator has to edit, so it is named rather than left to be guessed.
@@ -516,6 +594,7 @@ def _verdict(
     oldest_silent: float | None,
     cluster_streaming: bool | None,
     streaming_known: bool,
+    not_ready: list[dict[str, Any]],
 ) -> tuple[str, str]:
     """One verdict per cluster, ordered so the most actionable answer wins.
 
@@ -555,6 +634,24 @@ def _verdict(
         return (
             VERDICT_STREAMING,
             f"All {len(injected)} exporter(s) are delivering.",
+        )
+
+    # Ranked above every remaining answer, and below `streaming`: a node that
+    # stopped reporting explains silence at any age, but a pod still delivering
+    # from one is not a problem to shout about.
+    #
+    # `all`, not `any`: one silent pod on a healthy node is a delivery fault
+    # that deserves its own sentence, and the node answer would bury it.
+    if silent and all(e["node_ready"] is False for e in silent):
+        nodes = sorted({e["node"] for e in silent if e["node"]})
+        where = ", ".join(nodes) if nodes else "their node(s)"
+        return (
+            VERDICT_NODE_NOT_READY,
+            f"The {len(silent)} silent exporter(s) are on {where}, which "
+            "Kubernetes reports NotReady. A pod keeps its Running status long "
+            "after its node stops answering, so the exporter looks healthy from "
+            "here — but nothing is running to push. This is a cluster problem, "
+            "and re-installing the exporter cannot touch it.",
         )
 
     if oldest_silent is not None and oldest_silent < SETTLE_SECONDS:
