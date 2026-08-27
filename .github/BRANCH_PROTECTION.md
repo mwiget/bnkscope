@@ -76,8 +76,8 @@ CI passes.
 | Event | Branches | Notes |
 |-------|----------|-------|
 | Pull Request | `main` | The merge gate |
-| Push | `main` | Post-merge validation |
-| Manual | — | Release workflow only |
+| Push | `main` | Post-merge validation — and Release, unless the push is docs-only |
+| Manual | — | `workflow_dispatch` on Release, for an explicit bump/notes override |
 
 ### Path-based change detection
 
@@ -98,20 +98,35 @@ CI uses `dorny/paths-filter` to skip irrelevant jobs. The filters, verbatim from
 | File | Purpose | Trigger |
 |------|---------|---------|
 | `.github/workflows/ci.yml` | All jobs + `CI Gate` | Push, PR |
-| `.github/workflows/release.yml` | Release pipeline | Manual only |
+| `.github/workflows/release.yml` | Release pipeline | **Push to `main`** (non-docs), or manual |
 
 ## Release process
 
-1. Ensure `CI Gate` has passed on your branch
-2. Go to **Actions → Release → Run workflow**
-3. Choose the version bump type (patch/minor/major)
-4. Enter release notes
-5. Click "Run workflow"
+> **Releases are automatic.** Every push to `main` that touches something other
+> than docs runs Release alongside CI. There is no button to press and no
+> confirmation step — merging is the release. The `paths-ignore` list decides
+> what counts as docs, and it **must stay identical to `ci.yml`'s**: Release's
+> preflight matches its CI run by SHA, so a push that releases without a
+> matching CI run just times out waiting for one.
+>
+> This bites on a first push. Recreating the repository on 2026-08-27 pushed all
+> 24 commits at once, which fired Release; it was cancelled before it cut a tag.
+> If you are importing history, expect it and cancel the run.
 
-The release workflow will:
+On a normal push to `main`, Release will:
 
-- ✅ Verify CI has passed
+- ✅ Verify CI has passed for the same SHA
+- ✅ Derive the bump from conventional commits since the last final `vX.Y.Z` tag
+      (`feat!`/`BREAKING CHANGE` → major, `feat` → minor, anything else → patch)
 - ✅ Bump the `VERSION` file
-- ✅ Update `CHANGELOG.md`
-- ✅ Commit, tag, push
+- ✅ Update `CHANGELOG.md` (inserted after its first `---`)
+- ✅ Commit `release: vX.Y.Z [skip ci]`, tag, push
 - ✅ Create a GitHub Release
+
+The commit it pushes starts with `release: ` and carries `[skip ci]`, which is
+what stops it from triggering itself.
+
+### Manual override
+
+**Actions → Release → Run workflow** takes an explicit bump type and release
+notes, for when the derived version is not what you want.
