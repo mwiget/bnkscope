@@ -66,14 +66,19 @@ discover this. It now fails after a 5-minute grace window with the actual reason
 because a run that has not appeared in five minutes is not coming.
 
 **`scripts/compute_version_bump.sh` and `scripts/extract-breaking-changes.sh` are
-orphaned.** Both were only called by the deleted jobs. Kept rather than deleted:
-they encode real conventional-commit parsing that an automated path would need
-again, `compute_version_bump.sh` has its own selftest, and both still pass
-`make shellcheck`.
+deleted.** Both existed only to serve the automated path — deriving a bump from
+commit subjects, and pulling `BREAKING CHANGE` blocks out of them for the
+changelog entry. Nothing else called either one. They were briefly kept on the
+argument that a future automated path would want them back, which is the
+argument for every piece of dead code ever retained; `git log` holds them, and a
+public repository should not ship a `scripts/` directory where a third of the
+entries are unreachable.
 
 **Restoring the old behaviour means restoring the guard with it.** The `release: `
 + `[skip ci]` filter is not optional decoration — without it the workflow's own
-release commit re-triggers it.
+release commit re-triggers it. Recover the guard job, the two derivation scripts
+and the `release-final` job together from the history, or not at all: the parts
+only work as a set.
 
 ## References
 

@@ -154,8 +154,8 @@ jobs:
 
       # The bump comes from the dropdown, not from commit messages. Deriving it
       # from conventional commits was the automated path's job, and that path
-      # is gone with the push trigger; scripts/compute_version_bump.sh is now
-      # only used by its own selftest.
+      # went with the push trigger (D-038), along with the two scripts that
+      # implemented it.
       - name: Apply the requested version bump
         id: version
         run: |
