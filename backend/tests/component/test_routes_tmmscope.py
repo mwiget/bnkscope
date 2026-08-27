@@ -130,8 +130,9 @@ class TestClusterTelemetryRoute:
         body = response.json()
         assert body["streaming"] is False
         assert body["dashboard_url"] is None
-        # The command to fix it is still offered.
-        assert "tmmscope inject" in body["inject_command"]
+        # Fixing it is a button, not a command: the response carries no CLI
+        # invocation for the operator to run, because bnkscope injects itself.
+        assert "inject_command" not in body
 
     def test_no_dashboard_url_when_the_stack_is_down(self, client, cluster):
         with patch(_STATUS, return_value=TmmscopeStatus(configured=True, running=False)):

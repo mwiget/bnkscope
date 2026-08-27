@@ -8302,22 +8302,12 @@
               }
             ],
             "title": "Dashboard Url"
-          },
-          "inject_command": {
-            "type": "string",
-            "title": "Inject Command"
-          },
-          "eject_command": {
-            "type": "string",
-            "title": "Eject Command"
           }
         },
         "type": "object",
         "required": [
           "cluster_id",
-          "cluster_name",
-          "inject_command",
-          "eject_command"
+          "cluster_name"
         ],
         "title": "ClusterTelemetryResponse",
         "description": "Response for GET /api/tmmscope/clusters/{cluster_id}."
@@ -8986,6 +8976,17 @@
             ],
             "title": "Kind"
           },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
           "pushing_to": {
             "anyOf": [
               {
@@ -9123,6 +9124,17 @@
             "type": "integer",
             "title": "Permanent Pods",
             "default": 0
+          },
+          "permanent_owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permanent Owner"
           },
           "streaming_pods": {
             "type": "integer",

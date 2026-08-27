@@ -84,6 +84,7 @@ function serveInjection(overrides: Record<string, unknown> = {}) {
         stale_target: null,
         expected_port: 9491,
         permanent_pods: 0,
+        permanent_owner: null,
         streaming_pods: 0,
         silent_pods: 0,
         verdict: null,
@@ -109,9 +110,6 @@ function serveTelemetry(overrides: Record<string, unknown> = {}) {
         last_seen_age: 3,
         dashboard_url:
           'http://localhost:3000/d/tmm-realtime?var-cluster=dpu-cplane-tenant1&theme=dark&kiosk',
-        inject_command:
-          'tmmscope inject --context kubernetes-admin@dpu-cplane-tenant1 --cluster dpu-cplane-tenant1',
-        eject_command: 'tmmscope eject --context kubernetes-admin@dpu-cplane-tenant1',
         ...overrides,
       }),
     ),
@@ -286,7 +284,12 @@ describe('TmmLive', () => {
       // all cost, no effect.
       serveStatus();
       serveTelemetry();
-      serveInjection({ injected_pods: 2, injected: true, permanent_pods: 2 });
+      serveInjection({
+        injected_pods: 2,
+        injected: true,
+        permanent_pods: 2,
+        permanent_owner: 'DaemonSet f5-tmm',
+      });
 
       render(<TmmLive />);
 
@@ -297,6 +300,10 @@ describe('TmmLive', () => {
         screen.queryByRole('button', { name: /remove the exporter/i }),
       ).not.toBeInTheDocument();
       expect(screen.getByText(/permanent sidecar in the TMM pod template/i)).toBeInTheDocument();
+      // The whole point of refusing: say where it *can* be removed. A command
+      // cannot — the sidecar may have come from any of several cluster
+      // builders — but the workload that owns the template can.
+      expect(screen.getByText('DaemonSet f5-tmm')).toBeInTheDocument();
     });
 
     it('keeps removal behind a fold', async () => {
@@ -310,9 +317,11 @@ describe('TmmLive', () => {
       );
     });
 
-    it('offers the host eject command when bnkscope did not inject it', async () => {
-      // Nothing bnkscope put there — so there is nothing for it to take out,
-      // and the durable sidecar it cannot see is removed the way it was added.
+    it('says there is nothing to remove rather than naming a CLI', async () => {
+      // Nothing bnkscope put there is nothing for it to take out. The old copy
+      // printed `tmmscope eject` here, which was wrong twice: it is a binary
+      // the operator may not have, and it only undoes `tmmscope inject
+      // --permanent` — not a sidecar the cluster build shipped.
       serveStatus();
       serveTelemetry();
       serveInjection({ injected_pods: 0 });
@@ -321,9 +330,10 @@ describe('TmmLive', () => {
 
       await waitFor(() =>
         expect(
-          screen.getByText('tmmscope eject --context kubernetes-admin@dpu-cplane-tenant1'),
+          screen.getByText(/did not inject this cluster's exporter/i),
         ).toBeInTheDocument(),
       );
+      expect(screen.queryByText(/tmmscope eject/)).not.toBeInTheDocument();
     });
 
     it('never removes without a typed confirmation', async () => {
@@ -642,7 +652,12 @@ describe('TmmLive', () => {
       expect(screen.getByText('9m ago')).toBeInTheDocument();
     });
 
-    it('keeps the host command as an escape hatch', async () => {
+    it('does not send you to a CLI bnkscope does not need', async () => {
+      // The button is the whole path: bnkscope injects through the Kubernetes
+      // API it already holds a client for, and `bnkscope up` brings its own
+      // Prometheus and Grafana. Printing `tmmscope inject` here advertised a
+      // dependency that is not one, at the exact moment the operator is least
+      // able to tell the difference.
       serveStatus({ streaming_clusters: [] });
       serveTelemetry({
         streaming: false,
@@ -654,11 +669,10 @@ describe('TmmLive', () => {
       render(<TmmLive />);
 
       await waitFor(() =>
-        expect(screen.getByText('Or run it on the host')).toBeInTheDocument(),
+        expect(screen.getByRole('button', { name: 'Add the exporter' })).toBeInTheDocument(),
       );
-      expect(screen.getByText(/tmmscope inject --context/)).toBeInTheDocument();
-      // --permanent is the one thing the button deliberately cannot do.
-      expect(screen.getByText('--permanent')).toBeInTheDocument();
+      expect(screen.queryByText('Or run it on the host')).not.toBeInTheDocument();
+      expect(screen.queryByText(/tmmscope inject --context/)).not.toBeInTheDocument();
     });
 
     it('offers a binding when something else is streaming', async () => {

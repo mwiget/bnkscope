@@ -166,6 +166,40 @@ def _exporter_containers(pod: Any) -> list[tuple[str, Any]]:
     return found
 
 
+def owner_of(apps_v1: k8s_client.AppsV1Api, pod: Any) -> str | None:
+    """The workload whose pod template carries a permanent sidecar.
+
+    "Remove it where it is defined" is only an instruction if something says
+    where that is. It is never bnkscope — a permanent exporter comes from the
+    cluster build (tmmlitectl/ocibnkctl, DPF's DPUService templates) or from
+    `tmmscope inject --permanent` — so the honest answer is to name the owner
+    and stop, rather than print a command for one of the several tools it
+    might have been.
+
+    A Deployment's pod is owned by a ReplicaSet, which is generated and not
+    what anyone edits, so that hop is resolved. DaemonSets and StatefulSets own
+    their pods directly.
+    """
+    refs = pod.metadata.owner_references or []
+    ref = next((r for r in refs if r.controller), refs[0] if refs else None)
+    if ref is None:
+        return None
+    if ref.kind == "ReplicaSet":
+        try:
+            rs = apps_v1.read_namespaced_replica_set(
+                name=ref.name, namespace=pod.metadata.namespace
+            )
+        except ApiException:
+            # The ReplicaSet name still locates the workload well enough to act on.
+            return f"{ref.kind} {ref.name}"
+        parent = next(
+            (o for o in (rs.metadata.owner_references or []) if o.controller), None
+        )
+        if parent is not None:
+            return f"{parent.kind} {parent.name}"
+    return f"{ref.kind} {ref.name}"
+
+
 def _pushing_to(pod: Any) -> str | None:
     """The remote-write URL the injected exporter is actually using.
 
@@ -362,6 +396,7 @@ def get_injection_state(
     from datetime import UTC, datetime
 
     core_v1 = k8s_client.CoreV1Api(api_client)
+    apps_v1 = k8s_client.AppsV1Api(api_client)
     pods = find_tmm_pods(api_client)
     now = datetime.now(UTC)
     live = streaming_pods if streaming_pods is not None else set()
@@ -376,6 +411,10 @@ def get_injection_state(
             logger.debug("Could not read pod %s", meta["name"], exc_info=True)
             continue
         is_injected = SIDECAR_NAME in _container_names(pod)
+        kind = _exporter_kind(pod)
+        # Only for the permanent case, which is the only one where the owner is
+        # the answer — and the only one worth a second API call per pod.
+        owner = owner_of(apps_v1, pod) if kind == KIND_PERMANENT else None
         url = _pushing_to(pod) if is_injected else None
         started_at = _exporter_started_at(pod) if is_injected else None
         stale = bool(
@@ -389,7 +428,8 @@ def get_injection_state(
                 "pod": meta["name"],
                 "namespace": meta["namespace"],
                 "injected": is_injected,
-                "kind": _exporter_kind(pod),
+                "kind": kind,
+                "owner": owner,
                 "pushing_to": url,
                 "stale": stale,
                 "started_at": started_at.isoformat() if started_at else None,
@@ -440,8 +480,12 @@ def get_injection_state(
         "injected": bool(injected) and len(injected) == len(entries),
         "partial": bool(injected) and len(injected) != len(entries),
         # A permanent sidecar is not bnkscope's to remove: deleting the pod just
-        # brings it back, because it is in the template.
+        # brings it back, because it is in the template. The owner is what the
+        # operator has to edit, so it is named rather than left to be guessed.
         "permanent_pods": len(permanent),
+        "permanent_owner": next(
+            (e["owner"] for e in permanent if e["owner"]), None
+        ),
         "streaming_pods": sum(1 for e in entries if e["streaming"]),
         "silent_pods": len(silent),
         "stale_pods": len(stale),
@@ -617,6 +661,7 @@ def remove(api_client: k8s_client.ApiClient) -> dict[str, Any]:
     are deliberately asymmetric.
     """
     core_v1 = k8s_client.CoreV1Api(api_client)
+    apps_v1 = k8s_client.AppsV1Api(api_client)
     targets = find_tmm_pods(api_client)
 
     deleted: list[str] = []
@@ -638,13 +683,15 @@ def remove(api_client: k8s_client.ApiClient) -> dict[str, Any]:
         # replacement — all cost, no effect. Removing that one means editing
         # whatever owns the template, which is not bnkscope's to do.
         if _exporter_kind(pod) == KIND_PERMANENT:
+            owner = owner_of(apps_v1, pod)
+            where = f" — see {owner}" if owner else ""
             failed.append(
                 {
                     "pod": name,
                     "error": (
                         "the exporter is a permanent sidecar in this pod's "
                         "template — recreating the pod would bring it back. "
-                        "Remove it where it is defined (`tmmscope eject`)."
+                        f"Remove it where the template is defined{where}."
                     ),
                 }
             )

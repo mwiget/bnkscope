@@ -3263,10 +3263,6 @@ export interface components {
             last_seen_age?: number | null;
             /** Dashboard Url */
             dashboard_url?: string | null;
-            /** Inject Command */
-            inject_command: string;
-            /** Eject Command */
-            eject_command: string;
         };
         /**
          * ClusterUpdateRequest
@@ -3585,6 +3581,8 @@ export interface components {
             injected: boolean;
             /** Kind */
             kind?: string | null;
+            /** Owner */
+            owner?: string | null;
             /** Pushing To */
             pushing_to?: string | null;
             /**
@@ -3657,6 +3655,8 @@ export interface components {
              * @default 0
              */
             permanent_pods: number;
+            /** Permanent Owner */
+            permanent_owner?: string | null;
             /**
              * Streaming Pods
              * @default 0

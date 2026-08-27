@@ -44,8 +44,6 @@ export interface ClusterTelemetry {
   /** Seconds since this cluster's most recent sample, streaming or not. */
   last_seen_age: number | null;
   dashboard_url: string | null;
-  inject_command: string;
-  eject_command: string;
 }
 
 /** Exactly one holds per cluster, and each names a different action. Only
@@ -66,6 +64,9 @@ export interface InjectionPod {
   /** In the pod template, or bolted on. Only an ephemeral one can be cleared
    *  by recreating the pod; a permanent one comes straight back. */
   kind: 'permanent' | 'ephemeral' | null;
+  /** For a permanent sidecar, the workload whose pod template defines it —
+   *  the only place it can actually be removed. Null for an ephemeral one. */
+  owner: string | null;
   /** The remote-write URL baked in at injection. Immutable once injected. */
   pushing_to: string | null;
   stale: boolean;
@@ -96,6 +97,8 @@ export interface InjectionState {
   expected_port: number | null;
   /** Exporters that are part of the pod template rather than injected here. */
   permanent_pods: number;
+  /** The workload that defines them, when there is one to name. */
+  permanent_owner: string | null;
   streaming_pods: number;
   silent_pods: number;
   verdict: InjectionVerdict | null;

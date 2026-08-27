@@ -93,6 +93,43 @@ hatch when injection fails for a reason bnkscope cannot fix, and it is the only
 path to `--permanent` (the patch and webhook modes), which we deliberately do not
 implement.
 
+> **Amended 2026-08-27: it does not.** The command is gone from the inject
+> panel. Both reasons turned out to be weaker than the cost of printing it.
+>
+> It is not much of an escape hatch: `tmmscope inject` is a Go binary the
+> operator may not have and the page never said where to get it, so the "hatch"
+> asked someone whose injection just failed to go install a second tool.
+>
+> Nor is `--permanent` the only durable path — the cluster builders
+> (tmmlitectl/ocibnkctl, DPF's DPUService templates) ship the sidecar in the pod
+> template already, and on operator-managed BNK the patch mode is reconciled
+> away, so the hint's "the only way to get a durable sidecar" was wrong twice
+> over.
+>
+> What it *did* do reliably was imply that bnkscope needs tmmscope installed to
+> stream telemetry. It does not: `bnkscope up` brings its own Prometheus and
+> Grafana (`telemetry/`, vendored) and injects through the Kubernetes API. The
+> only thing that still comes from tmmscope is the exporter image, which the
+> cluster pulls from GHCR.
+>
+> The commands aimed at a sidecar bnkscope did **not** install are gone for the
+> same reason, and a worse one: `tmmscope eject` only undoes `tmmscope inject
+> --permanent`. It does nothing for the sidecar a cluster builder shipped in the
+> pod template, which is where most permanent exporters come from — so the page
+> printed one tool's command for a state several tools can produce.
+>
+> Those panels now **name the owning workload** instead (`DaemonSet f5-tmm`,
+> `Deployment f5-tmm`), resolved from the pod's `ownerReferences` — one hop
+> through the ReplicaSet, which is generated and not what anyone edits. That is
+> what "remove it where it is defined" was always trying to say, and it is true
+> however the sidecar got there. `remove()`'s refusal message names it too.
+>
+> With no consumer left, `inject_command` and `eject_command` are gone from the
+> `/api/tmmscope/clusters/{id}` response, and `TmmLive` prints no `tmmscope`
+> command in the injection or removal flow at all. `tmmscope up` remains on the
+> "no telemetry stack" panel: bnkscope still uses that stack when it finds it,
+> and that is a fallback, not an instruction.
+
 ## What this does *not* absorb
 
 - **`tmmscope up`** — Prometheus and Grafana. Needs the Docker socket; that

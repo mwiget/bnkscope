@@ -493,29 +493,6 @@ class TestStreamingPods:
         assert seen["query"] == r'count by (pod) (f5tmm_up{cluster="lab\"a"})'
 
 
-class TestCommands:
-    def test_inject_names_the_context(self):
-        assert svc.inject_command("lab-a") == "tmmscope inject --context lab-a"
-
-    def test_inject_adds_cluster_when_it_differs_from_the_context(self):
-        """Observed on a real Kamaji tenant: context
-        `kubernetes-admin@dpu-cplane-tenant1`, cluster `dpu-cplane-tenant1`."""
-        command = svc.inject_command("kubernetes-admin@dpu-cplane-tenant1", "dpu-cplane-tenant1")
-        assert "--context kubernetes-admin@dpu-cplane-tenant1" in command
-        assert "--cluster dpu-cplane-tenant1" in command
-
-    def test_inject_omits_a_redundant_cluster_flag(self):
-        assert svc.inject_command("lab-a", "lab-a") == "tmmscope inject --context lab-a"
-
-    def test_a_context_needing_quoting_gets_it(self):
-        """The command is meant to be copy-pasted into a shell."""
-        command = svc.inject_command("weird name; rm -rf /")
-        assert "'weird name; rm -rf /'" in command
-
-    def test_eject_names_the_context(self):
-        assert svc.eject_command("lab-a") == "tmmscope eject --context lab-a"
-
-
 class TestOwnStackPreference:
     """bnkscope running its own Prometheus + Grafana (`up --telemetry`).
 

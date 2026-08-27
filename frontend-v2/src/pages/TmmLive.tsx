@@ -439,10 +439,24 @@ export default function TmmLive() {
                     Remove the exporter — restarts TMM
                   </Button>
                 ) : (
-                  <HostCommand
-                    command={telemetry.inject_command}
-                    hint="The exporter is part of the pod template here, so re-installing it is a host command:"
-                  />
+                  /* Permanent: the push URL is an env var in the pod template,
+                     so the fix is to correct it there and roll the workload —
+                     not to inject a second exporter over the top of this one. */
+                  <p className="text-xs text-muted-foreground">
+                    The exporter here is part of the TMM pod template, so the address
+                    is set where that template is defined
+                    {injection.permanent_owner ? (
+                      <>
+                        :{' '}
+                        <code className="font-mono text-foreground">
+                          {injection.permanent_owner}
+                        </code>
+                      </>
+                    ) : null}
+                    . Point it at port{' '}
+                    <code className="font-mono">{injection.expected_port}</code> and
+                    roll it.
+                  </p>
                 )}
               </div>
             ) : verdict === 'not_delivering' && injection ? (
@@ -521,21 +535,6 @@ export default function TmmLive() {
                 </p>
               </div>
             )}
-
-            <details className="text-xs text-muted-foreground">
-              <summary className="cursor-pointer">Or run it on the host</summary>
-              <div className="mt-3">
-                <HostCommand
-                  command={telemetry.inject_command}
-                  hint="The tmmscope CLI does the same thing, and is the only way to get a durable sidecar:"
-                />
-                <p className="mt-2">
-                  <code>--permanent</code> patches the Deployment instead. That persists
-                  across pod restarts, but restarts TMM to do it — which is why it is not a
-                  button here.
-                </p>
-              </div>
-            </details>
           </div>
         </SectionCard>
       )}
@@ -571,18 +570,31 @@ export default function TmmLive() {
                   Remove the exporter — restarts TMM
                 </Button>
               </>
+            ) : injection?.permanent_pods ? (
+              /* Not bnkscope's to remove, and not one command's either: a
+                 permanent sidecar comes from whatever built the cluster, so
+                 the only useful thing to say is which workload defines it. */
+              <p className="text-sm text-muted-foreground">
+                This cluster&apos;s exporter is a permanent sidecar in the TMM pod
+                template — recreating the pods would only bring it back. Remove it
+                where the template is defined
+                {injection.permanent_owner ? (
+                  <>
+                    :{' '}
+                    <code className="font-mono text-foreground">
+                      {injection.permanent_owner}
+                    </code>
+                    .
+                  </>
+                ) : (
+                  ', in whatever installed it.'
+                )}
+              </p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                {injection?.permanent_pods
-                  ? "This cluster's exporter is a permanent sidecar in the TMM pod template — recreating the pods would only bring it back. Remove it where it is defined:"
-                  : "bnkscope did not inject this cluster's exporter, so there is nothing here to remove. If a durable sidecar was installed with `tmmscope inject --permanent`, remove it the same way:"}
+                bnkscope did not inject this cluster&apos;s exporter, so there is
+                nothing here to remove.
               </p>
-            )}
-            {!removable && (
-              <HostCommand
-                command={telemetry.eject_command}
-                hint="Run on the host:"
-              />
             )}
           </div>
         </details>

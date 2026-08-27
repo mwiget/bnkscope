@@ -85,9 +85,6 @@ class ClusterTelemetryResponse(BaseModel):
     last_seen_age: float | None = None
     # Embeddable, kiosk-mode, scoped to `streaming_as`.
     dashboard_url: str | None = None
-    # Commands the operator runs on the host to start/stop streaming.
-    inject_command: str
-    eject_command: str
 
 
 class BindLabelRequest(BaseModel):
@@ -172,7 +169,6 @@ def get_cluster_telemetry(
             _browser_host(request),
         )
 
-    context = cluster.context or cluster.name
     return {
         "cluster_id": cluster.id,
         "cluster_name": cluster.name,
@@ -183,8 +179,6 @@ def get_cluster_telemetry(
         "available_labels": status.streaming_clusters,
         "last_seen_age": status.last_seen.get(label) if label else None,
         "dashboard_url": url,
-        "inject_command": tmmscope_service.inject_command(context, cluster.name),
-        "eject_command": tmmscope_service.eject_command(context),
     }
 
 
@@ -228,6 +222,10 @@ class InjectionPod(BaseModel):
     # "ephemeral" (what bnkscope injects). Only the ephemeral one can be cleared
     # by recreating the pod; a permanent one comes straight back.
     kind: str | None = None
+    # For a permanent sidecar, the workload whose pod template defines it — the
+    # only place it can actually be removed. None for an ephemeral one, which
+    # bnkscope removes itself.
+    owner: str | None = None
     # The remote-write URL baked into the exporter. Immutable once injected.
     pushing_to: str | None = None
     stale: bool = False
@@ -262,6 +260,8 @@ class InjectionStateResponse(BaseModel):
     expected_port: int | None = None
     # Exporters that are part of the pod template rather than injected here.
     permanent_pods: int = 0
+    # The workload that defines them, when there is one to name.
+    permanent_owner: str | None = None
     # Delivering / installed-but-silent, per pod.
     streaming_pods: int = 0
     silent_pods: int = 0
@@ -362,8 +362,9 @@ def inject_exporter(
     ingest = tmmscope_service.prometheus_ingest()
     if ingest is None and not body.remote_write_url:
         raise ValidationError(
-            "tmmscope's Prometheus is not discoverable, so there is nowhere to "
-            "push. Run `tmmscope up` on the host, or supply a remote-write URL."
+            "No Prometheus is discoverable, so there is nowhere to push. Start "
+            "bnkscope's own with `bnkscope up --telemetry` on the host, or "
+            "supply a remote-write URL."
         )
     port, path = ingest or (9090, "/api/v1/write")
 

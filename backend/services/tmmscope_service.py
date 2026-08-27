@@ -463,30 +463,3 @@ def streaming_pods(prometheus_url: str, cluster_label: str) -> set[str]:
         for row in payload
         if isinstance(pod := (row.get("metric") or {}).get("pod"), str) and pod
     }
-
-
-def inject_command(context: str, cluster_name: str | None = None) -> str:
-    """The exact command to run on the host to start streaming from a cluster.
-
-    bnkscope shows this rather than running it. `tmmscope inject` shells out to
-    kubectl, and neither kubectl nor the tmmscope binary is in this image —
-    that is most of what Phase 4's 843 -> 587 MB was. Printing the command is
-    honest about where the work happens and keeps the image as it is.
-    """
-    parts = ["tmmscope", "inject", "--context", _shell_quote(context)]
-    if cluster_name and cluster_name != context:
-        parts += ["--cluster", _shell_quote(cluster_name)]
-    return " ".join(parts)
-
-
-def eject_command(context: str) -> str:
-    """The counterpart to :func:`inject_command`."""
-    return f"tmmscope eject --context {_shell_quote(context)}"
-
-
-def _shell_quote(value: str) -> str:
-    """Quote only when needed, so the common case stays copy-pasteable."""
-    import shlex
-
-    quoted = shlex.quote(value)
-    return quoted

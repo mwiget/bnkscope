@@ -35,13 +35,15 @@ def make_pod(
     node_name="node-1",
     pushing_to="http://172.18.0.1:9491/api/v1/write",
     started_ago=None,
+    owner=("DaemonSet", "f5-tmm"),
 ):
     """Enough of a V1Pod for the code under test.
 
     ``containers`` may name the exporter too — that is a *permanent* sidecar,
     which is what the cluster builders install and what every DPF cluster runs.
     ``started_ago`` gives it a running container status that many seconds old,
-    which is what bounds "settling".
+    which is what bounds "settling". ``owner`` is the controller reference every
+    pod under a workload carries; None makes it a bare pod, which has none.
     """
 
     def ec(cname):
@@ -66,7 +68,16 @@ def make_pod(
         )
 
     return SimpleNamespace(
-        metadata=SimpleNamespace(name=name, namespace=namespace, annotations=annotations or {}),
+        metadata=SimpleNamespace(
+            name=name,
+            namespace=namespace,
+            annotations=annotations or {},
+            owner_references=(
+                [SimpleNamespace(kind=owner[0], name=owner[1], controller=True)]
+                if owner
+                else None
+            ),
+        ),
         spec=SimpleNamespace(
             containers=[ec(c) for c in containers],
             ephemeral_containers=[ec(c) for c in ephemeral] or None,
@@ -769,7 +780,39 @@ class TestRemovePermanent:
 
         patched.delete_namespaced_pod.assert_not_called()
         assert result["deleted"] == []
-        assert "permanent sidecar" in result["failed"][0]["error"]
+        error = result["failed"][0]["error"]
+        assert "permanent sidecar" in error
+        # "Remove it where it is defined" is not an instruction unless it says
+        # where. It used to say `tmmscope eject`, which only undoes `tmmscope
+        # inject --permanent` — not the sidecar a cluster builder shipped.
+        assert "DaemonSet f5-tmm" in error
+        assert "tmmscope" not in error
+
+    def test_names_the_deployment_rather_than_its_generated_replicaset(
+        self, patched, monkeypatch
+    ):
+        """Nobody edits a ReplicaSet: it is generated, and the next rollout
+        replaces it. The Deployment above it is the thing to open."""
+        pod = make_pod(
+            containers=("f5-tmm", inject_svc.SIDECAR_NAME),
+            owner=("ReplicaSet", "f5-tmm-7d9f"),
+        )
+        self._targets(monkeypatch, pod)
+        patched.read_namespaced_pod.return_value = pod
+
+        apps = MagicMock()
+        apps.read_namespaced_replica_set.return_value = SimpleNamespace(
+            metadata=SimpleNamespace(
+                owner_references=[
+                    SimpleNamespace(kind="Deployment", name="f5-tmm", controller=True)
+                ]
+            )
+        )
+        monkeypatch.setattr(inject_svc.k8s_client, "AppsV1Api", lambda _c: apps)
+
+        result = inject_svc.remove(MagicMock())
+
+        assert "Deployment f5-tmm" in result["failed"][0]["error"]
 
     def test_still_recreates_for_an_ephemeral_one(self, patched, monkeypatch):
         pod = make_pod(ephemeral=(inject_svc.SIDECAR_NAME,))
