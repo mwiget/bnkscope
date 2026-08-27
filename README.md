@@ -201,13 +201,15 @@ metrics and answers queries — it holds no credentials and can change nothing.
 
 [tmmscope](https://github.com/mwiget/tmmscope) is where this came from, and it
 still works — if its stack is up, bnkscope finds and uses it instead of starting
-its own. Two things stay CLI-only on purpose:
+its own. Nothing here needs it installed, though: the injection is a Kubernetes
+API call bnkscope makes itself, the Prometheus and Grafana configuration is
+vendored in `telemetry/`, and the exporter is built from `tmm-stat-exporter/` in
+this repository.
 
-- **`--permanent` injection.** The durable modes restart TMM, and the webhook
-  mode installs a cluster-scoped `MutatingWebhookConfiguration` with a 10-year
-  self-signed CA. Neither belongs behind a button.
-- **The `tmm-stat-exporter` image itself**, which is built from that repo and is
-  the thing doing the actual work.
+What stays over there is `--permanent` injection. Both durable modes restart
+TMM, and the webhook mode installs a cluster-scoped
+`MutatingWebhookConfiguration` with a 10-year self-signed CA — neither belongs
+behind a button in a troubleshooting tool.
 
 ## Architecture
 

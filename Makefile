@@ -124,7 +124,7 @@ PYTEST_COV  = --cov --cov-fail-under=0
 
 .PHONY: install update status logs \
         test test-backend test-backend-unit test-backend-component test-backend-legacy test-frontend \
-        test-contracts \
+        test-contracts exporter-test exporter-vet exporter-image \
         test-integration test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
         lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
         dev-setup security-audit docker-check docker-verify docker-validate frontend-deps \
@@ -467,6 +467,29 @@ test-mcp:
 	@cd mcp-server && \
 	  if [ -d ".venv" ]; then source .venv/bin/activate; fi && \
 	  python -m pytest tests/ --tb=short -q
+
+# ─── tmm-stat-exporter (Go) ──────────────────────────────────────────────────
+# The sidecar TMM Live injects. Its own module, and the only Go in the repo, so
+# it is not part of `make test` — it needs a toolchain the rest of the build
+# does not. CI runs it on any change under tmm-stat-exporter/.
+
+exporter-test:
+	@echo ""
+	@echo "=== tmm-stat-exporter Tests (go) ==="
+	@cd tmm-stat-exporter && go test ./...
+
+exporter-vet:
+	@echo ""
+	@echo "=== tmm-stat-exporter Vet (go) ==="
+	@cd tmm-stat-exporter && go vet ./...
+
+# Single-arch, local, unpushed — for `docker run` and a look at the size.
+# Release builds are multi-arch through docker-bake.hcl.
+exporter-image:
+	@echo ""
+	@echo "=== Building tmm-stat-exporter:dev ==="
+	@docker build -t tmm-stat-exporter:dev tmm-stat-exporter/
+	@docker images tmm-stat-exporter:dev --format '  {{.Repository}}:{{.Tag}}  {{.Size}}'
 
 smoke-mcp-live:
 	@echo ""
@@ -1011,7 +1034,7 @@ push-images:
 	echo "=== Building + pushing all images in parallel (docker buildx bake) ==="; \
 	GIT_REVISION=$$(git rev-parse HEAD 2>/dev/null || echo unknown); \
 	REGISTRY=$$REGISTRY VERSION=$$VERSION PLATFORMS=$(PLATFORMS) GIT_REVISION=$$GIT_REVISION \
-	  docker buildx bake --builder $(BUILDX_BUILDER) --push && \
+	  docker buildx bake -f docker-bake.hcl --builder $(BUILDX_BUILDER) --push && \
 	echo ""; \
 	echo "========================================="; \
 	echo "  ✅ All images pushed to $$REGISTRY"; \

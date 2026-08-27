@@ -21,7 +21,7 @@ variable "SOURCE_URL" {
 }
 
 group "default" {
-  targets = ["api", "frontend", "mcp"]
+  targets = ["api", "frontend", "mcp", "exporter"]
 }
 
 target "_common" {
@@ -67,6 +67,19 @@ target "mcp" {
   tags = concat(
     ["${REGISTRY}/bnkscope-mcp:${VERSION}"],
     ROLLING_TAG != "" ? ["${REGISTRY}/bnkscope-mcp:${ROLLING_TAG}"] : [],
+  )
+}
+
+// The tmm-stat-exporter sidecar. Unlike the other three this one does not run
+// here — it is injected into f5-tmm pods on the operator's clusters, so those
+// clusters must be able to pull it. Its own Go module; context is its
+// directory, not the repo root.
+target "exporter" {
+  inherits = ["_common"]
+  context  = "./tmm-stat-exporter"
+  tags = concat(
+    ["${REGISTRY}/bnkscope-tmm-stat-exporter:${VERSION}"],
+    ROLLING_TAG != "" ? ["${REGISTRY}/bnkscope-tmm-stat-exporter:${ROLLING_TAG}"] : [],
   )
 }
 

@@ -230,10 +230,11 @@ no credentials and can change nothing. Retention is 24 hours.
 ### Already using tmmscope?
 
 [tmmscope](https://github.com/mwiget/tmmscope) still works — if its stack is
-running, bnkscope finds and uses it rather than starting its own. Two things stay
-CLI-only: `--permanent` injection (both durable modes restart TMM, and one
-installs a cluster-scoped webhook with a 10-year CA), and the exporter image
-itself, which is built from that repo.
+running, bnkscope finds and uses it rather than starting its own. Nothing here
+requires it: the exporter is built from `tmm-stat-exporter/` in this repository
+and the Prometheus/Grafana configuration is vendored in `telemetry/`. What stays
+CLI-only is `--permanent` injection — both durable modes restart TMM, and one
+installs a cluster-scoped webhook with a 10-year CA.
 
 ---
 

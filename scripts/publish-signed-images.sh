@@ -88,13 +88,18 @@ fi
 
 # ─── Image list ───────────────────────────────────────────────────────────────
 # The images docker-bake.hcl builds. bnkscope publishes two, plus the optional
-# MCP server; the worker, beat, proxy and operator images went with the
-# subsystems they served (bnkscope Phases 1-4).
+# MCP server and the tmm-stat-exporter sidecar; the worker, beat, proxy and
+# operator images went with the subsystems they served (bnkscope Phases 1-4).
+#
+# The exporter is the one image that does not run on the operator's machine: it
+# is pulled by their clusters. That makes a signature and an SBOM matter more
+# here, not less.
 
 IMAGES=(
   "bnkscope-api"
   "bnkscope-frontend"
   "bnkscope-mcp"
+  "bnkscope-tmm-stat-exporter"
 )
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────

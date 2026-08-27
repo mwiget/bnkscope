@@ -28,9 +28,20 @@ should be reported here rather than to bnk-forge.
 
 ────────────────────────────────────────────────────────────────────────────
 
-bnkscope also draws on tmmscope for its TMM telemetry:
+bnkscope's TMM telemetry comes from tmmscope:
 
     https://github.com/mwiget/tmmscope
+    Copyright 2026 Marcel Wiget
+    Licensed under the MIT License
 
-The `tmm-stat-exporter` image that TMM Live injects is built from that
-repository and is not vendored here.
+Two parts of it are vendored here rather than depended on:
+
+  - `tmm-stat-exporter/` — the sidecar TMM Live injects, forked at `3948973`
+    from tmmscope's `cmd/tmm-stat-exporter` and `internal/tmstat`. The MIT
+    licence it carries is in `tmm-stat-exporter/LICENSE` and governs that
+    directory; the rest of bnkscope is Apache-2.0.
+  - `telemetry/` — the Prometheus and Grafana configuration and the two
+    dashboards, copied from `internal/assets/files/` at the same commit.
+
+bnkscope reimplemented the injection itself in Python (see ADR D-036); it needs
+no tmmscope binary at runtime.

@@ -29,5 +29,5 @@ so the two do not drift:
 cp ~/git/tmmscope/internal/assets/files/grafana/dashboards/*.json telemetry/grafana/dashboards/
 ```
 
-The `tmm-stat-exporter` image is still built from the tmmscope repo — that is
-the part doing the actual work, and vendoring the dashboards does not change it.
+The exporter that fills these dashboards is vendored too, in
+`tmm-stat-exporter/` — it was forked from the same commit, for the same reason.

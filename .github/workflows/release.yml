@@ -341,7 +341,11 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0
 
       - name: Build and push all images (docker-bake.hcl)
-        run: docker buildx bake --push default
+        # `-f docker-bake.hcl` is load-bearing. With no -f, bake also reads
+        # docker-compose.yml, and that file requires BNKSCOPE_GRAFANA_PASSWORD
+        # (`bnkscope up` generates it) — so bake fails while *parsing*, before
+        # it ever looks at a target, and no image is built.
+        run: docker buildx bake -f docker-bake.hcl --push default
         env:
           REGISTRY: ${{ env.REGISTRY }}
           VERSION: ${{ env.VERSION }}
@@ -365,6 +369,6 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image | Tags |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
-          for name in bnkscope-api bnkscope-frontend bnkscope-mcp; do
+          for name in bnkscope-api bnkscope-frontend bnkscope-mcp bnkscope-tmm-stat-exporter; do
             echo "| ${name} | ${{ env.REGISTRY }}/${name}:${{ needs.preflight.outputs.new_version }}, :latest |" >> "$GITHUB_STEP_SUMMARY"
           done

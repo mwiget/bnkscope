@@ -44,6 +44,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Pinned, and not a parameter. See the module docstring.
+#:
+#: The exporter's source now lives in this repository (`tmm-stat-exporter/`,
+#: forked from tmmscope) and `docker-bake.hcl` publishes it as
+#: `bnkscope-tmm-stat-exporter` alongside the other images. This still points at
+#: the tmmscope-built image on purpose: it is the one that exists in GHCR today,
+#: and repointing it before a release has pushed the new name would turn every
+#: injection into an ImagePullBackOff. Flip it in the same change that follows
+#: the first release publishing `bnkscope-tmm-stat-exporter`.
 EXPORTER_IMAGE = "ghcr.io/mwiget/tmm-stat-exporter:latest"
 
 SIDECAR_NAME = "tmm-stat-exporter"

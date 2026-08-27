@@ -75,6 +75,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       mcp: ${{ steps.filter.outputs.mcp }}
+      exporter: ${{ steps.filter.outputs.exporter }}
       docker: ${{ steps.filter.outputs.docker }}
       scripts: ${{ steps.filter.outputs.scripts }}
       ci: ${{ steps.filter.outputs.ci }}
@@ -92,6 +93,8 @@ jobs:
               - 'frontend-v2/**'
             mcp:
               - 'mcp-server/**'
+            exporter:
+              - 'tmm-stat-exporter/**'
             docker:
               - 'backend/Dockerfile'
               - 'frontend-v2/Dockerfile'
@@ -255,6 +258,28 @@ jobs:
         run: cd mcp-server && pip install -e ".[dev]"
       - name: Run MCP tests
         run: make test-mcp
+
+  # ── tmm-stat-exporter (Go) ────────────────────────────────────────────────
+  # Not advisory. This one is not part of bnkscope's own runtime — it is pulled
+  # and run inside the operator's TMM pods — so a broken build is discovered by
+  # someone else's cluster, not by ours.
+  exporter-tests:
+    name: "Tests · tmm-stat-exporter (go)"
+    needs: changes
+    if: needs.changes.outputs.exporter == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tmm-stat-exporter/go.mod
+          cache-dependency-path: tmm-stat-exporter/go.sum
+      - name: go vet
+        run: make exporter-vet
+      - name: go test
+        run: make exporter-test
+      - name: Image builds
+        run: docker build -t tmm-stat-exporter:ci tmm-stat-exporter/
 
   # ── Dependency audit ──────────────────────────────────────────────────────
   security-audit:
