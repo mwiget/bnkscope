@@ -42,8 +42,8 @@ ARG UID=1000
 ARG GID=1000
 # Create docker group with GID 999 (common on Linux hosts) for socket access
 RUN groupadd -g 999 docker || true && \
-    groupadd -g ${GID} bnkforge && \
-    useradd -m -u ${UID} -g bnkforge -G docker -s /bin/bash bnkforge
+    groupadd -g ${GID} bnkscope && \
+    useradd -m -u ${UID} -g bnkscope -G docker -s /bin/bash bnkscope
 
 # Minimal system deps for the base image (curl for health checks, ca-certs for TLS)
 # postgresql-client: pg_dump + psql for backup/restore operations (BR-002).
@@ -110,11 +110,11 @@ COPY backend/jobs/ ./jobs/
 # Python entry points change most often — copy last for best cache hits
 COPY backend/*.py ./
 
-# Create required directories and set ownership to bnkforge user
+# Create required directories and set ownership to bnkscope user
 # /app/bfb-cache is pre-created so the named Docker volume inherits
 # correct ownership on first mount (otherwise it initializes as root).
 RUN mkdir -p /tmp/bnkscope-logs /tmp/bnkscope-modules /app/state /app/helm_charts /app/projects /app/keys /app/agent-token /app/workspaces /app/bfb-cache /app/provider-cache && \
-    chown -R bnkforge:bnkforge /app /tmp/bnkscope-logs /tmp/bnkscope-modules
+    chown -R bnkscope:bnkscope /app /tmp/bnkscope-logs /tmp/bnkscope-modules
 
 # Shared OpenTofu provider cache path (mounted from compose volume at runtime)
 ENV TF_PLUGIN_CACHE_DIR=/app/provider-cache
@@ -140,14 +140,14 @@ FROM app-base AS api
 # pipeline (Phase 1) and the tooling-deps stage (Phase 4).
 #
 # The database lives here; the volume is mounted over it at runtime.
-RUN mkdir -p /app/data && chown -R bnkforge:bnkforge /app/data
+RUN mkdir -p /app/data && chown -R bnkscope:bnkscope /app/data
 # The log collector's shared volume. Created here, and owned by the app user,
 # because a *fresh* named volume inherits the ownership of the image directory
 # it is mounted over — without this it arrives root-owned and the backend
 # cannot write the collector's config into it.
-RUN mkdir -p /telemetry && chown -R bnkforge:bnkforge /telemetry
+RUN mkdir -p /telemetry && chown -R bnkscope:bnkscope /telemetry
 EXPOSE 8000
-USER bnkforge
+USER bnkscope
 # Loopback bind. bnkscope has no authentication (Phase 3) — it is a local
 # single-user tool, and the bind address IS the access control. The compose
 # file runs this with network_mode: host, so 127.0.0.1 keeps the API off the

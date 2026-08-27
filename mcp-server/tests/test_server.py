@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from bnk_forge_mcp.config import MCPConfig
-from bnk_forge_mcp.observability import ObservabilityMCPProxy
+from bnkscope_mcp.config import MCPConfig
+from bnkscope_mcp.observability import ObservabilityMCPProxy
 
 pytest.importorskip("mcp", reason="mcp package not installed in this test environment")
 
-from bnk_forge_mcp.server import create_server
+from bnkscope_mcp.server import create_server
 
 @pytest.fixture
 def config() -> MCPConfig:

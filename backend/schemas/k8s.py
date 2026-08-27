@@ -326,7 +326,7 @@ class HugePagesDeployRequest(BaseModel):
         default=None,
         description=(
             "Override for the tuner container image. Defaults to the "
-            "BNK_FORGE_HUGEPAGES_IMAGE env var, then busybox:1.36.1. "
+            "BNKSCOPE_HUGEPAGES_IMAGE env var, then busybox:1.36.1. "
             "Airgapped clusters should point this at a mirrored image."
         ),
         max_length=512,
@@ -356,7 +356,7 @@ class NodeReadinessProbeRequest(BaseModel):
         default=None,
         description=(
             "Override for the probe container image. Defaults to the "
-            "BNK_FORGE_NODEPROBE_IMAGE env var, then busybox:1.36.1. "
+            "BNKSCOPE_NODEPROBE_IMAGE env var, then busybox:1.36.1. "
             "Airgapped clusters should point this at a mirrored image."
         ),
         max_length=512,

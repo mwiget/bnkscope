@@ -138,7 +138,7 @@ export const handlers = [
     return new HttpResponse(new Blob(['fake-archive-data']), {
       headers: {
         'Content-Type': 'application/gzip',
-        'Content-Disposition': 'attachment; filename="bnkforge-backup-default.tar.gz"',
+        'Content-Disposition': 'attachment; filename="bnkscope-backup-default.tar.gz"',
       },
     });
   }),
@@ -1181,7 +1181,7 @@ export const handlers = [
       success: true,
       message: 'SSH connection successful',
       credential_id: Number(params.id),
-      host: '10.176.11.91',
+      host: '192.0.2.10',
       port: 22,
       auth_type: 'key',
     });

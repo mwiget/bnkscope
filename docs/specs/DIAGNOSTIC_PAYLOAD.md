@@ -91,7 +91,7 @@ class DiagnosticSummary(BaseModel):
 {
   "severity": "degraded",
   "message": "Host responds to ping (170ms) but port 6443 is blocked.",
-  "suggestion": "Request firewall rule to allow TCP 6443 from this server to 10.144.35.73, or enable SSH tunneling.",
+  "suggestion": "Request firewall rule to allow TCP 6443 from this server to 192.0.2.10, or enable SSH tunneling.",
   "source": "connectivity_probe",
   "evidence": {
     "icmp_reachable": true,

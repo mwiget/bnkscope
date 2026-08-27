@@ -13,7 +13,7 @@ import pytest
 # both the decorators and most of the files went with authentication in
 # Phase 3, so the test was asserting bnk-forge's RBAC model on a tool that
 # deliberately has none.
-from bnk_forge_mcp.tool_catalog import (
+from bnkscope_mcp.tool_catalog import (
     ALLOWED_AUTH_EXPECTATIONS,
     ALLOWED_TOOL_STABILITY,
     GOVERNED_MODULES,
@@ -46,7 +46,7 @@ class _NoopClient:
         return {"path": path, "params": params}
 
 def _collect_registered_tools_by_module() -> dict[str, set[str]]:
-    from bnk_forge_mcp.tools import (
+    from bnkscope_mcp.tools import (
         register_bnk_operations,
         register_cluster_management,
         register_diagnostics_fleet,

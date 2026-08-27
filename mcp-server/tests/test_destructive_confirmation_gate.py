@@ -19,11 +19,11 @@ import logging
 
 import pytest
 
-from bnk_forge_mcp.observability import (
+from bnkscope_mcp.observability import (
     ObservabilityMCPProxy,
     require_confirmation,
 )
-from bnk_forge_mcp.tool_catalog import ToolRiskClass, get_high_risk_tool_catalog
+from bnkscope_mcp.tool_catalog import ToolRiskClass, get_high_risk_tool_catalog
 
 
 class _RecordingMCP:
@@ -113,7 +113,7 @@ async def test_gate_preserves_var_keyword_ordering() -> None:
 
 @pytest.mark.asyncio
 async def test_blocked_call_is_logged_for_audit(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO, logger="bnk_forge_mcp.observability")
+    caplog.set_level(logging.INFO, logger="bnkscope_mcp.observability")
 
     async def _impl() -> str:
         return "{}"
@@ -135,13 +135,13 @@ async def test_env_escape_hatch_disables_the_gate(monkeypatch: pytest.MonkeyPatc
         return json.dumps({"success": True})
 
     gated = require_confirmation(_impl, "delete_project")
-    monkeypatch.setenv("BNK_FORGE_MCP_REQUIRE_CONFIRMATION", "false")
+    monkeypatch.setenv("BNKSCOPE_MCP_REQUIRE_CONFIRMATION", "false")
     await gated()
     assert called == [True]
 
     # Default (unset) is enforced.
     called.clear()
-    monkeypatch.delenv("BNK_FORGE_MCP_REQUIRE_CONFIRMATION")
+    monkeypatch.delenv("BNKSCOPE_MCP_REQUIRE_CONFIRMATION")
     result = json.loads(await gated())
     assert result["error"]["code"] == "CONFIRMATION_REQUIRED"
     assert called == []
@@ -177,7 +177,7 @@ async def test_gate_survives_the_instrumentation_wrapper(caplog: pytest.LogCaptu
     -- otherwise the parameter never reaches the published tool schema and an
     agent has no way to satisfy the gate.
     """
-    from bnk_forge_mcp.observability import instrument_tool
+    from bnkscope_mcp.observability import instrument_tool
 
     async def delete_project(project_id: int, force: bool = False) -> str:
         """Delete a project."""
@@ -197,7 +197,7 @@ async def test_gate_survives_the_instrumentation_wrapper(caplog: pytest.LogCaptu
 
     # And a blocked call is still classified as a failure by the outer telemetry,
     # not silently logged as a success.
-    caplog.set_level(logging.INFO, logger="bnk_forge_mcp.observability")
+    caplog.set_level(logging.INFO, logger="bnkscope_mcp.observability")
     await final(88)
     assert '"error_class":"confirmation_required"' in caplog.text
     assert '"success":false' in caplog.text

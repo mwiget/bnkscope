@@ -6,16 +6,14 @@ Architecture:
   diagnostic tools: tmctl, configview, bdt_cli, tcpdump, ping, netkvest.
 
   We exec one-shot commands via kubeconfig — no agent pod needed.
-  This is a DIFFERENT pattern from QKView/licensing which use the
-  bnk-forge-agent pod (alpine/curl) for CWC REST API access.
+  This is a DIFFERENT pattern from QKView/licensing, which deploy an agent pod
+  (alpine/curl) for CWC REST API access — see qkview_service.py.
 
-  - bnk-forge-agent pod = CWC REST API access (mTLS + Bearer auth)
+  - agent pod     = CWC REST API access (mTLS + Bearer auth)
   - debug sidecar = TMM diagnostics (direct pod exec)
 
 F5 Docs:
   https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/overviews/spk-tmm-debug.html
-
-Decision: D4 (see .agent/DECISIONS.md)
 """
 
 import logging

@@ -18,8 +18,8 @@ from services.connectivity_probe_service import (
 
 class TestParseApiServer:
     def test_standard_url(self):
-        host, port = _parse_api_server("https://10.144.35.73:6443")
-        assert host == "10.144.35.73"
+        host, port = _parse_api_server("https://192.0.2.10:6443")
+        assert host == "192.0.2.10"
         assert port == 6443
 
     def test_default_port_https(self):
@@ -97,7 +97,7 @@ class TestBuildDiagnosticMessage:
 
     def test_partial_icmp_reachable_tcp_blocked(self):
         result = _build_diagnostic_message(
-            host="10.144.35.73", port=6443,
+            host="192.0.2.10", port=6443,
             icmp={"reachable": True, "latency_ms": 170.0},
             tcp={"open": False},
             k8s_api={"accessible": False},

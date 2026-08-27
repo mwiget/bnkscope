@@ -1057,10 +1057,10 @@ docker-verify:
 	@echo ""
 	@failed=0; \
 	  echo "--- MCP server module ---"; \
-	  if docker run --rm bnkscope-mcp:latest python -c "import bnk_forge_mcp.server; print('OK')" > /dev/null 2>&1; then \
-	    echo "  OK    bnk_forge_mcp.server"; \
+	  if docker run --rm bnkscope-mcp:latest python -c "import bnkscope_mcp.server; print('OK')" > /dev/null 2>&1; then \
+	    echo "  OK    bnkscope_mcp.server"; \
 	  else \
-	    echo "  FAIL  bnk_forge_mcp.server"; \
+	    echo "  FAIL  bnkscope_mcp.server"; \
 	    failed=1; \
 	  fi; \
 	  echo ""; \

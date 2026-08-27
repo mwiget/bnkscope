@@ -137,7 +137,7 @@ logger.info("Failed for project %s", project_id)  # BETTER — aggregation-frien
 
 - **Config:** `backend/core/logging_config.py` — `JSONFormatter`, `HumanReadableFormatter`, `configure_logging()`
 - **Filter:** `backend/core/correlation.py` — `CorrelationLogFilter` (injects `request_id`)
-- **MCP:** `mcp-server/src/bnk_forge_mcp/observability.py` — `ObservabilityMCPProxy`
+- **MCP:** `mcp-server/src/bnkscope_mcp/observability.py` — `ObservabilityMCPProxy`
 
 ---
 

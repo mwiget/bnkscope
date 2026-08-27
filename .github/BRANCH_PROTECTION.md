@@ -31,50 +31,33 @@ Go to: **Settings → Branches → Branch protection rules**
 > **Important:** The `CI Gate` job won't appear in the search until the workflow
 > has run at least once. Push a commit to trigger CI first, then configure protection.
 
-## CI Pipeline Phases
+## Status checks
 
-```
-Phase 1 (P1): Lint + Unit + Contract    ~60s   [automatic, blocks merge]
-    ↓
-Phase 2 (P2): Component + Legacy Tests  ~90s   [automatic, blocks merge]
-    ↓
-Phase 3 (P3): Integration Tests         ~2m    [automatic, blocks merge]
-    ↓
-Phase 4 (P4): Security + Docker         ~3m    [automatic, blocks merge]
-    ↓
-CI Gate: ✅ All phases passed → merge allowed
+`CI Gate` aggregates every job below and is the **only** check you need to
+require. It treats `skipped` as acceptable — the path filter decided that job
+was irrelevant to the diff — and fails on `failure` or `cancelled`.
 
-    ↓
-Release: Version bump + tag + changelog          [manual, requires CI Gate]
-```
+| Job name (as it appears in GitHub) | Runs |
+|---|---|
+| `CI Gate` | the aggregate — **require this one** |
+| `Detect Changes` | `dorny/paths-filter`, decides which jobs run |
+| `Lint` | `make lint-backend` (ruff), `make lint-frontend` (eslint), `make shellcheck` |
+| `TypeCheck · Backend (mypy)` | `make typecheck-backend`, plus `make openapi-check` and `make api-docs-check` freshness gates |
+| `TypeCheck · Frontend (tsc)` | `make typecheck-frontend` |
+| `Tests · Backend` | `make test-backend` |
+| `Tests · Frontend` | `make test-frontend`, `make build-frontend-check` |
+| `MCP Server Tests (advisory)` | `make test-mcp` — **advisory**, not in the gate's `needs` |
+| `Security Audit` | `make security-audit` (pip-audit + npm audit) |
+| `Docker Build + Scan` | builds all three images, asserts `VERSION` is baked in, checks image sizes, Trivy scan (CRITICAL gate, HIGH reported) |
 
-## Status Checks Explained
+## Makefile is the source of truth
 
-| Check Name | Required for Merge | Notes |
-|------------|-------------------|-------|
-| `CI Gate` | ✅ **Yes** | Aggregates P1-P4, the only check you need |
-| `P1 · Lint Backend` | No (aggregated) | Backend ruff lint via `make lint-backend` |
-| `P1 · Lint Frontend` | No (aggregated) | Frontend eslint via `make lint-frontend` |
-| `P1 · Unit Tests · Backend` | No (aggregated) | Unit tests via `make test-backend-unit` |
-| `P1 · Unit Tests · Frontend` | No (aggregated) | Vitest via `make test-frontend` |
-| `P1 · Unit Tests · Operator` | No (aggregated) | Operator pytest via `make test-operator` |
-| `P1 · Contract Tests` | No (aggregated) | Response-shape tests via `make test-contracts` |
-| `P1 · MCP Server Tests (advisory)` | ❌ No | Advisory only — failure does not block merge |
-| `P2 · Component Tests · Backend` | No (aggregated) | Service+DB tests via `make test-backend-component` |
-| `P2 · Legacy Tests · Backend` | No (aggregated) | Flat test files via `make test-backend-legacy` |
-| `P2 · Proxy Config` | No (aggregated) | Nginx config via `make test-proxy` |
-| `P2 · DB Migrations` | No (aggregated) | Migration tests via `make test-db` |
-| `P2 · Build · Frontend` | No (aggregated) | Build check via `make build-frontend-check` |
-| `P3 · Integration Tests` | No (aggregated) | Integration tests via `make test-integration` + `make test-integration-full` (complementary marker sets — both are needed to cover `tests/integration/`) |
-| `P4 · Security Audit` | No (aggregated) | pip-audit + npm audit via `make security-audit` |
-| `P4 · Docker Build + Scan` | No (aggregated) | Docker build + Trivy scan |
+All lint/test/build commands live in `Makefile` targets. The CI YAML only does
+checkout, runtime setup (setup-python / setup-node with caching), and
+`make <target>`.
 
-## Makefile Source-of-Truth
-
-All lint/test/build commands live in `Makefile` targets. CI YAML only handles:
-checkout, runtime setup (setup-python/setup-node with caching), and `make <target>`.
-
-This means **`make pre-push` locally ≡ CI pipeline** — if pre-push passes, CI will pass.
+This means **`make pre-push` locally ≡ the CI pipeline** — if pre-push passes,
+CI passes.
 
 ### Key Makefile targets
 
@@ -82,53 +65,53 @@ This means **`make pre-push` locally ≡ CI pipeline** — if pre-push passes, C
 |--------|-------------|
 | `make quick-check` | Fast ~15s: lint + mypy + openapi types |
 | `make pre-push` | Full ~90s parallel: quick-check + all test suites |
-| `make test-backend-unit` | Backend unit tests (tests/unit/) |
-| `make test-backend-component` | Backend component tests (tests/component/) |
-| `make test-backend-legacy` | Backend legacy tests (excludes contract/) |
-| `make test-contracts` | Golden contract tests (tests/contract/) |
-| `make test-mcp` | MCP server tests (advisory) |
-| `make security-audit` | Python pip-audit + npm audit |
+| `make test-backend` | Backend pytest (unit + component + contract + integration) |
+| `make test-frontend` | Vitest |
+| `make test-mcp` | MCP server tests (advisory in CI) |
+| `make security-audit` | pip-audit + npm audit |
 | `make docker-check` | Docker build + size threshold verification |
 
-## CI Triggers
+## CI triggers
 
 | Event | Branches | Notes |
 |-------|----------|-------|
-| Pull Request | `main` | Main gate for feature branches |
-| Push | `main` | Post-merge deploy triggers |
-| Manual | — | Release workflow |
+| Pull Request | `main` | The merge gate |
+| Push | `main` | Post-merge validation |
+| Manual | — | Release workflow only |
 
 ### Path-based change detection
 
-CI uses `dorny/paths-filter` to skip irrelevant jobs:
+CI uses `dorny/paths-filter` to skip irrelevant jobs. The filters, verbatim from
+`ci.yml`:
 
 | Filter | Paths |
 |--------|-------|
 | `backend` | `backend/**`, `requirements*.txt`, `openapi.json` |
 | `frontend` | `frontend-v2/**` |
-| `operator` | `bnk-operator/**` |
 | `mcp` | `mcp-server/**` |
 | `docker` | `backend/Dockerfile`, `frontend-v2/Dockerfile`, `docker-compose*.yml` |
+| `scripts` | `scripts/**` |
 | `ci` | `.github/workflows/**`, `Makefile` |
 
-## Workflow Files
+## Workflow files
 
 | File | Purpose | Trigger |
 |------|---------|---------|
-| `.github/workflows/ci.yml` | Phases 1-4 + CI Gate | Push, PR |
+| `.github/workflows/ci.yml` | All jobs + `CI Gate` | Push, PR |
 | `.github/workflows/release.yml` | Release pipeline | Manual only |
 
-## Release Process
+## Release process
 
-1. Ensure CI Gate has passed on your branch
+1. Ensure `CI Gate` has passed on your branch
 2. Go to **Actions → Release → Run workflow**
-3. Choose version bump type (patch/minor/major)
-5. Enter release notes
-6. Click "Run workflow"
+3. Choose the version bump type (patch/minor/major)
+4. Enter release notes
+5. Click "Run workflow"
 
 The release workflow will:
+
 - ✅ Verify CI has passed
-- ✅ Bump VERSION file
-- ✅ Update CHANGELOG.md
+- ✅ Bump the `VERSION` file
+- ✅ Update `CHANGELOG.md`
 - ✅ Commit, tag, push
-- ✅ Create GitHub Release
+- ✅ Create a GitHub Release

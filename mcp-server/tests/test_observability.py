@@ -7,18 +7,18 @@ import logging
 
 import pytest
 
-from bnk_forge_mcp.observability import (
+from bnkscope_mcp.observability import (
     _FALLBACK_AUTH_EXPECTATION,
     _FALLBACK_RISK_CLASS,
     ObservabilityMCPProxy,
     instrument_tool,
 )
-from bnk_forge_mcp.tool_catalog import get_high_risk_tool_catalog
+from bnkscope_mcp.tool_catalog import get_high_risk_tool_catalog
 
 
 @pytest.mark.asyncio
 async def test_instrument_tool_emits_start_and_success_events(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO, logger="bnk_forge_mcp.observability")
+    caplog.set_level(logging.INFO, logger="bnkscope_mcp.observability")
 
     async def _tool_impl(cluster_id: int, token: str) -> str:
         # The wrapper must not log this payload or secret token.
@@ -43,7 +43,7 @@ async def test_instrument_tool_emits_start_and_success_events(caplog: pytest.Log
 @pytest.mark.asyncio
 async def test_instrument_tool_risk_from_stamped_meta_not_catalog(caplog: pytest.LogCaptureFixture) -> None:
     """instrument_tool uses the risk/auth it was called with, not re-reads from _CATALOG_BY_TOOL."""
-    caplog.set_level(logging.INFO, logger="bnk_forge_mcp.observability")
+    caplog.set_level(logging.INFO, logger="bnkscope_mcp.observability")
 
     async def _tool_impl() -> str:
         return json.dumps({"ok": True})
@@ -58,7 +58,7 @@ async def test_instrument_tool_risk_from_stamped_meta_not_catalog(caplog: pytest
 
 @pytest.mark.asyncio
 async def test_instrument_tool_emits_failure_class_from_error_envelope(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO, logger="bnk_forge_mcp.observability")
+    caplog.set_level(logging.INFO, logger="bnkscope_mcp.observability")
 
     async def _tool_impl() -> str:
         return json.dumps(
@@ -94,7 +94,7 @@ class _FakeMCP:
 
 @pytest.mark.asyncio
 async def test_observability_proxy_instruments_registered_tool(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO, logger="bnk_forge_mcp.observability")
+    caplog.set_level(logging.INFO, logger="bnkscope_mcp.observability")
 
     mcp = _FakeMCP()
     proxy = ObservabilityMCPProxy(mcp, "system")
@@ -245,7 +245,7 @@ def test_diagnostics_fleet_tools_are_not_uncataloged() -> None:
 @pytest.mark.asyncio
 async def test_proxy_meta_risk_class_round_trips_to_start_event(caplog: pytest.LogCaptureFixture) -> None:
     """risk_class stamped in _meta appears in tool_invocation_start log event."""
-    caplog.set_level(logging.INFO, logger="bnk_forge_mcp.observability")
+    caplog.set_level(logging.INFO, logger="bnkscope_mcp.observability")
 
     mcp = _FakeMCP()
     proxy = ObservabilityMCPProxy(mcp, "diagnostics_fleet")

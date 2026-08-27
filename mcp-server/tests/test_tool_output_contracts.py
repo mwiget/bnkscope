@@ -17,9 +17,9 @@ import pytest
 
 pytest.importorskip("mcp", reason="mcp package not installed in this test environment")
 
-from bnk_forge_mcp.tools.cluster_management import register as register_cluster
-from bnk_forge_mcp.tools.diagnostics_fleet import register as register_diagnostics
-from bnk_forge_mcp.tools.system import register as register_system
+from bnkscope_mcp.tools.cluster_management import register as register_cluster
+from bnkscope_mcp.tools.diagnostics_fleet import register as register_diagnostics
+from bnkscope_mcp.tools.system import register as register_system
 
 class _FakeMCP:
     def __init__(self) -> None:

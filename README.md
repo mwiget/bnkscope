@@ -68,7 +68,7 @@ authenticating:
   credential, in one request.
 - **Cluster surgery** — restart, drain, scale, delete, and `platform-restart`
   on a live BNK cluster
-- 155 operations in total, of which 70 change something
+- 135 operations in total, of which 56 change something ([the full list](docs/API_REFERENCE.md))
 
 Traffic is plain HTTP, so all of it — and everything you type into a pod shell —
 crosses the network in the clear and can be read or modified in flight.
@@ -144,11 +144,13 @@ accepted and then failing at connect time. Supply a bearer token instead
 bnkscope up [--no-build]     start it; negotiates ports, probes your kubeconfig
            [--listen ADDR]   bind the UI to ADDR instead of 127.0.0.1
            [--no-telemetry]  skip Prometheus + Grafana (they run by default)
+           [--no-mcp]        skip the read-only MCP server (loopback, 8081)
 bnkscope down [--purge]      stop it (--purge also drops the database and key)
 bnkscope status              running state, ports, registered clusters
 bnkscope open                open the UI
 bnkscope logs [service]      follow container logs
 bnkscope endpoint            print the discovery file
+bnkscope grafana-password    print Grafana's generated admin password
 ```
 
 **Ports are negotiated, not assumed.** bnkscope wants 8080 and 8000, but under
@@ -267,22 +269,34 @@ The Makefile is the source of truth; CI runs the same targets.
 | [Testing](docs/TESTING.md) | suites, fixtures, what is covered |
 | [ADRs](docs/adr/) | why things are the way they are |
 | [How bnkscope came from bnk-forge](docs/BNKSCOPE_PLAN.md) | the eight phases, and what each one measured |
+| [All docs](docs/README.md) | the index — including which documents are bnk-forge-era records |
 
 ---
 
 ## Where this came from
 
-bnkscope began as a fork of
-[bnk-forge](https://github.com/f5devcentral/bnk-forge), with the deployment
-platform removed. bnk-forge deploys BNK; bnkscope looks at it.
-[`docs/BNKSCOPE_PLAN.md`](docs/BNKSCOPE_PLAN.md) records every phase, including
-the parts of the plan that turned out to be wrong.
+bnkscope is a fork of **[bnk-forge](https://github.com/f5devcentral/bnk-forge)**
+with the deployment platform removed. bnk-forge is the larger tool — OpenTofu
+pipelines, module catalogs, blueprints, fleets, RBAC, DPU provisioning — and
+most of the code here started there. **bnk-forge deploys BNK; bnkscope looks at
+it.** If you need to stand a cluster up rather than diagnose one, go use
+bnk-forge; it is the right tool and this is not a replacement for it.
+
+The reduction was done in eight phases, each measured;
+[`docs/BNKSCOPE_PLAN.md`](docs/BNKSCOPE_PLAN.md) records all of them, including
+the parts of the plan that turned out to be wrong. This repository's git history
+begins at bnk-forge's own initial public release commit, so the lineage is in
+the record rather than only in prose.
+
+bnkscope is not maintained by the bnk-forge authors — please report issues here,
+not there.
 
 ---
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE), which carries
+the bnk-forge attribution.
 
 - [Contributing](CONTRIBUTING.md) — workflow, ADRs, code style
 - [Code of Conduct](CODE_OF_CONDUCT.md)

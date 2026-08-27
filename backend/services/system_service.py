@@ -377,7 +377,7 @@ class SystemService:
         """Pre-flight check: can the GUI trigger an upgrade?"""
         host_repo_path = os.environ.get("HOST_REPO_PATH", "")
         docker_sock = os.path.exists("/var/run/docker.sock")
-        deployment_mode = "local" if os.environ.get("BNK_FORGE_DEPLOY_MODE") == "local" else "server"
+        deployment_mode = "local" if (os.environ.get("BNKSCOPE_DEPLOY_MODE") or os.environ.get("BNK_FORGE_DEPLOY_MODE")) == "local" else "server"
         if deployment_mode == "local":
             recommended_command = "make local-deploy"
             recommended_label = "Local redeploy"

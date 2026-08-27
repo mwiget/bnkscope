@@ -1,0 +1,36 @@
+bnkscope
+Copyright 2026 F5, Inc.
+
+This product includes software developed at F5, Inc.
+
+────────────────────────────────────────────────────────────────────────────
+
+bnkscope is a derivative work of bnk-forge:
+
+    https://github.com/f5devcentral/bnk-forge
+    Copyright 2026 F5, Inc.
+    Licensed under the Apache License, Version 2.0
+
+bnk-forge is a deployment platform for F5 BIG-IP Next for Kubernetes: OpenTofu
+pipelines, module catalogs, blueprints, fleets, RBAC and DPU provisioning.
+bnkscope removed all of it and kept the one job that mattered during an
+incident — look at the cluster and understand what is wrong. bnk-forge deploys
+BNK; bnkscope looks at it.
+
+The substantial majority of the code here originated in bnk-forge, and this
+repository's git history begins with bnk-forge's own initial public release
+commit, so the attribution is in the record and not only in this file.
+docs/BNKSCOPE_PLAN.md documents the eight phases of the reduction, including
+the parts of the plan that turned out to be wrong.
+
+bnkscope is not maintained by the bnk-forge authors, and issues found here
+should be reported here rather than to bnk-forge.
+
+────────────────────────────────────────────────────────────────────────────
+
+bnkscope also draws on tmmscope for its TMM telemetry:
+
+    https://github.com/mwiget/tmmscope
+
+The `tmm-stat-exporter` image that TMM Live injects is built from that
+repository and is not vendored here.

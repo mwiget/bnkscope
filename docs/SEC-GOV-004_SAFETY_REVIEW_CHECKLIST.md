@@ -107,7 +107,7 @@ automation endpoint (API route, MCP tool, Celery task, or WebSocket handler).
 ## When to Use
 
 - Adding a new API route in `backend/routes/`
-- Adding a new MCP tool in `mcp-server/src/bnk_forge_mcp/tools/`
+- Adding a new MCP tool in `mcp-server/src/bnkscope_mcp/tools/`
 - Adding a new Celery task in `backend/tasks/`
 - Adding a new WebSocket handler in `backend/routes/k8s_websocket.py`
 - Modifying authentication or authorization logic

@@ -4,7 +4,7 @@ Tests for MCP server configuration.
 
 from __future__ import annotations
 
-from bnk_forge_mcp.config import MCPConfig, load_config
+from bnkscope_mcp.config import MCPConfig, load_config
 
 def test_default_config() -> None:
     """A default config is enough to reach the backend.
@@ -26,7 +26,7 @@ def test_default_config() -> None:
 
 def test_config_from_env(monkeypatch) -> None:
     """Config reads from environment variables."""
-    monkeypatch.setenv("BNK_FORGE_API_URL", "http://custom:9000")
+    monkeypatch.setenv("BNKSCOPE_API_URL", "http://custom:9000")
     monkeypatch.setenv("MCP_PORT", "9999")
     monkeypatch.setenv("MCP_LOG_LEVEL", "DEBUG")
 

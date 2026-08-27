@@ -43,7 +43,7 @@ docker compose --profile mcp build
 
 | Image | Contents | Runs as | Binds |
 |---|---|---|---|
-| **api** | Python 3.11 + FastAPI app + SQLite | `bnkforge` (non-root) | `127.0.0.1:8000` — the bind address is the access control |
+| **api** | Python 3.11 + FastAPI app + SQLite | `bnkscope` (non-root) | `127.0.0.1:8000` — the bind address is the access control |
 | **frontend** | Vite build served by nginx-unprivileged | non-root | `${BNKSCOPE_UI_BIND}:${BNKSCOPE_UI_PORT}`, default `127.0.0.1:8080` |
 | **mcp** | Read-only MCP tool server | non-root | only under `--profile mcp` |
 

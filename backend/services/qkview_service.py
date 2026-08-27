@@ -1,22 +1,29 @@
 """
 QKView / CWC Service — CWC REST API integration for BNK clusters.
 
-Architecture (see DECISIONS.md D3):
+Architecture:
   The CWC REST API requires mTLS + Bearer token auth and is only reachable
   from inside the cluster network.
 
-  Solution: deploy a persistent "bnk-forge-agent" Pod that we control.
+  Solution: deploy a persistent agent Pod that we control.
   - We create a lightweight Pod (alpine/curl) in f5-utils namespace
   - Mount the mTLS client cert + admin token from K8s secrets
   - Exec `curl` commands from inside our pod → CWC REST API
   - Pod is persistent (sleep infinity) and shared by QKView + licensing
   - Created on first use, reused for all subsequent CWC operations
 
-  First-time setup (see DECISIONS.md D1):
+  First-time setup:
   - The CWC REST API uses legacy certs (TLSGenSelfSignedtRootCA) by default
-  - BNK-Forge replaces these with cert-manager-managed certs from bnk-ca
+  - We replace these with cert-manager-managed certs from bnk-ca
   - This is a one-time operation per cluster that requires a CWC pod restart
   - After setup, both server and client certs are managed by cert-manager
+
+  The `bnk-forge-*` names below are NOT leftovers to clean up — they are a
+  wire contract with resources already living in real clusters. bnk-forge
+  created the agent pod, the labels and the cert-manager Certificates under
+  those names; renaming them here would strand every existing deployment
+  (orphan pods that are never reaped, certs that are re-issued under a second
+  name). They stay until there is a migration that renames both sides.
 
   F5 docs:
     https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/spk-ihealth.html
@@ -388,7 +395,7 @@ def _create_client_pod(
     Create a persistent agent Pod in the CWC namespace that mounts the CWC mTLS certs.
 
     This pod is shared by QKView, licensing, and any future CWC operations.
-    Uses `sleep infinity` so it stays alive indefinitely (managed by BNK-Forge).
+    Uses `sleep infinity` so it stays alive indefinitely (we manage its lifecycle).
     Returns the pod name.
     """
     core_v1 = k8s_client.CoreV1Api(api_client)
@@ -1127,7 +1134,7 @@ def check_setup_status(
     Check whether QKView mTLS setup has been completed for this cluster.
 
     Per F5 CloudDocs, QKView requires a running CWC instance plus client/server
-    certificates for mutual TLS. In BNK Forge, those certs are managed through
+    certificates for mutual TLS. In bnk-forge, those certs are managed through
     cert-manager and stored in the CWC namespace.
 
     Returns:
@@ -1201,7 +1208,7 @@ def setup_cwc_api_certs(
       5. Create client Certificate CR → waits for issuance
       6. Clean up any stale client pods (they have old certs mounted)
 
-    This aligns BNK Forge with the documented QKView flow where CWC serves the
+    This aligns bnkscope with the documented QKView flow where CWC serves the
     QKView REST API over mTLS and clients authenticate with client cert, key,
     and CA material.
 
@@ -1773,7 +1780,7 @@ def _fetch_f5_jwks() -> dict[str, Any]:
     import urllib.request
 
     try:
-        req = urllib.request.Request(F5_JWKS_URL, headers={"User-Agent": "BNK-Forge"})
+        req = urllib.request.Request(F5_JWKS_URL, headers={"User-Agent": "bnkscope"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = resp.read()
             parsed: dict[str, Any] = json.loads(data)

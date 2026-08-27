@@ -3,7 +3,7 @@
 # Lightweight container — Python + MCP SDK + httpx. No heavy deps.
 #
 # Build: docker build -t bnkscope-mcp mcp-server/
-# Run:   docker run -p 8081:8081 -e BNK_FORGE_API_URL=http://backend:8000 bnkscope-mcp
+# Run:   docker run -p 8081:8081 -e BNKSCOPE_API_URL=http://backend:8000 bnkscope-mcp
 
 # python:3.11-slim — digest-pinned (Slice B / #300); re-pin when bumping the tag.
 # Pull-through cache prefix for the base image. Empty by default, so a plain
@@ -50,4 +50,4 @@ EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; req=urllib.request.Request('http://localhost:8081/mcp',headers={'Accept':'application/json,text/event-stream','Content-Type':'application/json'},data=b'{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":1}'); urllib.request.urlopen(req)" || exit 1
 
-CMD ["bnk-forge-mcp"]
+CMD ["bnkscope-mcp"]

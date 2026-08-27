@@ -49,16 +49,27 @@ _JOB_BACKOFF_LIMIT = 2
 _JOB_ACTIVE_DEADLINE_SEC = 300
 
 
+# The `bnk-forge-*` label values below are a wire contract, not a leftover to
+# clean up: they identify tuner pods that bnk-forge already created in real
+# clusters, and our own cleanup selects on them. Renaming here would strand
+# those pods with nothing left to reap them.
+
+
 def _resolve_image(image: str | None) -> str:
     """Pick the container image for the tuner pod.
 
-    Precedence: explicit request override → ``BNK_FORGE_HUGEPAGES_IMAGE``
-    env var → ``busybox:1.36.1``. In airgapped environments the operator
-    must mirror the fallback image or set the env override to a mirrored path.
+    Precedence: explicit request override → ``BNKSCOPE_HUGEPAGES_IMAGE`` env
+    var (or bnk-forge's ``BNK_FORGE_HUGEPAGES_IMAGE``) → ``busybox:1.36.1``. In
+    airgapped environments the operator must mirror the fallback image or set
+    the env override to a mirrored path.
     """
     if image:
         return image
-    return os.environ.get("BNK_FORGE_HUGEPAGES_IMAGE") or _DEFAULT_IMAGE
+    return (
+        os.environ.get("BNKSCOPE_HUGEPAGES_IMAGE")
+        or os.environ.get("BNK_FORGE_HUGEPAGES_IMAGE")
+        or _DEFAULT_IMAGE
+    )
 
 
 def _tuner_script(page_count: int) -> str:

@@ -155,15 +155,17 @@ def instrument_tool(
 # ── Destructive-tool confirmation gate ───────────────────────────────────────
 #
 # risk_class used to be catalog metadata only: it was logged for telemetry but
-# never checked, so the 16 `destructive` tools forwarded straight to the backend
-# DELETE/POST and relied entirely on backend RBAC. Because the `mcp` service
-# account is role=admin, an autonomous agent could delete real projects and
-# clusters with a single tool call and no second factor (#65).
+# never checked, so bnk-forge's `destructive` tools forwarded straight to the
+# backend DELETE/POST and relied entirely on backend RBAC (#65). bnkscope has no
+# RBAC at all — and no authentication — so a mutating tool here would reach a
+# live cluster on one call from an autonomous agent, with no second factor.
 #
-# The gate is applied here, at the one place every tool is registered, so it
-# derives from the catalog rather than from 16 hand-edited call sites that can
-# drift. Any future tool marked destructive is gated automatically.
-_CONFIRM_ENV_VAR = "BNK_FORGE_MCP_REQUIRE_CONFIRMATION"
+# Every current tool is read_only, so the gate does not fire today. It stays
+# armed at the one place every tool is registered, deriving from the catalog
+# rather than from hand-edited call sites that can drift: any future tool marked
+# destructive is gated automatically.
+_CONFIRM_ENV_VAR = "BNKSCOPE_MCP_REQUIRE_CONFIRMATION"
+_CONFIRM_ENV_VAR_LEGACY = "BNK_FORGE_MCP_REQUIRE_CONFIRMATION"
 
 _CONFIRM_GUIDANCE = (
     "\n\nSAFETY: this tool is classified `destructive` and will not execute "
@@ -178,9 +180,11 @@ def _confirmation_required() -> bool:
 
     Default on. The escape hatch exists for trusted non-interactive teardown
     (CI tearing down its own fixtures); it is read per-call so it can be flipped
-    without re-registering tools. Mirrors BENCHMARK_AGENT_AUTH_REQUIRED.
+    without re-registering tools. The BNK_FORGE_* spelling is
+    bnk-forge's and still works as a fallback.
     """
-    return os.getenv(_CONFIRM_ENV_VAR, "true").strip().lower() not in ("0", "false", "no")
+    raw = os.getenv(_CONFIRM_ENV_VAR) or os.getenv(_CONFIRM_ENV_VAR_LEGACY) or "true"
+    return raw.strip().lower() not in ("0", "false", "no")
 
 
 def _refusal_payload(tool_name: str) -> str:

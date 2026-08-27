@@ -142,7 +142,7 @@ describe('useCreateBackup', () => {
         return new HttpResponse(new Blob(['fake-archive-data']), {
           headers: {
             'Content-Type': 'application/gzip',
-            'Content-Disposition': 'attachment; filename="bnkforge-backup-20260414_101010.tar.gz"',
+            'Content-Disposition': 'attachment; filename="bnkscope-backup-20260414_101010.tar.gz"',
           },
         });
       })
@@ -171,7 +171,7 @@ describe('useCreateBackup', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data?.filename).toBe('bnkforge-backup-20260414_101010.tar.gz');
+    expect(result.current.data?.filename).toBe('bnkscope-backup-20260414_101010.tar.gz');
     expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(createObjectURLSpy).toHaveBeenCalledTimes(1);
     expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:backup');

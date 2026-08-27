@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from bnk_forge_mcp.client import APIError, BnkscopeClient
-from bnk_forge_mcp.config import MCPConfig
+from bnkscope_mcp.client import APIError, BnkscopeClient
+from bnkscope_mcp.config import MCPConfig
 
 
 def _client() -> BnkscopeClient:

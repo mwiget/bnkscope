@@ -2,13 +2,13 @@
 
 **Status**: Active  
 **Last Updated**: 2026-03-15  
-**Related**: OPT-001 (BuildKit cache mounts), Fresh disk issue on .91 (95% usage from 30GB BuildKit cache)
+**Related**: OPT-001 (BuildKit cache mounts), Fresh disk issue on a build server (95% usage from 30GB BuildKit cache)
 
 ---
 
 ## Problem Statement
 
-Docker BuildKit cache accumulates over time, especially on servers where `docker compose build --no-cache` is run frequently. On the test server (10.176.11.91), this led to:
+Docker BuildKit cache accumulates over time, especially on servers where `docker compose build --no-cache` is run frequently. On one build server this led to:
 
 - **95% disk usage** (only 2.8GB free on 50GB root volume)
 - **30GB BuildKit cache** from repeated full rebuilds
@@ -233,7 +233,7 @@ docker compose up -d
 - `scripts/docker-cleanup.sh` — Manual cleanup script
 - `scripts/check-disk-space.sh` — Disk monitoring
 - `scripts/setup-cleanup-cron.sh` — Cron job installer
-- `docs/OPT-001.md` — BuildKit cache optimization (if exists)
+- BuildKit cache optimization — the `# OPT-001` comments in `Makefile`
 
 ---
 

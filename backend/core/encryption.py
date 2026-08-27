@@ -33,7 +33,7 @@ def get_encryption_key() -> bytes:
         except PermissionError as e:
             logger.warning(f"Could not read encryption key from {ENCRYPTION_KEY_FILE}: {e}")
             logger.warning("Will generate in-memory key (NOT RECOMMENDED for production)")
-            logger.warning("Fix with: docker exec -u root bnkscope-backend chown -R bnkforge:bnkforge /app/keys")
+            logger.warning("Fix with: docker exec -u root bnkscope-backend chown -R bnkscope:bnkscope /app/keys")
         except Exception as e:
             logger.warning(f"Error reading encryption key: {e}")
 
@@ -49,7 +49,7 @@ def get_encryption_key() -> bytes:
     except PermissionError as e:
         logger.warning(f"Could not persist encryption key to {ENCRYPTION_KEY_FILE}: {e}")
         logger.warning("Using in-memory key (will change on restart - NOT RECOMMENDED for production)")
-        logger.warning("Fix with: docker exec -u root bnkscope-backend chown -R bnkforge:bnkforge /app/keys")
+        logger.warning("Fix with: docker exec -u root bnkscope-backend chown -R bnkscope:bnkscope /app/keys")
     except Exception as e:
         logger.warning(f"Could not persist encryption key to {ENCRYPTION_KEY_FILE}: {e}")
         logger.warning("Using in-memory key (will change on restart - NOT RECOMMENDED)")

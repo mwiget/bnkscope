@@ -46,7 +46,7 @@ venv.bak/
 *.db
 *.sqlite
 *.sqlite3
-bnk_forge.db
+bnk_forge.db          # bnk-forge's database name — still ignored, never ours
 file::memory:
 
 # Logs
@@ -80,8 +80,6 @@ examples/
 *.tfplan
 
 # Secrets and credentials
-secrets/*
-!secrets/README.md
 *.key
 *.pem
 *.crt
@@ -269,10 +267,9 @@ cli/go/
 .ssh/
 # Anchored to the repo root on purpose: an unanchored `secrets/` also matches
 # frontend-v2/src/components/secrets/, which silently removed a shipped component.
-# `/secrets/*` rather than `/secrets/`: git will not descend into an excluded
-# directory, so the tracked placeholder README could not be negated otherwise.
-/secrets/*
-!/secrets/README.md
+# The directory itself is bnk-forge's (deploy-time FAR credentials) and is gone;
+# the rule stays so a stray local one is never committed.
+/secrets/
 .agent/
 .agent-prev/
 .agent-local/

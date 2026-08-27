@@ -5,6 +5,12 @@
  * Prevents key collisions and typos, makes keys easy to find and update.
  *
  * Key naming convention: STORAGE_KEYS.CATEGORY_PURPOSE
+ *
+ * The `bnk-forge-*` prefixes are bnk-forge's and are deliberately kept: the
+ * string IS the key, so renaming one silently discards whatever the user had
+ * saved under it (selected cluster, filters, onboarding-complete). New keys use
+ * `bnkscope-*`; old ones are only worth renaming alongside a migration that
+ * reads the old key once and writes the new one.
  */
 
 export const STORAGE_KEYS = {

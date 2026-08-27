@@ -5,7 +5,7 @@
  * a raw command input for advanced users, and parsed table output rendering.
  *
  * Architecture: Exec directly into the `debug` container of f5-tmm-* pods
- * via kubeconfig. Does NOT use the bnk-forge-agent pod (Decision D4).
+ * via kubeconfig. Does NOT use the agent pod (see qkview_service.py).
  *
  * F5 Docs: https://clouddocs.f5.com/bigip-next-for-kubernetes/latest/overviews/spk-tmm-debug.html
  */

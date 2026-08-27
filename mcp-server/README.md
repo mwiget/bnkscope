@@ -1,74 +1,27 @@
 # bnkscope MCP Server
 
-MCP (Model Context Protocol) server that exposes bnkscope's API as AI-accessible tools.
+An MCP (Model Context Protocol) server that exposes bnkscope's API to an AI
+assistant as **30 read-only tools**. It is a thin client over the REST API —
+there is no business logic here and no second path to your clusters.
 
-## Quick Start
+## Quick start
 
-### Docker (Recommended)
-
-The MCP server runs as a container alongside bnkscope:
-
-```bash
-# Included in standard deployment
-make deploy        # server
-make local-deploy  # laptop
-```
-
-Connect your AI assistant to: `https://<your-forge-host>/mcp`
-
-## Live MCP Smoke Validation (Slice 8)
-
-To complement unit/contract hardening, run a bounded **live runtime smoke** check
-against a deployed MCP endpoint:
+The MCP server runs as a container alongside bnkscope, on loopback:
 
 ```bash
-# direct MCP container (common on server host)
-make smoke-mcp-live
-
-# via reverse proxy TLS endpoint (self-signed cert)
-MCP_SMOKE_URL=https://localhost/mcp MCP_SMOKE_INSECURE_TLS=1 make smoke-mcp-live
+./bnkscope up            # starts it by default, on 127.0.0.1:8081
+./bnkscope up --no-mcp   # skip it
 ```
 
-Underlying script: `scripts/mcp_live_smoke.py`
+Point your AI assistant at `http://127.0.0.1:8081/mcp`.
 
-For an operator-facing two-layer check (container liveness + runtime readiness),
-use:
+> **There is no authentication, here or in the backend.** bnkscope is a
+> single-user local tool; the MCP server inherits that model exactly. Where it
+> listens is the only access control there is, which is why it binds loopback
+> and the backend does too. See the security section of the top-level
+> [README](../README.md).
 
-```bash
-make mcp-readiness
-```
-
-This intentionally keeps container health semantics stable while making runtime
-readiness verification explicit and repeatable.
-
-> **Important:** MCP endpoint reachability (`ping`) is **not** enough to prove
-> MCP runtime readiness. Tool calls require successful backend auth/bootstrap.
-
-### What it verifies
-
-1. MCP endpoint reachability + JSON-RPC protocol round-trip (`ping`)
-2. Tool discovery (`tools/list`) includes required governed tools
-3. Read-only governed tool execution succeeds (`system_version`, `list_clusters`)
-4. Failing governed tool call returns a structured MCP error envelope
-   (`error_class`, `retryable`, `next_action`, `status_code`)
-
-### Interpreting results (readiness truthfulness)
-
-- `ping` + `tools/list` pass, but `system_version`/`list_clusters` fail with `auth_error`:
-  MCP transport is up, but runtime auth/bootstrap is not ready.
-- Typical cause: MCP container credentials do not match current backend credentials
-  (for example after rotating admin password).
-- Action: set `MCP_USERNAME` / `MCP_PASSWORD` for the MCP service and recreate the
-  `mcp` container, then rerun smoke.
-
-### Scope boundaries (intentional)
-
-- This is a **small smoke suite**, not a full e2e framework
-- It focuses on low-risk/read-only checks plus one controlled failure-path check
-- It does **not** prove every tool, every auth role permutation, or every
-  environment-specific dependency path
-
-### Local Development
+### Local development
 
 ```bash
 cd mcp-server
@@ -78,127 +31,97 @@ pip install -e ".[dev]"
 pytest tests/
 ```
 
+Or from the repo root: `make test-mcp`.
+
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BNK_FORGE_API_URL` | `http://127.0.0.1:8000` | Backend API URL |
-| `BNK_FORGE_TOKEN` | (empty) | JWT token (overrides username/password) |
-| `BNK_FORGE_USERNAME` | `mcp` | Auto-login username (dedicated MCP service account) |
-| `BNK_FORGE_PASSWORD` | (none) | Auto-login password — must be set via `MCP_SERVICE_PASSWORD` env var; backend reconciles on every startup |
-| `MCP_PORT` | `8081` | Server listen port |
+| `BNKSCOPE_API_URL` | `http://127.0.0.1:8000` | Backend API URL |
+| `BNKSCOPE_API_TIMEOUT` | `30` | Per-request timeout, seconds |
+| `BNKSCOPE_VERIFY_SSL` | `false` | Verify TLS when the backend URL is https |
+| `MCP_HOST` | `127.0.0.1` | Listen address. A bare `0.0.0.0` would put an unauthenticated tool server on every interface |
+| `MCP_PORT` | `8081` | Listen port |
 | `MCP_LOG_LEVEL` | `INFO` | Logging level |
 
-### Runtime auth/bootstrap contract
+The `BNK_FORGE_*` spellings of the first three are bnk-forge's and still work as
+a fallback, so an existing environment file keeps running. Prefer `BNKSCOPE_*`.
 
-- MCP runtime is healthy only when **both** conditions are true:
-  1. MCP JSON-RPC endpoint responds (`ping`)
-  2. MCP can authenticate to backend and execute governed read-only tools
-- If backend admin password is changed (recommended), MCP credentials must be
-  updated too (`MCP_USERNAME` / `MCP_PASSWORD` or `BNK_FORGE_TOKEN`).
-- Without this alignment, the MCP container may look healthy at protocol level
-  while tool execution fails with backend login 401.
+## Live smoke validation
 
-### Credential rotation runbook (bounded)
-
-When backend admin password is rotated:
-
-1. Update MCP runtime credentials in environment (`MCP_USERNAME`, `MCP_PASSWORD`)
-2. Recreate MCP so new env values are applied:
+Unit and contract tests cover shape; this covers "is the deployed thing
+actually answering":
 
 ```bash
-# server/default compose
-make mcp-recreate
-
-# laptop/local overlay
-make local-mcp-recreate
+make smoke-mcp-live                                   # direct MCP container
+MCP_SMOKE_URL=http://127.0.0.1:8081/mcp make smoke-mcp-live
+make mcp-readiness                                    # container liveness + runtime readiness
 ```
 
-3. Verify MCP runtime truthfully:
+Underlying script: `scripts/mcp_live_smoke.py`.
 
-```bash
-make mcp-readiness
-```
+### What it verifies
 
-Expected interpretation:
-- MCP container liveness healthy + readiness smoke pass => MCP runtime ready
-- MCP container liveness healthy + readiness smoke fail => protocol is up, runtime not ready (usually auth/bootstrap drift)
+1. MCP endpoint reachability + JSON-RPC round-trip (`ping`)
+2. Tool discovery (`tools/list`) includes the required governed tools
+3. Read-only tool execution succeeds (`system_health`, `list_clusters`)
+4. A failing tool call returns a structured MCP error envelope
+   (`error_class`, `retryable`, `next_action`, `status_code`)
 
-## Tools (84 total)
+`ping` alone does not prove readiness — the protocol answers before the backend
+is reachable. A `ping` that passes while `list_clusters` fails with
+`transient_error` means the MCP container is up and the backend is not.
 
-### System (6 tools)
-`system_health`, `system_version`, `system_settings`, `list_users`, `system_queue_metrics`, `audit_log`
+### Scope boundaries (intentional)
 
-### Cluster Management (14 tools)
-`list_clusters`, `get_cluster`, `test_cluster_connectivity`, `scan_cluster`, `list_namespaces`, `list_resources`, `get_resource`, `get_pod_logs`, `describe_resource`, `get_cluster_events`, `get_node_metrics`, `get_pod_metrics`, `restart_pod`, `scale_deployment`
+This is a small smoke suite, not an e2e framework. It proves the transport, the
+catalog and one controlled failure path — not every tool against every cluster
+shape.
 
-### F5 BNK Operations (18 tools)
-`bnk_data`, `bnk_gateway_topology`, `bnk_health`, `bnk_policy_associations`, `a2a_discover_agents`, `tmm_list_pods`, `tmm_exec_command`, `tmm_configview`, `bnk_current_version`, `bnk_available_versions`, `bnk_upgrade_plan`, `bnk_upgrade_execute`, `bnk_upgrade_history`, `bnk_license_status`, `bnk_telemetry_report`, `bnk_recovery_cert_sync`, `bnk_platform_restart`, `bnk_recovery_status`
+## Tools (30, all read-only)
 
-### Diagnostics & Fleet (17 tools)
-`qkview_create`, `qkview_list`, `qkview_status`, `qkview_setup_certs`, `fleet_health`, `list_operators`, `drift_check`, `drift_history`, `list_snapshots`, `create_snapshot`, `compare_snapshots`, `list_runbooks`, `execute_runbook`, `dpf_detect`, `dpf_data`, `dpf_health`, `list_alert_channels`
+Every tool in the catalog is `risk_class: read_only`. Nothing here restarts a
+pod, scales a deployment, execs into a container or writes to a cluster —
+those operations exist in the HTTP API and the UI, deliberately not on the
+agent-facing surface.
 
-### Helm (11 tools)
-`helm_list_repos`, `helm_add_repo`, `helm_search_charts`, `helm_list_releases`, `helm_get_release`, `helm_get_values`, `helm_release_history`, `helm_install`, `helm_upgrade`, `helm_rollback`, `helm_uninstall`
+### system (2)
+`system_health`, `system_settings`
 
-### Config Management (4 tools)
-`config_export`, `config_diff`, `config_promote`, `config_import`
+### cluster_management (12)
+`list_clusters`, `get_cluster`, `list_namespaces`, `list_resources`,
+`get_resource`, `get_pod_logs`, `describe_resource`, `get_cluster_events`,
+`get_node_metrics`, `get_pod_metrics`, `rollout_history`, `rollout_status`
 
-### IaC Operations (14 tools)
-`list_projects`, `get_project`, `project_dependency_graph`, `list_project_modules`, `list_module_catalog`, `project_plan`, `project_apply`, `project_destroy`, `project_deploy_all`, `project_destroy_all`, `deployment_history`, `list_stacks`, `get_stack`, `deploy_stack`
+### bnk_operations (8)
+`bnk_data`, `bnk_gateway_topology`, `bnk_health`, `bnk_policy_associations`,
+`a2a_discover_agents`, `tmm_list_pods`, `tmm_configview`, `bnk_recovery_status`
 
-#### Registration tool response envelopes (Issue 2 — breaking change)
-
-`create_project` and `create_cluster` now return a consistent normalized envelope
-instead of the prior inconsistent flat / bare-object shapes. This is a **breaking
-change** coordinated with the awsbnkctl client.
-
-**`create_project`** (was: flat `{success, project_id, name, message, ...}`)
-```json
-{
-  "success": true,
-  "project": {"id": 39, "name": "my-project", "environment": "dev"},
-  "message": "Project created successfully"
-}
-```
-`project_id` is mapped to `project.id`. `success` and `message` are promoted to
-top level. All other fields nest under `project`.
-
-**`create_cluster`** (was: bare object `{id, name, project_id, status, ...}` with no `success`)
-```json
-{
-  "success": true,
-  "cluster": {"id": 12, "name": "prod-eks", "project_id": 39, "status": "active"},
-  "message": "Cluster registered; scan running in background."
-}
-```
-`message` (if present in backend object) is promoted to top level and removed from
-`cluster`. All other fields nest under `cluster`.
-
-Backend REST routes (`POST /api/projects` and `POST /api/projects/{id}/k8s/clusters`)
-are **unchanged** — normalization happens only at the MCP tool layer.
+### diagnostics_fleet (8)
+`qkview_list`, `qkview_status`, `cluster_connectivity`,
+`cluster_connectivity_batch`, `dpf_detect`, `dpf_data`, `dpf_health`,
+`list_alert_channels`
 
 ## Architecture
 
 ```
-AI Assistant ↔ MCP Protocol (Streamable HTTP) ↔ MCP Server (:8081) ↔ HTTP ↔ FastAPI Backend (:8000)
-                                                      ↑
-                                               Nginx Proxy (:443)
-                                               routes /mcp → :8081
+AI Assistant ↔ MCP (Streamable HTTP) ↔ MCP Server (:8081) ↔ HTTP ↔ FastAPI Backend (:8000)
 ```
 
-- **Transport**: Streamable HTTP (stateless) — production-ready, supports SSE streaming
-- **Auth**: Reuses bnkscope JWT tokens — auto-login with env credentials
-- **No business logic duplication**: All tools are thin wrappers over existing REST API
+- **Transport**: Streamable HTTP (stateless), supports SSE streaming
+- **Auth**: none, at either hop — see above
+- **No business logic duplication**: every tool is a thin wrapper over an existing REST route
 
-## Contract Hardening Conventions
+## Contract hardening conventions
 
-These rules are mandatory for MCP tool changes:
+Mandatory for MCP tool changes:
 
-1. **No guessed endpoints** — always verify route decorators in `backend/routes/**`.
-2. **Match parameter location** — if backend defines a value as query param, MCP must send it as `params`, not request JSON body.
-3. **Align to typed Tier-1 contracts first** — prioritize tools backed by response-model routes (system, clusters, connectivity, k8s resources, helm, fleet).
-4. **Use structured tool error semantics** — MCP client returns a stable envelope on backend errors:
+1. **No guessed endpoints** — verify the route decorator in `backend/routes/**`.
+2. **Match parameter location** — if the backend declares a value as a query
+   param, send it as `params`, not in the JSON body.
+3. **Prefer typed routes** — tools backed by a `response_model` first.
+4. **Use structured error semantics** — the client returns a stable envelope on
+   backend errors:
 
 ```json
 {
@@ -215,136 +138,84 @@ These rules are mandatory for MCP tool changes:
 }
 ```
 
-`error_class` values: `validation_error`, `auth_error`, `not_found`, `transient_error`, `server_error`, `request_error`.
+`error_class` values: `validation_error`, `auth_error`, `not_found`,
+`transient_error`, `server_error`, `request_error`.
 
-### Output contract truthfulness (Slice 7, bounded)
+### Output contract truthfulness (bounded)
 
-Request-shape and route-mapping governance is now complemented by **bounded output-shape
-verification** for a high-value governed subset:
+Output-shape verification covers the `system` and `cluster_management` typed
+routes: those tools return a truthful JSON serialization of the backend payload
+(structured error envelopes included) without silently dropping or rewrapping
+top-level contract fields. This is scoped on purpose and does not claim full
+output-contract verification for every tool.
 
-- `system` (typed Tier-1 outputs)
-- `cluster_management` (typed Tier-1 resource/connectivity/metrics/restart outputs)
-- selected `helm` tools with typed/structured responses commonly used by operators
-
-Current guarantee for this subset: MCP tools return a truthful JSON serialization of backend
-response payloads (including structured MCP error envelopes) without silently dropping or
-rewrapping critical top-level contract fields.
-
-This is intentionally scoped and does not claim full output-contract verification for all governed
-tools yet.
-
-## MCP Governance Tool Catalog (Slice 6)
-
-MCP hardening now includes a machine-readable governance catalog with **bounded, enforced scope**:
+## Governance tool catalog
 
 - **Canonical JSON artifact:** `mcp-server/tools/mcp_tool_catalog.json`
-- **Python source of truth used by tests:** `mcp-server/src/bnk_forge_mcp/tool_catalog.py`
+- **Python source of truth used by tests:** `mcp-server/src/bnkscope_mcp/tool_catalog.py`
 
-### Current scope boundary
+Governed modules — full catalog coverage is enforced by tests:
+`system`, `cluster_management`, `bnk_operations`, `diagnostics_fleet`. That is
+every module the server registers, so coverage is currently total; the mechanism
+stays in place so a new module cannot arrive uncatalogued.
 
-- **Full module coverage (governed):**
-  `system`, `cluster_management`, `helm`, `config_management`, `iac_operations`, `bnk_operations`
+Each entry carries: tool name and module, HTTP method + backend path template,
+auth expectation, risk class, query-vs-body usage, and lifecycle metadata
+(`stability`, `since_version`, `deprecated`, `replacement_tool`, `notes`).
 
-This is intentionally a truthful partial inventory, not a fake "100% all-tools" claim.
-Coverage expands in slices; non-governed modules remain out of bounded full-coverage guarantees.
-
-Each catalog entry includes:
-
-- tool name and module/domain
-- HTTP method + backend path template
-- auth expectation (as inferable from backend dependencies)
-- risk class
-- query-vs-body usage expectations
-- lifecycle metadata: `stability`, `since_version`, `deprecated`, `replacement_tool`
-- tier/notes for unusual contract behavior
+> **`auth_expectation` is historical.** It records the role the corresponding
+> bnk-forge route required (`viewer` / `operator` / `admin`). bnkscope removed
+> authentication entirely, so the field documents provenance and relative
+> sensitivity — it does not gate anything at runtime.
 
 ### Lifecycle metadata conventions (enforced)
 
 - `stability`: `experimental` | `stable` | `internal`
-- `since_version`: lightweight introduction marker for compatibility tracking
-- `deprecated`: boolean lifecycle flag
-- `replacement_tool`: optional, used when `deprecated=true` and direct replacement exists
+- `since_version`: lightweight introduction marker
+- `deprecated`: boolean
+- `replacement_tool`: required when `deprecated=true` and a direct replacement
+  exists; otherwise `notes` must carry explicit sunset justification
 
-If `deprecated=true`, catalog policy requires either:
+### Compatibility and deprecation policy
 
-1. a `replacement_tool`, or
-2. explicit deprecation/sunset justification in `notes`
+1. **Additive-first** — prefer additive changes; avoid silent removals/renames.
+2. **Deprecation trigger** — mark `deprecated=true` when superseded, keeping the
+   old invocation callable during the transition.
+3. **`replacement_tool` semantics** — must reference a real, different catalog
+   tool; non-deprecated tools must not set it.
+4. **Compatibility window** — deprecated entries keep transition guidance in
+   `notes` and stay callable until an explicit removal change.
+5. **`since_version`** — an introduction marker for consumers, not semver.
 
-This keeps deprecation decisions machine-readable and human-auditable without introducing a heavyweight versioning system.
-
-### Compatibility and deprecation policy (Slice 11)
-
-This is intentionally lightweight and enforceable:
-
-1. **Additive-first compatibility:**
-   - Prefer additive changes to existing tool behavior and outputs.
-   - Avoid silent tool removals/renames in normal hardening changes.
-
-2. **Deprecation trigger:**
-   - Mark a tool `deprecated=true` when it is superseded by a clearer tool name or semantics,
-     while keeping the old invocation callable during transition.
-
-3. **`replacement_tool` semantics:**
-   - When present, `replacement_tool` must reference a real, different catalog tool.
-   - Non-deprecated tools must not set `replacement_tool`.
-
-4. **Compatibility window communication:**
-   - Deprecated entries must keep explicit transition guidance in `notes`
-     (replacement and/or sunset/removal language).
-   - Deprecated tools remain callable until an explicit follow-up removal change.
-
-5. **`since_version` intent:**
-   - `since_version` is a lightweight introduction marker for consumers and support,
-     not a full semantic-versioning framework.
-
-Current bounded example:
-- `get_resource` is a deprecated compatibility alias of `describe_resource`.
-  New consumers should call `describe_resource`.
+Current bounded example: `get_resource` is a deprecated compatibility alias of
+`describe_resource`. New consumers should call `describe_resource`.
 
 ### Risk classes
 
-- `read_only`
-- `mutating`
-- `destructive`
+`read_only`, `mutating`, `destructive` — all 30 current tools are `read_only`.
 
-### Auth expectation conventions (enforced)
+## Observability contract
 
-- `viewer`: backend route uses `require_viewer`
-- `operator`: backend route uses `require_operator`
-- `admin`: backend route uses `require_admin`
-- `cluster_owner` / `module_owner` / `project_owner`: backend route ownership dependencies
-- `authenticated`: route is auth-gated via `get_current_user` without fixed role dependency
+Structured invocation logs at two layers:
 
-Allowed values are enforced in catalog tests (`ALLOWED_AUTH_EXPECTATIONS` in
-`src/bnk_forge_mcp/tool_catalog.py`).
-
-Bounded auth trust checks now also validate governed-module auth expectations
-against known backend dependency patterns in route files (representative static
-verification, not full dependency introspection).
-
-> Example correction from this verification pass: `system_health` is cataloged as
-> `admin` because `/api/system/*` routes are protected by router-level
-> `Depends(require_admin)`.
-
-### MCP invocation observability contract (Slice 4)
-
-MCP now emits structured invocation logs at two layers:
-
-1. **Tool boundary** (`bnk_forge_mcp.observability`):
-   - `event`: `tool_invocation_start` / `tool_invocation_result` /
-     `tool_invocation_blocked`
-   - `invocation_id`
-   - `tool_name`, `module`
-   - catalog context when available: `risk_class`, `auth_expectation`,
-     `backend_method`, `backend_path`
+1. **Tool boundary** (`bnkscope_mcp.observability`)
+   - `event`: `tool_invocation_start` / `tool_invocation_result` / `tool_invocation_blocked`
+   - `invocation_id`, `tool_name`, `module`
+   - catalog context when available: `risk_class`, `auth_expectation`, `backend_method`, `backend_path`
    - `success`, `duration_ms`, `error_class` (on failure)
    - `reason` (on `tool_invocation_blocked`)
+2. **HTTP client boundary** (`bnkscope_mcp.client`)
+   - `method`, `path`, `success`, `duration_ms`
+   - `error_class`, `status_code` (on failure)
+
+Logs deliberately exclude tool arguments, request bodies, tokens and backend
+response payloads — useful for debugging without leaking cluster contents.
 
 ### Destructive-tool confirmation gate
 
-Tools catalogued `risk_class: destructive` are enforced at runtime, not only
-logged. Each one carries an extra `confirm: bool = False` argument, and calling
-it without `confirm=true` returns a `CONFIRMATION_REQUIRED` refusal without
+Tools catalogued `risk_class: destructive` are enforced at runtime, not merely
+logged. Each carries an extra `confirm: bool = False` argument, and calling one
+without `confirm=true` returns a `CONFIRMATION_REQUIRED` refusal without
 touching the backend:
 
 ```json
@@ -359,37 +230,30 @@ touching the backend:
 }
 ```
 
-This matters because the `mcp` service account is `role=admin`: without a gate,
-one tool call from an autonomous agent deletes a real project or cluster with no
-second factor. The gate is applied where tools are registered, so it follows the
-catalog — mark a new tool `destructive` and it is gated automatically.
+**No tool is currently destructive**, so the gate does not fire today. It is
+kept armed because the backend has no authentication: if a mutating tool is ever
+catalogued, one call from an autonomous agent would reach a live cluster with no
+second factor. The gate follows the catalog — mark a tool `destructive` and it
+is gated automatically, with no change at the registration site.
 
-`confirm` is distinct from a tool's own `force` argument. `force` bypasses
-*backend* safety checks (e.g. deleting an active project); `confirm` asserts
-*intent* to run a destructive operation at all.
+`confirm` is distinct from a tool's own `force` argument: `force` bypasses a
+*backend* safety check; `confirm` asserts *intent* to run the operation at all.
 
-Set `BNK_FORGE_MCP_REQUIRE_CONFIRMATION=false` to disable the gate for trusted
-non-interactive teardown (CI tearing down its own fixtures). It is read per
-call, and defaults to enabled.
+Set `BNKSCOPE_MCP_REQUIRE_CONFIRMATION=false` to disable the gate for trusted
+non-interactive use. It is read per call and defaults to enabled.
 
-2. **HTTP client boundary** (`bnk_forge_mcp.client`):
-   - `method`, `path`
-   - `success`, `duration_ms`
-   - `error_class`, `status_code` (on failure)
+## Maintenance workflow
 
-Security boundary: logs intentionally do **not** include tool args, request bodies,
-tokens, passwords, or backend response payloads. This keeps logs useful for
-debugging while avoiding obvious secret leakage.
+Required when changing covered tools:
 
-### Maintenance workflow (required when changing covered tools)
-
-1. Update MCP tool implementation under `src/bnk_forge_mcp/tools/`.
-2. Verify backend route signature (method/path + query vs JSON body) in `backend/routes/**`.
-3. Update `tool_catalog.py` entry and regenerate/align `tools/mcp_tool_catalog.json`.
-4. If adding/changing a tool in governed modules (`system`, `cluster_management`, `helm`, `config_management`, `iac_operations`, `bnk_operations`),
-   catalog coverage is mandatory (tests fail if missing).
-5. Update mapping checks in `tests/test_tool_mapping_hardening.py` for mutating/request-shape-sensitive tools.
-6. Run targeted checks:
+1. Update the tool implementation under `src/bnkscope_mcp/tools/`.
+2. Verify the backend route signature (method/path, query vs JSON body) in `backend/routes/**`.
+3. Update the `tool_catalog.py` entry and regenerate `tools/mcp_tool_catalog.json`.
+4. Adding or changing a tool in a governed module makes catalog coverage
+   mandatory — the tests fail if it is missing.
+5. Update mapping checks in `tests/test_tool_mapping_hardening.py` for
+   request-shape-sensitive tools.
+6. Run the targeted checks:
 
 ```bash
 PYTHONPATH=src python3 -m pytest \
@@ -400,21 +264,20 @@ PYTHONPATH=src python3 -m pytest \
   tests/test_client_error_semantics.py \
   tests/test_url_audit.py
 
-# optional live runtime sanity (requires running MCP deployment)
-python3 ../scripts/mcp_live_smoke.py --mcp-url http://localhost:8081/mcp
+# optional live runtime sanity (requires a running MCP deployment)
+python3 ../scripts/mcp_live_smoke.py --mcp-url http://127.0.0.1:8081/mcp
 ```
 
 ### Enforced policy guarantees
 
-- JSON artifact must exactly match Python catalog source.
-- Every catalog entry must use allowed risk class values.
-- Every catalog entry must use allowed lifecycle stability values.
-- Every catalog entry must include lifecycle metadata (`since_version`, `deprecated`, optional `replacement_tool`).
-- `replacement_tool` (when set) must point to a real, different tool.
+- The JSON artifact must exactly match the Python catalog source.
+- Every entry must use an allowed risk class and stability value.
+- Every entry must include lifecycle metadata (`since_version`, `deprecated`, optional `replacement_tool`).
+- `replacement_tool`, when set, must point to a real, different tool.
 - Non-deprecated entries must not define `replacement_tool`.
-- Deprecated entries must document compatibility/sunset guidance in `notes`.
-- Every catalog entry must map to a known tool URL/method in URL audit ground truth.
-- Every catalog entry must exist in registered MCP tools.
-- Every tool in governed modules must be present in catalog.
+- Deprecated entries must document sunset guidance in `notes`.
+- Every entry must map to a known tool URL/method in the URL audit ground truth.
+- Every entry must exist in the registered MCP tools.
+- Every tool in a governed module must be present in the catalog.
 
-This makes catalog drift fail loudly in CI for declared scope while allowing incremental expansion elsewhere.
+Catalog drift fails loudly in CI.

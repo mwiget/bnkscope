@@ -1,13 +1,14 @@
 # bnkscope — a troubleshooting/monitoring-only fork of bnk-forge
 
-**Status:** in progress — Phase 0 and Phase 1 landed · **Branch:** `feat/bnkscope`
-**Target repo:** `github.com/mwiget/bnkscope` (private) · **Date:** 2026-08-23
+**Status:** complete — all eight phases landed · **Repo:** [`github.com/mwiget/bnkscope`](https://github.com/mwiget/bnkscope)
+**Written:** 2026-08-23, as a plan. Kept as written, with outcomes recorded per
+phase — including where the plan was wrong.
 
 > `bnk-forge` grew from "look at my BNK cluster" into a deployment platform:
 > OpenTofu pipelines, module catalogs, blueprints, fleets, RBAC, benchmarks, DPU
 > provisioning. This plan strips it back to the one job that made it useful in an
 > incident — **look at the cluster, understand what's wrong** — and folds in
-> [`tmmscope`](../../tmmscope) for real-time TMM telemetry.
+> [`tmmscope`](https://github.com/mwiget/tmmscope) for real-time TMM telemetry.
 >
 > Same move `tmmscope` already made once: *"Bundling a full Prometheus + Grafana
 > stack into bnk-forge bloated a troubleshooting tool with an observability

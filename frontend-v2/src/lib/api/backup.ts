@@ -11,7 +11,7 @@ import type {
 
 function getFilenameFromDisposition(contentDisposition: string | undefined): string {
   if (!contentDisposition) {
-    return 'bnkforge-backup.tar.gz';
+    return 'bnkscope-backup.tar.gz';
   }
 
   const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
@@ -20,7 +20,7 @@ function getFilenameFromDisposition(contentDisposition: string | undefined): str
   }
 
   const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
-  return filenameMatch?.[1] ?? 'bnkforge-backup.tar.gz';
+  return filenameMatch?.[1] ?? 'bnkscope-backup.tar.gz';
 }
 
 export const backupApi = {

@@ -8,8 +8,8 @@ container that exists in every f5-tmm-* pod. Supports:
   - bdt_cli (networking: ARP, routes, connections)
   - Raw command execution
 
-Architecture: Direct pod exec via kubeconfig. Does NOT use the bnk-forge-agent
-pod (that's for CWC REST API access). See Decision D4.
+Architecture: Direct pod exec via kubeconfig. Does NOT use the agent
+pod (that's for CWC REST API access).
 
 All endpoints are read-only diagnostics.
 """

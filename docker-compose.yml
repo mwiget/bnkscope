@@ -157,7 +157,7 @@ services:
     network_mode: host
     logging: *default-logging
     environment:
-      BNK_FORGE_API_URL: http://127.0.0.1:8000
+      BNKSCOPE_API_URL: http://127.0.0.1:8000
       # Explicit: the server defaults to 0.0.0.0, and under host networking
       # nothing else was pinning it.
       MCP_HOST: 127.0.0.1

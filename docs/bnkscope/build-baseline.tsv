@@ -12,6 +12,6 @@ bnk-forge-agent:latest	1.61GB
 bnk-forge-api:latest	829MB
 bnk-forge-beat:latest	664MB
 bnk-forge-frontend:latest	138MB
-bnk-forge-mcp:latest	268MB
+bnkscope-mcp:latest	268MB
 bnk-forge-proxy:latest	93.9MB
 bnk-forge-worker:latest	1.46GB

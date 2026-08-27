@@ -1,7 +1,18 @@
 # E2E-CRITICAL-004: MCP End-to-End Sanity Coverage Plan
 
-**Status:** Complete
-**Version:** 2.11.0
+**Status:** superseded — kept as a bnk-forge-era record
+**Version:** 2.11.0 (bnk-forge's version line, not this repository's)
+
+> **Read this as history, not as reference.** This plan was written against
+> bnk-forge's 68-tool MCP surface. bnkscope registers **30 tools, all
+> read-only**; the Helm, Config Management, IaC and Fleet domains named below no
+> longer exist, and `mcp-server/tests/test_e2e_smoke.py` was never carried over.
+>
+> What actually ships today is `scripts/mcp_live_smoke.py`, driven by
+> `make smoke-mcp-live` and `make mcp-readiness`. It covers the same intent —
+> protocol round-trip, tool discovery, a real read-only invocation, and one
+> controlled failure path — against the real deployment. See
+> [`mcp-server/README.md`](../mcp-server/README.md).
 
 ---
 

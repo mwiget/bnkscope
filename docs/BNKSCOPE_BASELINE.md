@@ -171,7 +171,7 @@ and a running container, and Phase 6 targets it directly.
 | `bnk-forge-worker` | 1.46 GB | **delete** |
 | `bnk-forge-api` | 829 MB | keep (shrinks — no tofu/aws-cli/helm) |
 | `bnk-forge-beat` | 664 MB | **delete** |
-| `bnk-forge-mcp` | 268 MB | keep (subset) |
+| `bnkscope-mcp` | 268 MB | keep (subset) |
 | `bnk-forge-frontend` | 138 MB | keep |
 | `bnk-forge-proxy` | 93.9 MB | optional |
 | **Total** | **5.06 GB** | → ~1.1 GB projected |

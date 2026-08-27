@@ -46,16 +46,27 @@ _POLL_TIMEOUT_SEC = 130.0
 _REQUIRED_CNI_PLUGINS = ("macvlan", "host-device", "ipvlan")
 
 
+# The `bnk-forge-*` label values below are a wire contract, not a leftover to
+# clean up: they identify probe pods that bnk-forge already created in real
+# clusters, and our own cleanup selects on them. Renaming here would strand
+# those pods with nothing left to reap them.
+
+
 def _resolve_image(image: str | None) -> str:
     """Pick the container image for the probe pod.
 
-    Precedence: explicit request override -> ``BNK_FORGE_NODEPROBE_IMAGE``
-    env var -> ``busybox:1.36.1``. Airgapped environments must mirror the
-    fallback image or set the env override to a mirrored path.
+    Precedence: explicit request override -> ``BNKSCOPE_NODEPROBE_IMAGE`` env
+    var (or bnk-forge's ``BNK_FORGE_NODEPROBE_IMAGE``) -> ``busybox:1.36.1``.
+    Airgapped environments must mirror the fallback image or set the env
+    override to a mirrored path.
     """
     if image:
         return image
-    return os.environ.get("BNK_FORGE_NODEPROBE_IMAGE") or _DEFAULT_IMAGE
+    return (
+        os.environ.get("BNKSCOPE_NODEPROBE_IMAGE")
+        or os.environ.get("BNK_FORGE_NODEPROBE_IMAGE")
+        or _DEFAULT_IMAGE
+    )
 
 
 def _probe_script() -> str:

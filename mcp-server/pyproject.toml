@@ -1,17 +1,17 @@
 [project]
-name = "bnk-forge-mcp"
+name = "bnkscope-mcp"
 version = "0.1.0"
 description = "MCP Server for bnkscope — AI-accessible tools for F5 BIG-IP Next for Kubernetes"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "bnkscope Team" }]
 
 dependencies = [
     # Capped below 2: the 2.x major removed `mcp.server.fastmcp`, which
     # server.py imports. An uncapped `>=1.26.0` resolved to 2.0.0 as soon as it
     # was published, which broke the image (ModuleNotFoundError at startup, so
-    # bnk-forge-mcp crash-looped) and the test job together, on a commit that
+    # bnkscope-mcp crash-looped) and the test job together, on a commit that
     # changed neither. Lifting the cap means porting off mcp.server.fastmcp.
     "mcp>=1.26.0,<2",
     "httpx>=0.27.0",
@@ -27,14 +27,14 @@ dev = [
 ]
 
 [project.scripts]
-bnk-forge-mcp = "bnk_forge_mcp.server:main"
+bnkscope-mcp = "bnkscope_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bnk_forge_mcp"]
+packages = ["src/bnkscope_mcp"]
 
 [tool.ruff]
 target-version = "py311"

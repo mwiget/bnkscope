@@ -89,6 +89,6 @@ services:
   mcp:
     network_mode: "service:backend"
     environment:
-      BNK_FORGE_API_URL: http://127.0.0.1:8000
+      BNKSCOPE_API_URL: http://127.0.0.1:8000
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8081"

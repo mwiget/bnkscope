@@ -11,8 +11,8 @@ from httpx import Response
 
 respx = pytest.importorskip("respx", reason="respx package not installed in this environment")
 
-from bnk_forge_mcp.client import APIError, BnkscopeClient
-from bnk_forge_mcp.config import MCPConfig
+from bnkscope_mcp.client import APIError, BnkscopeClient
+from bnkscope_mcp.config import MCPConfig
 
 @pytest.fixture
 def config() -> MCPConfig:
@@ -183,7 +183,7 @@ async def test_client_logs_structured_success_without_payloads(
     client: BnkscopeClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level("INFO", logger="bnk_forge_mcp.client")
+    caplog.set_level("INFO", logger="bnkscope_mcp.client")
     respx.get("http://test-backend:8000/api/system/health").mock(
         return_value=Response(200, json={"status": "healthy"})
     )
@@ -197,7 +197,7 @@ async def test_client_logs_structured_failure_without_payloads(
     client: BnkscopeClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level("INFO", logger="bnk_forge_mcp.client")
+    caplog.set_level("INFO", logger="bnkscope_mcp.client")
     respx.post("http://test-backend:8000/api/secure").mock(
         return_value=Response(403, json={"detail": "forbidden", "token": "dont-log-me"})
     )

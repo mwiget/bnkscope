@@ -204,10 +204,10 @@ class TestMCPToolURLs:
 
     def test_tool_count_matches_registered(self) -> None:
         """The audit list should match the number of tools actually registered."""
-        pytest.importorskip("bnk_forge_mcp", reason="bnk_forge_mcp not installed (requires Python >=3.11)")
+        pytest.importorskip("bnkscope_mcp", reason="bnkscope_mcp not installed (requires Python >=3.11)")
         pytest.importorskip("mcp", reason="mcp package not installed in this test environment")
-        from bnk_forge_mcp.config import MCPConfig
-        from bnk_forge_mcp.server import create_server
+        from bnkscope_mcp.config import MCPConfig
+        from bnkscope_mcp.server import create_server
 
         config = MCPConfig(
             api_base_url="http://test:8000",

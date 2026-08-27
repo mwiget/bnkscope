@@ -1,6 +1,26 @@
 # Changelog
 
-All notable changes to BNK-Forge v2.
+## bnkscope
+
+Releases of bnkscope, newest first. The release workflow
+(`.github/workflows/release.yml`) inserts each entry directly below this
+paragraph — it splices in after the first `---`, so do not move that separator.
+bnkscope starts at **0.1.0**; nothing has been released yet.
+
+---
+
+## bnk-forge (v2.x) — kept for provenance
+
+Everything below this line is **[bnk-forge](https://github.com/f5devcentral/bnk-forge)'s**
+changelog, not bnkscope's. bnkscope is a fork of bnk-forge with the deployment
+platform removed (see [NOTICE](NOTICE) and
+[`docs/BNKSCOPE_PLAN.md`](docs/BNKSCOPE_PLAN.md)), and most of the code here has
+this history behind it — so it is kept rather than deleted.
+
+Read it accordingly: these entries describe features that bnkscope **no longer
+has** (projects, OpenTofu pipelines, module catalogs, fleets, RBAC, benchmarks,
+licensing), and the version numbers are bnk-forge's, unrelated to the `VERSION`
+file in this repository. The last entry predates the fork.
 
 ---
 

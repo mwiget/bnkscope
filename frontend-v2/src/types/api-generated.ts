@@ -3531,7 +3531,7 @@ export interface components {
             namespace: string;
             /**
              * Image
-             * @description Override for the tuner container image. Defaults to the BNK_FORGE_HUGEPAGES_IMAGE env var, then busybox:1.36.1. Airgapped clusters should point this at a mirrored image.
+             * @description Override for the tuner container image. Defaults to the BNKSCOPE_HUGEPAGES_IMAGE env var, then busybox:1.36.1. Airgapped clusters should point this at a mirrored image.
              */
             image?: string | null;
         };
@@ -4046,7 +4046,7 @@ export interface components {
             namespace: string;
             /**
              * Image
-             * @description Override for the probe container image. Defaults to the BNK_FORGE_NODEPROBE_IMAGE env var, then busybox:1.36.1. Airgapped clusters should point this at a mirrored image.
+             * @description Override for the probe container image. Defaults to the BNKSCOPE_NODEPROBE_IMAGE env var, then busybox:1.36.1. Airgapped clusters should point this at a mirrored image.
              */
             image?: string | null;
         };
