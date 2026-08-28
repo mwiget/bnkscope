@@ -5,7 +5,7 @@ this directory listing is the index, and each filename carries the ID and title.
 
 Two ID prefixes appear here, both live:
 
-- **`D-NNN`** — decisions carried over from bnk-forge and continued here, currently through `D-040`. Numbering is sequential and never reused, but **the set is sparse**: only some of bnk-forge's records came across, because the rest documented subsystems the fork removed. A `D-NNN` cited inside another ADR may therefore have no file here, and the citing ADR should say so. `D-001`..`D-004` predate the per-file format and were never split out at all.
+- **`D-NNN`** — decisions carried over from bnk-forge and continued here, currently through `D-041`. Numbering is sequential and never reused, but **the set is sparse**: only some of bnk-forge's records came across, because the rest documented subsystems the fork removed. A `D-NNN` cited inside another ADR may therefore have no file here, and the citing ADR should say so. `D-001`..`D-004` predate the per-file format and were never split out at all.
 - **`ADR-NNN`** — newer records numbered after the GitHub issue they resolve, created by `scripts/new-adr.sh --issue N --title "..."`.
 
 ## Format

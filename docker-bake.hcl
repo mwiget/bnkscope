@@ -20,8 +20,17 @@ variable "SOURCE_URL" {
   default = "https://github.com/mwiget/bnkscope"
 }
 
+// The one image bnkscope publishes. It is the only one that has to be pulled by
+// something other than the machine that built it: the exporter runs inside the
+// operator's f5-tmm pods, so their clusters need it from a registry.
+//
+// bnkscope's own three — api, frontend, mcp — are built from source by
+// `./bnkscope up` and are not published. Publishing them bought nothing: the
+// compose file, the telemetry configs and VERSION are all bind-mounted from the
+// checkout, so a released image still needs the repository next to it. See
+// D-041.
 group "default" {
-  targets = ["api", "frontend", "mcp", "exporter"]
+  targets = ["exporter"]
 }
 
 target "_common" {
@@ -34,46 +43,7 @@ target "_common" {
   }
 }
 
-target "_backend" {
-  inherits   = ["_common"]
-  // Repo root, not ./backend — the VERSION file lives above backend/ and the
-  // image needs it (see backend/Dockerfile). Matches the frontend target.
-  context    = "."
-  dockerfile = "backend/Dockerfile"
-}
-
-target "api" {
-  inherits = ["_backend"]
-  target   = "api"
-  tags = concat(
-    ["${REGISTRY}/bnkscope-api:${VERSION}"],
-    ROLLING_TAG != "" ? ["${REGISTRY}/bnkscope-api:${ROLLING_TAG}"] : [],
-  )
-}
-
-target "frontend" {
-  inherits   = ["_common"]
-  context    = "."
-  dockerfile = "frontend-v2/Dockerfile"
-  tags = concat(
-    ["${REGISTRY}/bnkscope-frontend:${VERSION}"],
-    ROLLING_TAG != "" ? ["${REGISTRY}/bnkscope-frontend:${ROLLING_TAG}"] : [],
-  )
-}
-
-target "mcp" {
-  inherits = ["_common"]
-  context  = "./mcp-server"
-  tags = concat(
-    ["${REGISTRY}/bnkscope-mcp:${VERSION}"],
-    ROLLING_TAG != "" ? ["${REGISTRY}/bnkscope-mcp:${ROLLING_TAG}"] : [],
-  )
-}
-
-// The tmm-stat-exporter sidecar. Unlike the other three this one does not run
-// here — it is injected into f5-tmm pods on the operator's clusters, so those
-// clusters must be able to pull it. Its own Go module; context is its
-// directory, not the repo root.
+// Its own Go module, so the context is its directory rather than the repo root.
 target "exporter" {
   inherits = ["_common"]
   context  = "./tmm-stat-exporter"

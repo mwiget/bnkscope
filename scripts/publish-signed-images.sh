@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# publish-signed-images.sh — Keyless cosign signing + SBOM + provenance for the bnkscope images.
+# publish-signed-images.sh — Keyless cosign signing + SBOM + provenance for the published image.
 #
 # Workflow:
 #   1. Caller MUST have already pushed images via `make push-images` (or push-customer-build).
@@ -87,18 +87,15 @@ if [[ "$DRY_RUN" == "0" ]]; then
 fi
 
 # ─── Image list ───────────────────────────────────────────────────────────────
-# The images docker-bake.hcl builds. bnkscope publishes two, plus the optional
-# MCP server and the tmm-stat-exporter sidecar; the worker, beat, proxy and
-# operator images went with the subsystems they served (bnkscope Phases 1-4).
+# The image docker-bake.hcl publishes — one, and only one.
 #
-# The exporter is the one image that does not run on the operator's machine: it
-# is pulled by their clusters. That makes a signature and an SBOM matter more
-# here, not less.
+# bnkscope's own api, frontend and mcp images are built from source on the
+# machine that runs them and are never pushed (D-041). The exporter is the
+# exception because it is the exception in kind: it runs inside the operator's
+# f5-tmm pods, on clusters that must pull it from a registry. An image crossing
+# that boundary is exactly the one worth signing.
 
 IMAGES=(
-  "bnkscope-api"
-  "bnkscope-frontend"
-  "bnkscope-mcp"
   "bnkscope-tmm-stat-exporter"
 )
 

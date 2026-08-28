@@ -19,17 +19,13 @@ cd bnkscope
 
 Open the URL it prints. There is no login.
 
-`up` builds the images from source, which is what you want in a checkout you are
-working in. On a host that only needs to *run* bnkscope, pull the ones a release
-already published instead — multi-arch, signed, with an SBOM:
+bnkscope builds its own images from source, every time, on the machine that runs
+it. There is nothing to pull: the compose file, the telemetry configuration and
+the dashboards live in this checkout and are read from it at runtime, so a
+prebuilt image would still need the repository sitting next to it.
 
-```bash
-make deploy-release                  # the latest release
-make deploy-release VERSION=0.1.2    # a specific one
-```
-
-Same ports, same data, same everything else — it hands off to `bnkscope up`
-after pulling. See [Running a release](#running-a-release).
+The one image it *does* publish is the TMM exporter, because that one runs
+somewhere else — inside your clusters. See [TMM Live](#tmm-live).
 
 ---
 
@@ -153,7 +149,6 @@ accepted and then failing at connect time. Supply a bearer token instead
 
 ```
 bnkscope up [--no-build]     start it; negotiates ports, probes your kubeconfig
-                             (--no-build skips the build; see Running a release)
            [--listen ADDR]   bind the UI to ADDR instead of 127.0.0.1
            [--no-telemetry]  skip Prometheus + Grafana (they run by default)
            [--no-mcp]        skip the read-only MCP server (loopback, 8081)
@@ -177,32 +172,6 @@ put. Read them back with `bnkscope endpoint` rather than hard-coding them.
 BNKSCOPE_UI_PORT=9090 ./bnkscope up      # ask for a specific port
 BNKSCOPE_REGISTRY_CACHE=on ./bnkscope up # require the regcachectl pull-through cache
 ```
-
-### Running a release
-
-Building from source is the default and stays the default. But it is a Vite
-build and a Python image on every machine and every upgrade, and a release has
-already built them — for `linux/amd64` and `linux/arm64`, signed keylessly with
-an SBOM and SLSA provenance attached.
-
-```bash
-make deploy-release                        # latest
-make deploy-release VERSION=0.1.2          # a specific release; `v0.1.2` works too
-make deploy-release ARGS="--listen 0.0.0.0"
-
-./scripts/deploy-release.sh 0.1.2 --listen 0.0.0.0   # the same thing directly
-```
-
-It pulls the three images, verifies their signatures if `cosign` is installed,
-and then runs `bnkscope up --no-build`. Everything else is unchanged: the same
-ports are negotiated, the same discovery file is written, the same data volume
-is used. `down`, `status`, `logs` and `endpoint` work as they always did.
-
-The images live in `docker-compose.release.yml`, which overrides nothing but
-`image:` — the volumes, ports, healthchecks and profiles stay in the one base
-file, so a release install cannot drift from what a source build runs.
-
-Going back is `./bnkscope up`.
 
 ---
 

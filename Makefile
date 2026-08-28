@@ -124,7 +124,7 @@ PYTEST_COV  = --cov --cov-fail-under=0
 
 .PHONY: install update status logs \
         test test-backend test-backend-unit test-backend-component test-backend-legacy test-frontend \
-        test-contracts exporter-test exporter-vet exporter-image deploy-release \
+        test-contracts exporter-test exporter-vet exporter-image \
         test-integration test-integration-full build-frontend-check smoke-mcp-live mcp-readiness mcp-recreate \
         lint lint-backend lint-frontend shellcheck coverage quick-check pre-push push install-hooks setup-hooks \
         dev-setup security-audit docker-check docker-verify docker-validate frontend-deps \
@@ -467,22 +467,6 @@ test-mcp:
 	@cd mcp-server && \
 	  if [ -d ".venv" ]; then source .venv/bin/activate; fi && \
 	  python -m pytest tests/ --tb=short -q
-
-# ─── Deploy from published images ────────────────────────────────────────────
-# The default everywhere else in this Makefile is to build from source, which is
-# right for a checkout you are working in. This is the other case: a host that
-# only wants to run bnkscope, without a Vite build and a Python image per
-# machine and per upgrade.
-#
-#   make deploy-release                 # the latest release
-#   make deploy-release VERSION=0.1.2   # a specific one
-#   make deploy-release ARGS="--listen 0.0.0.0"
-#
-# The script pulls, verifies signatures when cosign is present, and then hands
-# off to ./bnkscope up --no-build — it never drives compose itself.
-
-deploy-release:
-	@./scripts/deploy-release.sh $(VERSION) $(ARGS)
 
 # ─── tmm-stat-exporter (Go) ──────────────────────────────────────────────────
 # The sidecar TMM Live injects. Its own module, and the only Go in the repo, so
@@ -980,7 +964,7 @@ help:
 	@echo ""
 	@echo "Distribution & Registry (Multi-Arch)"
 	@echo "  make buildx-setup          Set up multi-arch builder with QEMU (one-time)"
-	@echo "  make push-images           Build + push multi-arch images (amd64 + arm64)"
+	@echo "  make push-images           Build + push the multi-arch exporter (amd64 + arm64)"
 	@echo ""
 	@echo "Disk & Cleanup"
 	@echo "  make check-disk            Check disk space (warns if > 70%, fails if > 85%)"
@@ -1021,6 +1005,9 @@ buildx-setup:
 	@docker buildx inspect $(BUILDX_BUILDER) --bootstrap 2>/dev/null | grep -oP 'linux/\w+' | sort -u | sed 's/^/    /'
 
 # Push multi-arch images to a container registry
+# The exporter is the only image bnkscope publishes — its own three are built
+# from source on the machine that runs them (D-041).
+#
 # Usage: make push-images BNKSCOPE_REGISTRY=ghcr.io/your-org
 push-images:
 	@echo ""
@@ -1047,18 +1034,18 @@ push-images:
 	echo "  Platforms: $(PLATFORMS)"; \
 	echo "  Builder:   $(BUILDX_BUILDER)"; \
 	echo ""; \
-	echo "=== Building + pushing all images in parallel (docker buildx bake) ==="; \
+	echo "=== Building + pushing the exporter (docker buildx bake) ==="; \
 	GIT_REVISION=$$(git rev-parse HEAD 2>/dev/null || echo unknown); \
 	REGISTRY=$$REGISTRY VERSION=$$VERSION PLATFORMS=$(PLATFORMS) GIT_REVISION=$$GIT_REVISION \
 	  docker buildx bake -f docker-bake.hcl --builder $(BUILDX_BUILDER) --push && \
 	echo ""; \
 	echo "========================================="; \
-	echo "  ✅ All images pushed to $$REGISTRY"; \
+	echo "  ✅ Exporter pushed to $$REGISTRY"; \
 	echo "  Tags:      $$VERSION, latest"; \
 	echo "  Platforms: $(PLATFORMS)"; \
 	echo ""; \
 	echo "  Verify manifests:"; \
-	echo "    docker manifest inspect $${REGISTRY}/bnkscope-api:$${VERSION}"; \
+	echo "    docker manifest inspect $${REGISTRY}/bnkscope-tmm-stat-exporter:$${VERSION}"; \
 	echo "========================================="
 publish-signed:
 	@if [ -z "$${BNKSCOPE_REGISTRY:-}" ]; then \

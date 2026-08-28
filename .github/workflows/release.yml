@@ -312,20 +312,23 @@ jobs:
           echo "| CI | passed |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Notes | ${{ inputs.release_notes }} |" >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Publish images to ghcr (final releases only) ──────────────────────────────
-  # Two problems, one job:
-  #   1. Until now, release.yml cut a GitHub release but never built/pushed
-  #      container images — no ghcr images existed per release.
-  #   2. The frontend bakes its displayed version (__APP_VERSION__, from the
-  #      root VERSION file) at image-build time. Checking out the just-created
-  #      release tag (VERSION already bumped by release-manual)
-  #      and building from THIS commit makes the baked UI version equal the
-  #      release tag instead of drifting from it.
+  # ── Publish the exporter image to ghcr (final releases only) ─────────────────
+  # One image, multi-arch, signed. `bake default` resolves to the exporter alone:
+  # bnkscope's own api/frontend/mcp are built from source by `./bnkscope up` on
+  # the machine that runs them, and publishing them bought nothing, because the
+  # compose file, the telemetry configs and VERSION are bind-mounted from the
+  # checkout either way (D-041).
+  #
+  # The exporter is different in kind — it runs inside the operator's f5-tmm
+  # pods, so their clusters pull it from here — and it is checked out at the
+  # release tag so the image's version label matches the release rather than
+  # drifting from it.
+  #
   # Keyless cosign signing (Sigstore/Fulcio/Rekor via OIDC) needs no secrets
   # beyond the built-in GITHUB_TOKEN: id-token: write mints the OIDC token
   # cosign uses, packages: write lets it push to ghcr.io/<owner-of-this-repo>.
   release-publish:
-    name: "Publish images v${{ needs.preflight.outputs.new_version }}"
+    name: "Publish exporter v${{ needs.preflight.outputs.new_version }}"
     needs:
       - preflight
       - release-manual
@@ -371,7 +374,7 @@ jobs:
       - name: Install syft
         uses: anchore/sbom-action/download-syft@v0
 
-      - name: Build and push all images (docker-bake.hcl)
+      - name: Build and push the exporter (docker-bake.hcl)
         # `-f docker-bake.hcl` is load-bearing. With no -f, bake also reads
         # docker-compose.yml, and that file requires BNKSCOPE_GRAFANA_PASSWORD
         # (`bnkscope up` generates it) — so bake fails while *parsing*, before
@@ -386,7 +389,7 @@ jobs:
           GIT_REVISION: ${{ steps.rev.outputs.sha }}
           ROLLING_TAG: latest
 
-      - name: Sign, SBOM, and attest all images (keyless cosign)
+      - name: Sign, SBOM, and attest (keyless cosign)
         run: bash scripts/publish-signed-images.sh --execute
         env:
           # The names publish-signed-images.sh actually requires — it exits 1
@@ -396,10 +399,10 @@ jobs:
 
       - name: Publish summary
         run: |
-          echo "## Published images v${{ needs.preflight.outputs.new_version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Published image v${{ needs.preflight.outputs.new_version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image | Tags |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
-          for name in bnkscope-api bnkscope-frontend bnkscope-mcp bnkscope-tmm-stat-exporter; do
+          for name in bnkscope-tmm-stat-exporter; do
             echo "| ${name} | ${{ env.REGISTRY }}/${name}:${{ needs.preflight.outputs.new_version }}, :latest |" >> "$GITHUB_STEP_SUMMARY"
           done

@@ -42,6 +42,9 @@ and build and publish the image from here.**
   anything above it and is not part of `make test`.
 - `docker-bake.hcl` gains an `exporter` target in the default group; release
   builds it multi-arch, signs it, and attaches an SBOM with the other three.
+  (Amended by [D-041](D-041-publish-only-the-exporter.md): the default group is
+  now the exporter *alone* — the other three are built from source and no longer
+  published at all.)
 - `ci.yml` runs `go vet`, `go test` and a Docker build on any change under
   `tmm-stat-exporter/`. Not advisory, unlike the MCP job: this image runs inside
   the operator's TMM pods, so a broken build is found by someone else's cluster.
