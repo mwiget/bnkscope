@@ -7,8 +7,13 @@
 // sidecar's listening port is unreachable from outside the pod and cannot be
 // scraped. Instead the exporter PUSHES outbound: when -remote-write is set it
 // samples tmstat every -interval and sends a Prometheus remote_write request to
-// that endpoint (e.g. Prometheus's --web.enable-remote-write-receiver). The
-// local /metrics endpoint is still served for in-netns debugging.
+// that endpoint (e.g. Prometheus's --web.enable-remote-write-receiver).
+//
+// /metrics is still served, and is not only for in-netns debugging: a client
+// that can open a `pods/portforward` to this pod reaches it too, because
+// port-forward enters the pod's network namespace rather than dialling the pod
+// IP from outside. It is gzipped when asked for, which is what makes pulling it
+// on a 2s interval reasonable over a phone or tablet link.
 //
 // Each table becomes a metric family f5tmm_<table>_<column>; key columns become
 // labels. Rows sharing a key are aggregated (rule-2 columns summed) so label
@@ -26,9 +31,11 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -418,9 +425,10 @@ func isLinkLocal(ip string) bool {
 	return strings.HasPrefix(ip, "169.254.") || strings.HasPrefix(ip, "fe80:")
 }
 
-func (e *exporter) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+func (e *exporter) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.Header().Set("Vary", "Accept-Encoding")
 	samples, err := e.collect()
 	up := 1
 	if err != nil {
@@ -444,7 +452,46 @@ func (e *exporter) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		b.WriteString(strconv.FormatFloat(s.value, 'g', -1, 64))
 		b.WriteByte('\n')
 	}
-	_, _ = w.Write([]byte(b.String()))
+	if !acceptsGzip(r) {
+		_, _ = io.WriteString(w, b.String())
+		return
+	}
+	// The whole point of the exposition format is that it repeats itself, so it
+	// compresses roughly 20x: a 286 KB scrape of a busy tmm leaves here as 14 KB.
+	// That is the difference between a practical and an impractical scrape
+	// interval for a client pulling this over a `pods/portforward` tunnel on a
+	// phone or a tablet, which is the case this exists for. A Prometheus scrape
+	// gets it for free — net/http's Transport sends Accept-Encoding and
+	// transparently decodes the reply.
+	w.Header().Set("Content-Encoding", "gzip")
+	zw := gzip.NewWriter(w)
+	if _, err := io.WriteString(zw, b.String()); err != nil {
+		log.Printf("tmm-stat-exporter: gzip write failed: %v", err)
+		return
+	}
+	if err := zw.Close(); err != nil {
+		log.Printf("tmm-stat-exporter: gzip flush failed: %v", err)
+	}
+}
+
+// acceptsGzip reports whether the caller advertised gzip in Accept-Encoding.
+//
+// r is nil on the -once path, which prints the body to stdout and must stay
+// plain text. An explicit `gzip;q=0` is a refusal, and is honoured: it is the
+// only way a caller has to ask for the uncompressed body.
+func acceptsGzip(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		coding, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if !strings.EqualFold(strings.TrimSpace(coding), "gzip") {
+			continue
+		}
+		q := strings.TrimSpace(params)
+		return !strings.EqualFold(q, "q=0") && !strings.EqualFold(q, "q=0.0")
+	}
+	return false
 }
 
 // pushLoop samples and remote-writes on a fixed interval until ctx is done.
