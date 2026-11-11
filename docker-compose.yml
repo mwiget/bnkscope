@@ -82,6 +82,12 @@ services:
       BNKSCOPE_LOKI_PUSH_URL: http://127.0.0.1:${BNKSCOPE_LOKI_PORT:-3100}/loki/api/v1/push
       BNKSCOPE_PROMETHEUS_PORT: ${BNKSCOPE_PROMETHEUS_PORT:-}
       BNKSCOPE_GRAFANA_PORT: ${BNKSCOPE_GRAFANA_PORT:-}
+      # Site overrides for exporter injection (tmmscope_inject_service): pin
+      # the remote_write URL and the exporter's table/segment lists where the
+      # defaults do not fit, e.g. TMM on a DPU. Empty means the defaults.
+      BNKSCOPE_REMOTE_WRITE_URL: ${BNKSCOPE_REMOTE_WRITE_URL:-}
+      BNKSCOPE_TMSTAT_TABLES: ${BNKSCOPE_TMSTAT_TABLES:-}
+      BNKSCOPE_TMSTAT_SEGMENT: ${BNKSCOPE_TMSTAT_SEGMENT:-}
       # Grafana is published on this address only, so it is also the address
       # the backend has to probe — see telemetry_service._telemetry_host.
       BNKSCOPE_UI_BIND: ${BNKSCOPE_UI_BIND:-127.0.0.1}
@@ -193,6 +199,8 @@ services:
       - "${BNKSCOPE_PROMETHEUS_PORT:-9491}:9090"
     volumes:
       - ./telemetry/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Optional site scrape jobs (see telemetry/prometheus/prometheus.yml).
+      - ./telemetry/prometheus/scrape.d:/etc/prometheus/scrape.d:ro
       - bnkscope-prometheus:/prometheus
     restart: unless-stopped
     healthcheck:
@@ -233,6 +241,9 @@ services:
       # authentication whose boundary is the bind address.
       GF_USERS_VIEWERS_CAN_EDIT: "true"
       GF_USERS_DEFAULT_THEME: "dark"
+      # Grafana refuses a dashboard refresh below 5s by default. The live
+      # dashboards are fed every ~2s and are meant to be watched, not polled.
+      GF_DASHBOARDS_MIN_REFRESH_INTERVAL: "1s"
       # Generated per install by `bnkscope up`. The old default was the
       # literal string "bnkscope", which is in this file, in git, and worked
       # over the network — Grafana admin can add a datasource pointing at the

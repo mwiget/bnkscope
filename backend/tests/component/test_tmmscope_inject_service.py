@@ -247,6 +247,52 @@ class TestInject:
         assert list(body["spec"].keys()) == ["ephemeralContainers"]
         assert body["spec"]["ephemeralContainers"][0]["name"] == inject_svc.SIDECAR_NAME
 
+    def test_site_settings_pin_url_tables_and_segments(self, patched, monkeypatch):
+        # A DPU-hosted TMM: the heuristic's address is unreachable from the pod
+        # and the offload tables live outside the defaults. The site pins all
+        # three once, and a bare request (what the UI sends) uses them.
+        pod = make_pod()
+        self._targets(monkeypatch, pod)
+        patched.read_namespaced_pod.return_value = pod
+        monkeypatch.setenv("BNKSCOPE_REMOTE_WRITE_URL", "http://192.0.2.10:9491/api/v1/write")
+        monkeypatch.setenv("BNKSCOPE_TMSTAT_TABLES", "tmm_stat,doca_flow_fwd")
+        monkeypatch.setenv("BNKSCOPE_TMSTAT_SEGMENT", "/var/tmstat/blade/tmm0,/var/tmstat/blade/tmm1")
+
+        result = inject_svc.inject(MagicMock(), "dpu")
+
+        assert result["remote_write_url"] == "http://192.0.2.10:9491/api/v1/write"
+        assert "BNKSCOPE_REMOTE_WRITE_URL" in result["remote_write_derivation"]
+        patched.read_node.assert_not_called()  # the heuristic never ran
+        body = patched.patch_namespaced_pod_ephemeralcontainers.call_args.kwargs["body"]
+        env = {e["name"]: e.get("value") for e in body["spec"]["ephemeralContainers"][0]["env"]}
+        assert env["TMSTAT_REMOTE_WRITE_URL"] == "http://192.0.2.10:9491/api/v1/write"
+        assert env["TMSTAT_TABLES"] == "tmm_stat,doca_flow_fwd"
+        assert env["TMSTAT_SEGMENT"] == "/var/tmstat/blade/tmm0,/var/tmstat/blade/tmm1"
+
+    def test_explicit_url_beats_the_site_setting(self, patched, monkeypatch):
+        pod = make_pod()
+        self._targets(monkeypatch, pod)
+        patched.read_namespaced_pod.return_value = pod
+        monkeypatch.setenv("BNKSCOPE_REMOTE_WRITE_URL", "http://192.0.2.10:9491/api/v1/write")
+
+        result = inject_svc.inject(MagicMock(), "dpu", remote_write_url="http://h/w")
+
+        assert result["remote_write_url"] == "http://h/w"
+        assert result["remote_write_derivation"] is None
+
+    def test_unset_site_settings_leave_exporter_defaults(self, patched, monkeypatch):
+        pod = make_pod()
+        self._targets(monkeypatch, pod)
+        patched.read_namespaced_pod.return_value = pod
+        for name in ("BNKSCOPE_REMOTE_WRITE_URL", "BNKSCOPE_TMSTAT_TABLES", "BNKSCOPE_TMSTAT_SEGMENT"):
+            monkeypatch.setenv(name, "  ")  # blank counts as unset
+
+        inject_svc.inject(MagicMock(), "infra", remote_write_url="http://h/w")
+
+        body = patched.patch_namespaced_pod_ephemeralcontainers.call_args.kwargs["body"]
+        names = [e["name"] for e in body["spec"]["ephemeralContainers"][0]["env"]]
+        assert "TMSTAT_TABLES" not in names and "TMSTAT_SEGMENT" not in names
+
     def test_is_idempotent(self, patched, monkeypatch):
         # Already carrying the exporter — inject again and it must not be added
         # twice, which would fail the patch and look like a broken cluster.

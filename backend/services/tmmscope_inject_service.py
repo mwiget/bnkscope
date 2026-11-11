@@ -31,6 +31,7 @@ anything a caller can influence: accepting an image would turn this endpoint int
 
 import json
 import logging
+import os
 from typing import Any
 
 from kubernetes import client as k8s_client
@@ -71,6 +72,30 @@ TMSTAT_MOUNT = "/var/tmstat"
 DSSM_CERT_VOLUME = "tls-tmm-mds-clt-volume"
 DSSM_CERT_MOUNT = "/tls/tmm/mds/clt"
 
+#: Site overrides, read from the backend's environment at injection time.
+#:
+#: An ephemeral container's env is immutable, so a wrong value costs a TMM
+#: restart to correct. These let a site pin what the heuristics would otherwise
+#: guess, once, where the stack is started, so the UI's one-click path is safe:
+#:
+#:   - the remote_write URL, for clusters where `derive_remote_write_host` picks
+#:     an address the pod cannot actually use (e.g. TMM on a DPU, where the
+#:     pod's kernel default route is TMM itself and the node's /24 gateway is
+#:     not this host). An explicit URL in the request still wins.
+#:   - the exporter's table and segment lists, for builds that keep counters
+#:     the defaults do not cover (DOCA offload tables, one segment per thread).
+#:
+#: Unset means the exporter's own defaults, exactly as before.
+ENV_REMOTE_WRITE_URL = "BNKSCOPE_REMOTE_WRITE_URL"
+ENV_TMSTAT_TABLES = "BNKSCOPE_TMSTAT_TABLES"
+ENV_TMSTAT_SEGMENT = "BNKSCOPE_TMSTAT_SEGMENT"
+
+
+def _site_setting(name: str) -> str | None:
+    """A site override from the environment; blank counts as unset."""
+    value = os.environ.get(name, "").strip()
+    return value or None
+
 
 def _downward(name: str, field_path: str) -> dict[str, Any]:
     return {
@@ -84,6 +109,8 @@ def build_sidecar(
     remote_write_url: str,
     *,
     dssm_cert: bool = False,
+    tables: str | None = None,
+    segments: str | None = None,
 ) -> dict[str, Any]:
     """The ephemeral container spec.
 
@@ -105,16 +132,23 @@ def build_sidecar(
             {"name": DSSM_CERT_VOLUME, "mountPath": DSSM_CERT_MOUNT, "readOnly": True}
         )
 
+    env: list[dict[str, Any]] = [
+        _downward("POD_NAME", "metadata.name"),
+        _downward("NODE_NAME", "spec.nodeName"),
+        {"name": "TMSTAT_REMOTE_WRITE_URL", "value": remote_write_url},
+        {"name": "TMSTAT_EXTERNAL_LABELS", "value": labels},
+    ]
+    # Only when a site set them: absent, the exporter keeps its own defaults.
+    if tables:
+        env.append({"name": "TMSTAT_TABLES", "value": tables})
+    if segments:
+        env.append({"name": "TMSTAT_SEGMENT", "value": segments})
+
     return {
         "name": SIDECAR_NAME,
         "image": EXPORTER_IMAGE,
         "imagePullPolicy": "IfNotPresent",
-        "env": [
-            _downward("POD_NAME", "metadata.name"),
-            _downward("NODE_NAME", "spec.nodeName"),
-            {"name": "TMSTAT_REMOTE_WRITE_URL", "value": remote_write_url},
-            {"name": "TMSTAT_EXTERNAL_LABELS", "value": labels},
-        ],
+        "env": env,
         # Reads a shared segment read-only and pushes outbound. It needs nothing
         # else, so it is given nothing else.
         "securityContext": {
@@ -711,6 +745,12 @@ def inject(
     failed: list[dict[str, str]] = []
     derivation: str | None = None
     url = remote_write_url
+    if not url:
+        url = _site_setting(ENV_REMOTE_WRITE_URL)
+        if url:
+            derivation = f"site setting {ENV_REMOTE_WRITE_URL}"
+    tables = _site_setting(ENV_TMSTAT_TABLES)
+    segments = _site_setting(ENV_TMSTAT_SEGMENT)
 
     for meta in targets:
         name, namespace = meta["name"], meta["namespace"]
@@ -738,6 +778,8 @@ def inject(
             cluster_label,
             url,
             dssm_cert=_has_volume(pod, DSSM_CERT_VOLUME),
+            tables=tables,
+            segments=segments,
         )
         try:
             core_v1.patch_namespaced_pod_ephemeralcontainers(
