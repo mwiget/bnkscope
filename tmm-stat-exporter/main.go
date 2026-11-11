@@ -7,11 +7,17 @@
 // sidecar's listening port is unreachable from outside the pod and cannot be
 // scraped. Instead the exporter PUSHES outbound: when -remote-write is set it
 // samples tmstat every -interval and sends a Prometheus remote_write request to
-// that endpoint (e.g. Prometheus's --web.enable-remote-write-receiver). The
-// local /metrics endpoint is still served for in-netns debugging.
+// that endpoint (e.g. Prometheus's --web.enable-remote-write-receiver).
+//
+// /metrics is still served, and is not only for in-netns debugging: a client
+// that can open a `pods/portforward` to this pod reaches it too, because
+// port-forward enters the pod's network namespace rather than dialling the pod
+// IP from outside. It is gzipped when asked for, which is what makes pulling it
+// on a 2s interval reasonable over a phone or tablet link.
 //
 // Each table becomes a metric family f5tmm_<table>_<column>; key columns become
-// labels. Rows sharing a key are aggregated (rule-2 columns summed) so label
+// labels. Rows sharing a key are aggregated (rule-2 columns summed), within a
+// segment and across the segments listed in -segment, so label
 // sets stay unique.
 //
 // Every metric is emitted as a GAUGE (no _total suffix, TYPE gauge). tmstat's
@@ -26,9 +32,11 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -150,6 +158,9 @@ type sample struct {
 	metric string
 	labels []label
 	value  float64
+	// additive marks a counter column (tmstat rule 2): when the same row shows
+	// up in more than one segment, its values are summed. See mergeSegments.
+	additive bool
 	// global marks a cluster-shared series (the DSSM token counters): its
 	// per-instance external labels (pod, node) are dropped at remote_write so
 	// every pod's exporter reports the one shared counter as a single series.
@@ -183,8 +194,65 @@ func (e *exporter) collect() ([]sample, error) {
 		})
 		out = append(out, segSamples...)
 	}
+	if len(e.segments) > 1 {
+		out = mergeSegments(out)
+	}
 	// Appended as one contiguous block so the family gets a single TYPE line.
 	return append(out, health...), primaryErr
+}
+
+// mergeSegments folds the samples of several segments into one series per
+// (metric, labels), the way tmctl presents a directory of segments as one table.
+//
+// tmm keeps one segment per thread (blade/tmm0, tmm1, …). A table such as
+// virtual_server_stat has the same rows in each, holding that thread's share,
+// so reading more than one segment used to emit the same series twice with
+// different values, which remote_write rejects and a text scrape cannot parse.
+// The merge follows the segment's own column rules, the same ones Rows applies
+// within a segment: additive counters (rule 2) are summed, and for anything
+// else (a configured value, a status, a shared DSSM token) the first segment's
+// value stands.
+//
+// Families come out contiguous, in order of first appearance, so each still
+// gets exactly one TYPE line even when a later segment adds rows to a family
+// the first one started (doca_flow_fwd keeps one direction per thread).
+func mergeSegments(in []sample) []sample {
+	type family struct {
+		samples []sample
+		index   map[string]int // label set -> position in samples
+	}
+	var order []string
+	families := make(map[string]*family)
+	var key strings.Builder
+	for _, s := range in {
+		f := families[s.metric]
+		if f == nil {
+			f = &family{index: make(map[string]int)}
+			families[s.metric] = f
+			order = append(order, s.metric)
+		}
+		key.Reset()
+		for _, l := range s.labels {
+			key.WriteString(l.name)
+			key.WriteByte(0)
+			key.WriteString(l.value)
+			key.WriteByte(0)
+		}
+		k := key.String()
+		if i, seen := f.index[k]; seen {
+			if s.additive {
+				f.samples[i].value += s.value
+			}
+			continue
+		}
+		f.index[k] = len(f.samples)
+		f.samples = append(f.samples, s)
+	}
+	out := make([]sample, 0, len(in))
+	for _, m := range order {
+		out = append(out, families[m].samples...)
+	}
+	return out
 }
 
 // collectSegment reads one tmstat segment and produces its samples. A table the
@@ -243,7 +311,7 @@ func (e *exporter) collectSegment(path string) ([]sample, error) {
 					}
 					lbls = append(lbls, label{sanitize(kc.Name), v})
 				}
-				out = append(out, sample{metric: metric, labels: lbls, value: r.Float(c)})
+				out = append(out, sample{metric: metric, labels: lbls, value: r.Float(c), additive: c.IsCounter()})
 			}
 		}
 	}
@@ -418,9 +486,10 @@ func isLinkLocal(ip string) bool {
 	return strings.HasPrefix(ip, "169.254.") || strings.HasPrefix(ip, "fe80:")
 }
 
-func (e *exporter) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+func (e *exporter) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.Header().Set("Vary", "Accept-Encoding")
 	samples, err := e.collect()
 	up := 1
 	if err != nil {
@@ -444,7 +513,46 @@ func (e *exporter) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		b.WriteString(strconv.FormatFloat(s.value, 'g', -1, 64))
 		b.WriteByte('\n')
 	}
-	_, _ = w.Write([]byte(b.String()))
+	if !acceptsGzip(r) {
+		_, _ = io.WriteString(w, b.String())
+		return
+	}
+	// The whole point of the exposition format is that it repeats itself, so it
+	// compresses roughly 20x: a 286 KB scrape of a busy tmm leaves here as 14 KB.
+	// That is the difference between a practical and an impractical scrape
+	// interval for a client pulling this over a `pods/portforward` tunnel on a
+	// phone or a tablet, which is the case this exists for. A Prometheus scrape
+	// gets it for free — net/http's Transport sends Accept-Encoding and
+	// transparently decodes the reply.
+	w.Header().Set("Content-Encoding", "gzip")
+	zw := gzip.NewWriter(w)
+	if _, err := io.WriteString(zw, b.String()); err != nil {
+		log.Printf("tmm-stat-exporter: gzip write failed: %v", err)
+		return
+	}
+	if err := zw.Close(); err != nil {
+		log.Printf("tmm-stat-exporter: gzip flush failed: %v", err)
+	}
+}
+
+// acceptsGzip reports whether the caller advertised gzip in Accept-Encoding.
+//
+// r is nil on the -once path, which prints the body to stdout and must stay
+// plain text. An explicit `gzip;q=0` is a refusal, and is honoured: it is the
+// only way a caller has to ask for the uncompressed body.
+func acceptsGzip(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		coding, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if !strings.EqualFold(strings.TrimSpace(coding), "gzip") {
+			continue
+		}
+		q := strings.TrimSpace(params)
+		return !strings.EqualFold(q, "q=0") && !strings.EqualFold(q, "q=0.0")
+	}
+	return false
 }
 
 // pushLoop samples and remote-writes on a fixed interval until ctx is done.
