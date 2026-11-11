@@ -57,6 +57,9 @@ logs/
 # Docker volumes and data
 .docker/
 docker-compose.override.yml
+# Site scrape jobs for the bundled Prometheus: addresses on someone's network.
+# Only the *.yml.example files are tracked.
+telemetry/prometheus/scrape.d/*.yml
 # OPT-001: Smart build script stores last-build commit hash
 .build-hash
 

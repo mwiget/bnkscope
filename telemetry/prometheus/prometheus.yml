@@ -12,4 +12,13 @@ global:
   scrape_interval: 15s
   external_labels:
     source: tmmscope
-# No scrape_configs: all series arrive via remote_write at /api/v1/write.
+# No scrape_configs here: TMM series arrive via remote_write at /api/v1/write.
+#
+# Optional site scrape jobs — things on your own network that CAN be scraped,
+# such as a DPU's DOCA Telemetry Service or a node-exporter — go in scrape.d/,
+# one file per site, each holding a top-level `scrape_configs:` list. The
+# directory ships with examples only (*.yml.example); real files are
+# git-ignored, and a glob that matches nothing is not an error. After adding or
+# changing one: `docker kill -s HUP bnkscope-prometheus`.
+scrape_config_files:
+  - /etc/prometheus/scrape.d/*.yml

@@ -17,6 +17,14 @@ they push outbound to this host via `remote_write`. That is what
 `--web.enable-remote-write-receiver` is for, and why there are no
 `scrape_configs`.
 
+The one exception is opt-in: `prometheus/scrape.d/*.yml` holds **site scrape
+jobs** for things on your own network that *can* be scraped — a DPU's DOCA
+Telemetry Service, a load generator's node-exporter. The directory ships
+examples only (`*.yml.example`); real files are git-ignored. After adding or
+editing one, `docker kill -s HUP bnkscope-prometheus`. The `DPU offload — live`
+dashboard (`grafana/dashboards/dpu-offload.json`, not from tmmscope) reads what
+`scrape.d/dts.yml.example` produces.
+
 Retention is 24h on purpose: this is a live-monitoring window, not a long-term
 store, and it means a destroyed cluster cleans itself up.
 

@@ -1,0 +1,128 @@
+# Example site scrape jobs for the "DPU offload — live" dashboard.
+#
+#   cp dts.yml.example mysite.yml      # *.yml here is git-ignored
+#   $EDITOR mysite.yml
+#   docker kill -s HUP bnkscope-prometheus
+#
+# Each file in this directory is a Prometheus `scrape_config_files` fragment:
+# one top-level `scrape_configs:` list. The bundled Prometheus scrapes from the
+# compose bridge network, so targets must be reachable from this host.
+#
+# What the dashboard expects after relabelling:
+#   dts_eth_{rx,tx}_bytes{source,port}     port = p0 | p1 | pf0hpf | <SF representor>
+#   dts_eth_{rx,tx}_bytes{...,leg}         leg  = external | internal  (TMM's two SF representors)
+#   ib_port_state{source,port="p0"|"p1"}   4 = link up
+#   dev_internal_queue_oob{source,port}    hairpin drops
+#   node_cpu_seconds_total{job="loadgen",host}
+#   nginx_http_requests_total{tenant,org}  optional: requests/s at the origins (nginx-prometheus-exporter)
+#
+# Optional, where one DPU serves one tenant: put `labels: { tenant: "a", org: "...", dpu: "DPU1" }` on that
+# DPU's target below. The dashboard then names the DPU's series "tenant a DPU1" instead of the node suffix,
+# and copies the labels onto TMM's series of the same node.
+#
+# DOCA Telemetry Service (DTS) on a BlueField-3 returns ~27,000 series per
+# scrape (4 MB, uncompressed). Do not ingest it whole: the first rule below is a
+# keep-list and everything else is dropped. What its metrics look like:
+#   * sysfs counters carry the device in the metric NAME: p0_eth_rx_bytes,
+#     pf0hpf_eth_rx_bytes, en3f0pf0sf<N>_eth_rx_bytes. On an SF representor
+#     these include hardware-forwarded bytes. There is no p1_eth_* family.
+#   * ethtool counters (rx_bytes_phy, dev_internal_queue_oob, ...) are exported
+#     for ONE physical port, labelled data_type="ethtool_event_p0" but
+#     device_name="p1" — and the values are p1's. Trust device_name.
+#   * `source` is the DPU's node name; it equals the `node` label that
+#     tmm-stat-exporter puts on TMM's series.
+#
+# Three things are site facts you must fill in, per DPU:
+#   1. the SF representors of TMM's external and internal legs. They are
+#      assigned when the TMM pod starts and CHANGE WHEN IT RESTARTS. On DPF:
+#        kubectl -n dpf-operator-system exec <sfc-controller pod> -- \
+#          ovs-vsctl --columns=name,external_ids list interface | grep -B1 f5-tmm
+#      (external_ids:dpf-id ends in "<tmm pod>/external" or "/internal")
+#   2. the RDMA port index of p0 and p1 on the e-switch device: `rdma link show`
+#      on the DPU prints e.g. "mlx5_bond_0/147 ... netdev p0".
+#   3. the DPUs' DTS addresses (port 9189).
+scrape_configs:
+  - job_name: dts
+    scrape_interval: 2s      # DTS refreshes about once a second; 2s costs it no measurable CPU
+    scrape_timeout: 2s
+    static_configs:
+      - targets: ["192.0.2.11:9189"]   # DPU A
+      - targets: ["192.0.2.12:9189"]   # DPU B
+    metric_relabel_configs:
+      # Keep-list. List every SF number used in step 3 below.
+      - source_labels: [__name__]
+        regex: (p0|pf0hpf|en3f0pf0sf(101|102|103|104))_eth_(rx|tx)_(bytes|packets)|(rx|tx)_bytes_phy|link_down_events_phy|dev_internal_queue_oob|ib_port_state
+        action: keep
+      # sysfs counters: lift the device out of the metric name.
+      - source_labels: [__name__]
+        regex: (p0|pf0hpf|en3f0pf0sf\d+)_eth_.+
+        target_label: port
+        replacement: $1
+      # TMM's legs, per DPU: <end of the DPU's node name>;<SF representor>.
+      - source_labels: [source, port]
+        regex: .*-aa-aa-aa;en3f0pf0sf101
+        target_label: leg
+        replacement: external
+      - source_labels: [source, port]
+        regex: .*-aa-aa-aa;en3f0pf0sf102
+        target_label: leg
+        replacement: internal
+      - source_labels: [source, port]
+        regex: .*-bb-bb-bb;en3f0pf0sf103
+        target_label: leg
+        replacement: external
+      - source_labels: [source, port]
+        regex: .*-bb-bb-bb;en3f0pf0sf104
+        target_label: leg
+        replacement: internal
+      - source_labels: [port, leg]
+        regex: en3f0pf0sf\d+;
+        action: drop
+      # ethtool counters: physical ports only, named by device_name.
+      - source_labels: [__name__, device_name]
+        regex: (?:[rt]x_bytes_phy|link_down_events_phy|dev_internal_queue_oob);(p[01])
+        target_label: port
+        replacement: $1
+      - source_labels: [__name__, port]
+        regex: (?:[rt]x_bytes_phy|link_down_events_phy|dev_internal_queue_oob);
+        action: drop
+      # Uplink link state from the RDMA port table (indexes from `rdma link show`).
+      - source_labels: [__name__, hca, port]
+        regex: ib_port_state;mlx5_bond_0;147
+        target_label: port
+        replacement: p0
+      - source_labels: [__name__, hca, port]
+        regex: ib_port_state;mlx5_bond_0;277
+        target_label: port
+        replacement: p1
+      - source_labels: [__name__, port]
+        regex: ib_port_state;\d+
+        action: drop
+      # One family for every port; p1 comes from its phy counters (on an uplink,
+      # the sysfs and phy byte counters are the same number).
+      - source_labels: [__name__]
+        regex: .+_eth_((?:rx|tx)_(?:bytes|packets))
+        target_label: __name__
+        replacement: dts_eth_$1
+      - source_labels: [__name__, port]
+        regex: (rx|tx)_bytes_phy;p1
+        target_label: __name__
+        replacement: dts_eth_${1}_bytes
+      - regex: device_name|data_type|hca
+        action: labeldrop
+
+  # The load generator's node-exporter, CPU only. `collect[]` keeps the scrape
+  # small enough for a 2s interval.
+  - job_name: loadgen
+    scrape_interval: 2s
+    scrape_timeout: 2s
+    params:
+      "collect[]": [cpu, loadavg]
+    static_configs:
+      - targets: ["192.0.2.20:9100"]
+        labels:
+          host: loadgen
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: node_cpu_seconds_total|node_load1
+        action: keep

@@ -1,0 +1,1514 @@
+{
+  "id": null,
+  "uid": "dpu-offload",
+  "title": "DPU offload — live",
+  "description": "Hardware-offloaded throughput on BlueField DPUs (DOCA Telemetry Service) next to what TMM's software path sees, and requests/s at the origins. Needs a site scrape job: see telemetry/prometheus/scrape.d/dts.yml.example. Where that job puts a `tenant` label on a DPU's target (one tenant per DPU), every series of that DPU is named after the tenant.",
+  "tags": [
+    "tmm",
+    "telemetry",
+    "dpu"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "2s",
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "2s",
+      "5s",
+      "10s",
+      "30s",
+      "1m"
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "source",
+        "label": "DPU",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "tmm-telemetry"
+        },
+        "query": {
+          "query": "label_values(dts_eth_rx_bytes, source)",
+          "refId": "var"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "origin",
+        "label": "Origin",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "tmm-telemetry"
+        },
+        "query": {
+          "query": "label_values(f5tmm_pool_member_serverside_tot_conns{port!=\"0\"}, addr)",
+          "refId": "var"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 14,
+      "type": "text",
+      "title": "",
+      "transparent": true,
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "html",
+        "content": "<div style=\"display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;height:100%;font-size:14px\"><b>Load runner</b><a href=\"http://localhost:8099/run/show\" target=\"_blank\" rel=\"noopener\">show (Gbit/s, then requests/s)</a><a href=\"http://localhost:8099/run/gbps\" target=\"_blank\" rel=\"noopener\">Gbit/s only</a><a href=\"http://localhost:8099/run/rps\" target=\"_blank\" rel=\"noopener\">requests/s only</a><a href=\"http://localhost:8099/run/stop\" target=\"_blank\" rel=\"noopener\">stop</a><a href=\"http://localhost:8099/run/check\" target=\"_blank\" rel=\"noopener\">pre-flight check</a><a href=\"http://localhost:8099/\" target=\"_blank\" rel=\"noopener\">status / fail and heal a member</a><span style=\"opacity:.6\">opens the runner page in a new tab (rome1:8099 through the ssh tunnel)</span></div>"
+      }
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "title": "Hardware path — through the load balancer",
+      "description": "Bytes delivered to TMM's two service-function ports (external + internal leg), per DPU and summed. Read from the DPU's own port counters (DOCA Telemetry Service), not from TMM: established flows never reach TMM's software path. With one tenant per DPU, each value is that tenant's traffic. DTS samples arrive 2-5 s late, so these rates are taken over a 10 s window that ended 5 s ago.",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 2
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "decimals": 1,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3987e5"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3987e5",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant a\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant b\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^(total|both tenants)/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8a8a85"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "vertical"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(sum by (source, tenant, dpu) (rate(dts_eth_tx_bytes{leg=~\"external|internal\",source=~\"$source\"}[10s] offset 5s))*8, \"who\", \"DPU $1\", \"source\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}}",
+          "interval": "2s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "sum(rate(dts_eth_tx_bytes{leg=~\"external|internal\",source=~\"$source\"}[10s] offset 5s))*8",
+          "legendFormat": "total",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "title": "Requests/s at the origins",
+      "description": "HTTP requests per second answered by each tenant's origin, from nginx stub_status (nginx-prometheus-exporter per origin, scrape job `origins`, every 2 s). Counted at the origin, so it is what really went through the load balancer. An idle origin reads about 1.5/s: the exporter's own scrape and the pool's health monitors.",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 2
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3987e5"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3987e5",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant a\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant b\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^(total|both tenants)/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8a8a85"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "vertical"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(sum by (tenant, org) (rate(nginx_http_requests_total[10s])), \"name\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{name}} ({{org}})",
+          "interval": "2s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "sum(rate(nginx_http_requests_total[10s]))",
+          "legendFormat": "both tenants",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "title": "Uplinks — p0 to the leaf, p1 to the other DPU",
+      "description": "Link state of each DPU's two physical ports (ib_port_state of the uplink representors: 4 = up).",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 2
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#d03b3b",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "4": {
+                  "text": "UP",
+                  "color": "#0ca30c",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": 0,
+                "to": 3.99,
+                "result": {
+                  "text": "DOWN",
+                  "color": "#d03b3b",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "NO DATA",
+                  "color": "#ec835a",
+                  "index": 2
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "vertical"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(ib_port_state{port=~\"p0|p1\",source=~\"$source\"}, \"who\", \"DPU $1\", \"source\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} {{port}}",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Hardware path — traffic steered through the load balancer",
+      "description": "Traffic steered through the load balancer, forwarded in hardware: bytes the DPU's embedded switch hands to TMM's external and internal service-function ports. Counted by the DPU, whether or not TMM's software ever sees the packet. Solid = from the clients, dashed = from the origins; grey = everything, the same line the panel on the right draws for scale. Drawn 5 s behind the other panels (DTS samples arrive late).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant a\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant b\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8a8a85"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    2,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(rate(dts_eth_tx_bytes{leg=\"external\",source=~\"$source\"}[10s] offset 5s)*8, \"who\", \"DPU $1\", \"source\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} · clients → LB (external leg)",
+          "interval": "2s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(rate(dts_eth_tx_bytes{leg=\"internal\",source=~\"$source\"}[10s] offset 5s)*8, \"who\", \"DPU $1\", \"source\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} · origins → LB (internal leg)",
+          "interval": "2s"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "sum(rate(dts_eth_tx_bytes{leg=~\"external|internal\",source=~\"$source\"}[10s] offset 5s))*8",
+          "legendFormat": "total, all DPUs and both legs",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "TMM software path — what TMM's own counters see",
+      "description": "Bytes TMM's software dataplane handled, from tmm-stat-exporter. EMPTY until the exporter is added to the TMM pods (TMM Live → Add the exporter). The grey dashed line is the hardware total from the panel on the left, drawn here so both share one scale: with offload working the software lines stay flat at the bottom while the hardware line carries the load.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant a\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant b\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8a8a85"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(((sum by (node) (rate(f5tmm_virtual_server_clientside_bytes_in{node=~\"$source\"}[10s]) + rate(f5tmm_virtual_server_clientside_bytes_out{node=~\"$source\"}[10s]))*8) * on (node) group_left (tenant, dpu) group by (node, tenant, dpu) (label_replace(rate(dts_eth_rx_bytes{port=\"p0\"}[10s]), \"node\", \"$1\", \"source\", \"(.+)\")) or on (node) (sum by (node) (rate(f5tmm_virtual_server_clientside_bytes_in{node=~\"$source\"}[10s]) + rate(f5tmm_virtual_server_clientside_bytes_out{node=~\"$source\"}[10s]))*8)), \"who\", \"DPU $1\", \"node\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} · virtual servers, in+out (software)",
+          "interval": "2s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(((sum by (node) (rate(f5tmm_interface_counters_bytes_in{node=~\"$source\"}[10s]))*8) * on (node) group_left (tenant, dpu) group by (node, tenant, dpu) (label_replace(rate(dts_eth_rx_bytes{port=\"p0\"}[10s]), \"node\", \"$1\", \"source\", \"(.+)\")) or on (node) (sum by (node) (rate(f5tmm_interface_counters_bytes_in{node=~\"$source\"}[10s]))*8)), \"who\", \"DPU $1\", \"node\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} · TMM interfaces in (software)",
+          "interval": "2s"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "sum(rate(dts_eth_tx_bytes{leg=~\"external|internal\",source=~\"$source\"}[10s] offset 5s))*8",
+          "legendFormat": "hardware path total, for scale",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Requests/s at the origins — per tenant and total",
+      "description": "HTTP requests per second answered by each tenant's origin, from nginx stub_status (nginx-prometheus-exporter per origin, scrape job `origins`, every 2 s). Counted at the origin, so it is what really went through the load balancer. An idle origin reads about 1.5/s: the exporter's own scrape and the pool's health monitors.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant a\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant b\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8a8a85"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(sum by (tenant, org) (rate(nginx_http_requests_total[10s])), \"name\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{name}} ({{org}})",
+          "interval": "2s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "sum(rate(nginx_http_requests_total[10s]))",
+          "legendFormat": "both tenants",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "TMM CPU % (cycles-based)",
+      "description": "TMM's own busy share per polling thread, from its cycle counters (TMM busy-polls, so OS CPU always reads 100%). EMPTY until the exporter is added to the TMM pods.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          },
+          "max": 100
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant a\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant b\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace((((1 - rate(f5tmm_tmm_tm_idle_cycles{node=~\"$source\"}[10s]) / rate(f5tmm_tmm_tm_total_cycles{node=~\"$source\"}[10s])) * 100) * on (node) group_left (tenant, dpu) group by (node, tenant, dpu) (label_replace(rate(dts_eth_rx_bytes{port=\"p0\"}[10s]), \"node\", \"$1\", \"source\", \"(.+)\")) or on (node, cpu) ((1 - rate(f5tmm_tmm_tm_idle_cycles{node=~\"$source\"}[10s]) / rate(f5tmm_tmm_tm_total_cycles{node=~\"$source\"}[10s])) * 100)), \"who\", \"DPU $1\", \"node\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} · tmm cpu {{cpu}}",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Load generator CPU %",
+      "description": "CPU of the machine generating the load (node-exporter, scrape job `loadgen`). When the busiest core sits at 100% the client, not the DPU, is the limit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          },
+          "max": 100
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "100 * (1 - avg by (host) (rate(node_cpu_seconds_total{job=\"loadgen\",mode=\"idle\"}[10s])))",
+          "legendFormat": "{{host}} all cores",
+          "interval": "2s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "100 * (1 - min by (host) (rate(node_cpu_seconds_total{job=\"loadgen\",mode=\"idle\"}[10s])))",
+          "legendFormat": "{{host}} busiest core",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Pool members and uplinks",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "New connections/s per pool member — origin $origin",
+      "description": "Connections TMM opened to each pool member (address:port), per second, summed over the DPUs. A member that fails its health monitor drops to 0 and the others take its share; it comes back after the first good probe. Keep-alive clients show up here only when they reconnect (nginx closes a connection after 1000 requests by default).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: conn/s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "sum by (addr, port) (rate(f5tmm_pool_member_serverside_tot_conns{addr=~\"$origin\",port!=\"0\",node=~\"$source\"}[10s]))",
+          "legendFormat": "{{addr}}:{{port}}",
+          "interval": "2s"
+        }
+      ],
+      "repeat": "origin",
+      "repeatDirection": "h",
+      "maxPerRow": 2
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Uplink p0 — DPU ↔ leaf",
+      "description": "Physical-port byte counters of p0 on each DPU, as bit/s. Solid = received, dashed = sent.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant a\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant b\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(rate(dts_eth_rx_bytes{port=\"p0\",source=~\"$source\"}[10s] offset 5s)*8, \"who\", \"DPU $1\", \"source\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} · rx from leaf",
+          "interval": "2s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(rate(dts_eth_tx_bytes{port=\"p0\",source=~\"$source\"}[10s] offset 5s)*8, \"who\", \"DPU $1\", \"source\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} · tx to leaf",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Uplink p1 — DPU ↔ DPU",
+      "description": "Physical-port byte counters of p1 on each DPU, as bit/s. Solid = received, dashed = sent.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "tmm-telemetry"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant a\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^tenant b\\b/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(rate(dts_eth_rx_bytes{port=\"p1\",source=~\"$source\"}[10s] offset 5s)*8, \"who\", \"DPU $1\", \"source\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} · rx from peer DPU",
+          "interval": "2s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "expr": "label_replace(label_replace(rate(dts_eth_tx_bytes{port=\"p1\",source=~\"$source\"}[10s] offset 5s)*8, \"who\", \"DPU $1\", \"source\", \".*-(..-..-..)\"), \"who\", \"tenant $1\", \"tenant\", \"(.+)\")",
+          "legendFormat": "{{who}} {{dpu}} · tx to peer DPU",
+          "interval": "2s"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Diagnostics",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "panels": [
+        {
+          "id": 3,
+          "type": "stat",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "tmm-telemetry"
+          },
+          "title": "Hairpin drops/s",
+          "description": "dev_internal_queue_oob: frames the hardware hairpin between TMM's two ports dropped for lack of a buffer (oversized frames). Should stay 0. DTS exports this counter for port p1 only.",
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 0,
+            "y": 41
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix: /s",
+              "decimals": 1,
+              "min": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#0ca30c",
+                    "value": null
+                  },
+                  {
+                    "color": "#d03b3b",
+                    "value": 0.01
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "value",
+            "justifyMode": "center",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "tmm-telemetry"
+              },
+              "expr": "sum(rate(dev_internal_queue_oob{source=~\"$source\"}[10s] offset 5s))",
+              "legendFormat": "drops/s",
+              "interval": "2s"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "#c98500",
+        "name": "Load runs",
+        "target": {
+          "type": "tags",
+          "tags": [
+            "demo"
+          ],
+          "matchAny": true,
+          "limit": 200
+        }
+      }
+    ]
+  }
+}
