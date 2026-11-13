@@ -21,7 +21,9 @@ The one exception is opt-in: `prometheus/scrape.d/*.yml` holds **site scrape
 jobs** for things on your own network that *can* be scraped — a DPU's DOCA
 Telemetry Service, a load generator's node-exporter. The directory ships
 examples only (`*.yml.example`); real files are git-ignored. After adding or
-editing one, `docker kill -s HUP bnkscope-prometheus`. The `DPU offload — live`
+editing one, `docker exec bnkscope-prometheus kill -HUP 1` (not `docker kill -s HUP`:
+that marks the container manually stopped, and with `restart: unless-stopped`
+Docker then leaves it down at the next boot). The `DPU offload — live`
 dashboard (`grafana/dashboards/dpu-offload.json`, not from tmmscope) reads what
 `scrape.d/dts.yml.example` produces.
 

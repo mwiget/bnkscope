@@ -19,6 +19,8 @@ global:
 # one file per site, each holding a top-level `scrape_configs:` list. The
 # directory ships with examples only (*.yml.example); real files are
 # git-ignored, and a glob that matches nothing is not an error. After adding or
-# changing one: `docker kill -s HUP bnkscope-prometheus`.
+# changing one: `docker exec bnkscope-prometheus kill -HUP 1`. Not `docker kill
+# -s HUP`: that marks the container manually stopped, and Docker then leaves it
+# down at the next boot.
 scrape_config_files:
   - /etc/prometheus/scrape.d/*.yml

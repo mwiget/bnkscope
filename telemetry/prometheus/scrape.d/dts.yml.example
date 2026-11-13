@@ -2,7 +2,8 @@
 #
 #   cp dts.yml.example mysite.yml      # *.yml here is git-ignored
 #   $EDITOR mysite.yml
-#   docker kill -s HUP bnkscope-prometheus
+#   docker exec bnkscope-prometheus kill -HUP 1   # not `docker kill -s HUP`: Docker
+#                                                 # then skips the container at boot
 #
 # Each file in this directory is a Prometheus `scrape_config_files` fragment:
 # one top-level `scrape_configs:` list. The bundled Prometheus scrapes from the
