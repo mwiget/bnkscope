@@ -4,6 +4,8 @@
 # BE-011: Updated 2026-06-29 — CVE fixes: fastapi+starlette (CVE-2025-54121, CVE-2025-62727,
 #   CVE-2026-48818, CVE-2026-48817, CVE-2026-54283, CVE-2026-54282, PYSEC-2026-161,
 #   PYSEC-2026-248, PYSEC-2026-249), paramiko (CVE-2026-44405) — closes #308
+# BE-012: Updated 2026-11-14 — CVE fixes: PyJWT 2.15.0 (CVE-2026-102268 critical, PYSEC-2026-4140..4152,
+#   PYSEC-2026-4183, GHSA-pxh4-856f-4h89), pyasn1 0.6.5 (CVE-2026-119194..119197)
 # Core framework
 fastapi==0.138.1
 uvicorn==0.34.0
@@ -21,8 +23,8 @@ sqlalchemy==2.0.36
 # 3553/3554 need >=49, 3552 needs >=50). Used for encrypting kubeconfigs and cloud
 # credentials at rest; bnkscope has no authentication of its own (Phase 3).
 cryptography==50.0.0
-PyJWT==2.13.0
-pyasn1==0.6.4
+PyJWT==2.15.0
+pyasn1==0.6.5
 
 # Scheduling — periodic jobs run in-process on APScheduler. The broker and
 # result backend they used to need went with Celery in Phase 4; see
