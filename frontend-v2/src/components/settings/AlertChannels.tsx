@@ -18,7 +18,11 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { alertChannelSchema, type AlertChannelFormData } from '@/schemas/alertChannel';
+import {
+  alertChannelSchema,
+  type AlertChannelFormData,
+  type AlertChannelFormInput,
+} from '@/schemas/alertChannel';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { parseApiError } from '@/lib/error-handler';
@@ -91,7 +95,7 @@ export function AlertChannels() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  const form = useForm<AlertChannelFormData>({
+  const form = useForm<AlertChannelFormInput, unknown, AlertChannelFormData>({
     resolver: zodResolver(alertChannelSchema),
     defaultValues: { ...EMPTY_FORM },
   });

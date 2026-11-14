@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
-    "@hookform/resolvers": "^3.3.4",
+    "@hookform/resolvers": "^7.0.6",
     "@microsoft/fetch-event-source": "^2.0.1",
     "@monaco-editor/react": "^4.6.0",
     "@radix-ui/react-accordion": "^1.2.12",
@@ -56,7 +56,7 @@
     "reactflow": "^11.11.4",
     "recharts": "^3.8.0",
     "tailwind-merge": "^2.2.0",
-    "zod": "^3.22.4",
+    "zod": "^4.6.7",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
@@ -85,5 +85,8 @@
     "typescript-eslint": "^8.0.0",
     "vite": "^5.0.8",
     "vitest": "^4.1.0"
+  },
+  "overrides": {
+    "dompurify": "^3.4.17"
   }
 }

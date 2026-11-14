@@ -22,18 +22,21 @@ export const alertChannelSchema = z
     // URL is required for every channel type except email
     if (data.channel_type !== 'email' && !data.url) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Webhook URL is required',
         path: ['url'],
       });
     }
     if (data.url && !/^https?:\/\//i.test(data.url)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'URL must start with http:// or https://',
         path: ['url'],
       });
     }
   });
 
-export type AlertChannelFormData = z.infer<typeof alertChannelSchema>;
+// The fields with `.default()` are optional going in and always set coming out, so the form has two types:
+// what its fields hold (input) and what a valid submit hands over (output).
+export type AlertChannelFormInput = z.input<typeof alertChannelSchema>;
+export type AlertChannelFormData = z.output<typeof alertChannelSchema>;

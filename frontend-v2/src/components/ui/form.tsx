@@ -26,10 +26,13 @@ const FormFieldContext = React.createContext<FormFieldContextValue>(
   {} as FormFieldContextValue,
 );
 
+// TTransformedValues: a resolver may turn the field values into another type on submit (a zod schema with
+// `.default()` has an input and an output type). Without it a form typed that way cannot pass its `control`.
 function FormField<
   TFieldValues extends FieldValues = FieldValues,
   TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>,
->({ ...props }: ControllerProps<TFieldValues, TName>) {
+  TTransformedValues = TFieldValues,
+>({ ...props }: ControllerProps<TFieldValues, TName, TTransformedValues>) {
   return (
     <FormFieldContext.Provider value={{ name: props.name }}>
       <Controller {...props} />
